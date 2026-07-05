@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bung-cover-robot"
+version = "0.1.0"
+description = "Vision-guided 5-bar parallel-SCARA bung-cover pick-and-place robot control"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Installed as they're needed by the to-build layers (Claude.md §14).
+vision = ["opencv-python>=4.8", "numpy>=1.24"]
+plc = ["pycomm3>=1.2"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

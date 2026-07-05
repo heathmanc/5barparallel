@@ -1,0 +1,28 @@
+# Verified 5-bar geometry — the design point from Claude.md §3, §5.
+# DO NOT silently revert any of these values. They came out of a full
+# kinematic design review and supersede the original spec draft.
+
+geometry:
+  l1_mm: 220.0            # proximal link (shoulder -> elbow)
+  l2_mm: 230.0            # distal link   (elbow -> TCP)
+  base_spacing_mm: 101.6  # 4 in, symmetric about the robot-frame origin
+
+assembly:
+  # Best-conditioned branch (Claude.md §3.4): left elbow "up", right "down".
+  left_elbow: up
+  right_elbow: down
+
+joint_limits:
+  min_deg: -20.0
+  max_deg: 200.0
+
+drivetrain:
+  pulses_per_rev: 3200    # drive pulses per motor revolution
+  belt_reduction: 3.0     # 3:1 GT3 (20T motor -> 60T shoulder)
+  # pulses_per_degree = 3200 * 3 / 360 = 26.6667 (derived, see config properties)
+
+singularity:
+  # Workspace guard thresholds (Claude.md §3.6, §9).
+  parallel_min_deg: 20.0    # min degrees from the distal links being collinear
+  serial_min_deg: 15.0      # min degrees from an arm being straight/folded
+  reach_fraction_max: 0.85  # TCP distance / full reach (stiffness cap)
