@@ -9,6 +9,7 @@ from typing import Optional
 from PySide6.QtWidgets import QMainWindow, QTabWidget, QWidget
 
 from ..app.robot_test_controller import RobotTestController, build_dry_run_controller
+from .plc_tab import PlcTab
 from .robot_test_tab import RobotTestTab
 from .settings_tab import SettingsTab
 
@@ -29,8 +30,10 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.robot_test_tab = RobotTestTab(self.controller)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
+        self.plc_tab = PlcTab()
         self.tabs.addTab(self.robot_test_tab, "Robot Test")
         self.tabs.addTab(self.settings_tab, "Settings")
+        self.tabs.addTab(self.plc_tab, "PLC")
         self.setCentralWidget(self.tabs)
 
         # Applying new geometry in Settings must refresh the Robot Test readout.

@@ -13,6 +13,7 @@ from .compactlogix_client import (
     SimulatedPlcClient,
 )
 from .plc_robot_driver import PlcRobotDriver
+from .tags import TAG_SPECS, TagSpec, tag_table_csv
 
 __all__ = [
     "CompactLogixClient",
@@ -20,5 +21,8 @@ __all__ = [
     "PlcError",
     "PlcRobotDriver",
     "SimulatedPlcClient",
+    "TAG_SPECS",
+    "TagSpec",
+    "tag_table_csv",
     "tags",
 ]

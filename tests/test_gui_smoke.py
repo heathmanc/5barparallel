@@ -27,11 +27,29 @@ def qapp():
     yield app
 
 
-def test_main_window_has_both_tabs(qapp):
+def test_main_window_has_all_tabs(qapp):
     win = MainWindow()
-    assert win.tabs.count() == 2
-    assert win.tabs.tabText(0) == "Robot Test"
-    assert win.tabs.tabText(1) == "Settings"
+    assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == [
+        "Robot Test",
+        "Settings",
+        "PLC",
+    ]
+
+
+def test_plc_tab_lists_every_tag(qapp):
+    from bung_cover_robot.plc import tags as T
+
+    win = MainWindow()
+    table = win.plc_tab.table
+    assert table.rowCount() == len(T.TAG_SPECS)
+    assert table.columnCount() == 5
+    # Spot-check a known row's tag + type appear.
+    cells = {
+        table.item(r, 1).text(): table.item(r, 2).text()
+        for r in range(table.rowCount())
+    }
+    assert cells["VisionRobot.Manual.MoveToTarget"] == "BOOL"
+    assert cells["VisionRobot.Status.ActualLeftDeg"] == "REAL"
 
 
 def test_jog_disabled_until_enabled_and_referenced(qapp):

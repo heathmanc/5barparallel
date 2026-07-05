@@ -26,6 +26,29 @@ def test_tags_are_namespaced_and_complete():
     assert len(all_tags) == len(set(all_tags))  # no duplicates
 
 
+def test_tag_specs_cover_every_tag_with_valid_metadata():
+    # Every tag the code uses is documented, and vice versa.
+    class_names = set()
+    for group in (tags.Cmd, tags.Target, tags.Manual, tags.Status):
+        for name, value in vars(group).items():
+            if not name.startswith("_") and isinstance(value, str):
+                class_names.add(value)
+    spec_names = {s.name for s in tags.TAG_SPECS}
+    assert spec_names == class_names
+    assert len(spec_names) == len(tags.TAG_SPECS)  # no duplicate specs
+    for s in tags.TAG_SPECS:
+        assert s.dtype in ("BOOL", "DINT", "REAL")
+        assert s.direction in (tags.PC_TO_PLC, tags.PLC_TO_PC)
+        assert s.description.strip()
+
+
+def test_tag_table_csv_has_header_and_all_rows():
+    csv = tags.tag_table_csv()
+    lines = csv.strip().splitlines()
+    assert lines[0] == "Tag,Type,Direction,Group,Description"
+    assert len(lines) == len(tags.TAG_SPECS) + 1
+
+
 # --------------------------------------------------------------------------- #
 # Simulated PLC
 # --------------------------------------------------------------------------- #
