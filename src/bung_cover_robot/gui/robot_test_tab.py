@@ -53,21 +53,24 @@ class RobotTestTab(QWidget):
         self.enable_btn.clicked.connect(self._on_enable_toggled)
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.clicked.connect(self._on_stop)
-        self.homed_label = QLabel()
+        self.referenced_label = QLabel()
         row.addWidget(self.enable_btn)
         row.addWidget(self.stop_btn)
         row.addStretch(1)
-        row.addWidget(self.homed_label)
+        row.addWidget(self.referenced_label)
         return box
 
     def _build_home_group(self) -> QGroupBox:
         box = QGroupBox("Home")
         row = QHBoxLayout(box)
+        self.ref_btn = QPushButton("Home (find ref)")
+        self.ref_btn.clicked.connect(self._on_home_reference)
         set_btn = QPushButton("Set Home (teach)")
         set_btn.clicked.connect(self._on_set_home)
         go_btn = QPushButton("Go Home")
         go_btn.clicked.connect(self._on_go_home)
         self.home_label = QLabel()
+        row.addWidget(self.ref_btn)
         row.addWidget(set_btn)
         row.addWidget(go_btn)
         row.addStretch(1)
@@ -169,6 +172,9 @@ class RobotTestTab(QWidget):
         self._set_status("STOP — drives disabled.", ok=False)
         self._update_enable_state()
 
+    def _on_home_reference(self) -> None:
+        self._apply(self.controller.home_reference())
+
     def _on_set_home(self) -> None:
         x, y = self.controller.set_home()
         self._set_status(f"Home taught at TCP ({x:.1f}, {y:.1f}).", ok=True)
@@ -184,12 +190,18 @@ class RobotTestTab(QWidget):
         self._apply(self.controller.jog_cartesian(axis, sign * self.cart_step.value()))
 
     # --- view update --------------------------------------------------------
+    def refresh_all(self) -> None:
+        """Re-read everything from the controller (e.g. after a geometry change)."""
+        self._refresh()
+        self._update_enable_state()
+
     def _apply(self, result: MoveResult) -> None:
         if result.ok:
             self._set_status("Move OK.", ok=True)
         else:
             self._set_status(f"Rejected: {result.reason}", ok=False)
         self._refresh()
+        self._update_enable_state()
 
     def _refresh(self) -> None:
         s = self.controller.state
@@ -210,18 +222,22 @@ class RobotTestTab(QWidget):
 
         hx, hy = self.controller.home_xy
         self.home_label.setText(f"Home: ({hx:.1f}, {hy:.1f})")
-        self.homed_label.setText("HOMED" if self.controller.is_homed else "NOT HOMED")
-        self.homed_label.setStyleSheet(
+        referenced = self.controller.is_referenced
+        self.referenced_label.setText("REFERENCED" if referenced else "NOT REFERENCED")
+        self.referenced_label.setStyleSheet(
             "color: #2e7d32; font-weight: bold;"
-            if self.controller.is_homed
+            if referenced
             else "color: #c62828; font-weight: bold;"
         )
 
     def _update_enable_state(self) -> None:
         enabled = self.controller.is_enabled
+        referenced = self.controller.is_referenced
         self.enable_btn.setText("Enabled" if enabled else "Enable")
+        self.ref_btn.setEnabled(enabled)
+        # Jogging needs both enabled drives and a found home reference.
         for btn in getattr(self, "_jog_buttons", []):
-            btn.setEnabled(enabled)
+            btn.setEnabled(enabled and referenced)
 
     def _set_status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)

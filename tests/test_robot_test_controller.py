@@ -1,34 +1,61 @@
-"""RobotTestController: home (teach + go) and jog, all gated by the workspace
-validator."""
+"""RobotTestController: reference (find home switches) + teach/go-home + jog,
+all gated by the workspace validator."""
 
 import pytest
 
 from bung_cover_robot.app.robot_test_controller import (
     DEFAULT_HOME_XY,
     RobotTestController,
+    build_dry_run_controller,
 )
 from bung_cover_robot.robot import DryRunRobotDriver
 
 
 def make() -> RobotTestController:
-    return RobotTestController(DryRunRobotDriver())
+    # Dry-run driver referenced to a valid home pose.
+    return build_dry_run_controller()
+
+
+def ready() -> RobotTestController:
+    c = make()
+    c.enable()
+    c.home_reference()
+    return c
 
 
 # --------------------------------------------------------------------------- #
 # Initial state
 # --------------------------------------------------------------------------- #
-def test_initial_state_is_valid_home_not_enabled_not_homed():
+def test_initial_state_is_valid_home_not_enabled_not_referenced():
     c = make()
     assert c.state.tcp == DEFAULT_HOME_XY
     assert not c.is_enabled
-    assert not c.is_homed
-    # A resolved, validated pose from the start.
+    assert not c.is_referenced
     assert c.state.metrics["reach_fraction"] < 0.85
 
 
 def test_invalid_home_rejected_at_construction():
     with pytest.raises(ValueError):
         RobotTestController(DryRunRobotDriver(), home_xy=(0.0, 900.0))
+
+
+# --------------------------------------------------------------------------- #
+# Referencing (hardware home)
+# --------------------------------------------------------------------------- #
+def test_reference_requires_enable():
+    c = make()
+    res = c.home_reference()
+    assert not res.ok and "disabled" in res.reason
+    assert not c.is_referenced
+
+
+def test_reference_adopts_driver_reported_pose():
+    c = make()
+    c.enable()
+    res = c.home_reference()
+    assert res.ok
+    assert c.is_referenced
+    assert c.driver.read_angles() == (c.state.left_deg, c.state.right_deg)
 
 
 # --------------------------------------------------------------------------- #
@@ -40,39 +67,36 @@ def test_jog_blocked_until_enabled():
     assert not res.ok and "disabled" in res.reason
 
 
-def test_jog_blocked_until_homed():
+def test_jog_blocked_until_referenced():
     c = make()
     c.enable()
     res = c.jog_joint("left", 1.0)
-    assert not res.ok and "homed" in res.reason
+    assert not res.ok and "referenced" in res.reason
 
 
-def test_go_home_blocked_until_enabled():
-    c = make()
-    res = c.go_home()
-    assert not res.ok and "disabled" in res.reason
-
-
-# --------------------------------------------------------------------------- #
-# Home
-# --------------------------------------------------------------------------- #
-def test_go_home_sets_homed_and_commands_driver():
+def test_go_home_blocked_until_referenced():
     c = make()
     c.enable()
     res = c.go_home()
+    assert not res.ok and "referenced" in res.reason
+
+
+# --------------------------------------------------------------------------- #
+# Home (teach + go)
+# --------------------------------------------------------------------------- #
+def test_go_home_commands_driver():
+    c = ready()
+    res = c.go_home()
     assert res.ok
-    assert c.is_homed
     assert c.driver.read_angles() == (c.state.left_deg, c.state.right_deg)
 
 
 def test_set_home_teaches_current_pose():
-    c = make()
-    c.enable()
-    c.go_home()
-    c.jog_cartesian("y", 10.0)  # move to (0, 260)
+    c = ready()
+    c.jog_cartesian("y", 10.0)  # move to ~(0, 260)
     taught = c.set_home()
-    assert taught == c.state.tcp == (0.0, 260.0)
-    # Move away, then Go Home returns to the taught point.
+    assert taught == c.state.tcp
+    assert c.state.tcp == pytest.approx((0.0, 260.0))
     c.jog_cartesian("x", 20.0)
     c.go_home()
     assert c.state.tcp == pytest.approx((0.0, 260.0))
@@ -82,9 +106,7 @@ def test_set_home_teaches_current_pose():
 # Jog
 # --------------------------------------------------------------------------- #
 def test_jog_joint_moves_one_shoulder():
-    c = make()
-    c.enable()
-    c.go_home()
+    c = ready()
     before = c.state
     res = c.jog_joint("left", 2.0)
     assert res.ok
@@ -93,31 +115,25 @@ def test_jog_joint_moves_one_shoulder():
 
 
 def test_jog_cartesian_moves_tcp():
-    c = make()
-    c.enable()
-    c.go_home()
+    c = ready()
     res = c.jog_cartesian("x", 15.0)
     assert res.ok
     assert c.state.tcp == pytest.approx((15.0, 250.0))
 
 
 def test_jog_out_of_workspace_is_rejected_and_pose_unchanged():
-    c = make()
-    c.enable()
-    c.go_home()
+    c = ready()
     before = c.state
     n_cmds = len(c.driver.command_log)
     res = c.move_to_xy(0.0, 430.0)  # past the 85% reach cap
     assert not res.ok
     assert "reach" in res.reason
-    assert c.state == before                       # pose did not change
-    assert len(c.driver.command_log) == n_cmds     # nothing sent to the driver
+    assert c.state == before
+    assert len(c.driver.command_log) == n_cmds  # nothing sent to the driver
 
 
 def test_jog_past_joint_limit_is_rejected():
-    c = make()
-    c.enable()
-    c.go_home()
+    c = ready()
     res = c.jog_joint("left", 500.0)
     assert not res.ok
 
@@ -131,9 +147,20 @@ def test_bad_joint_and_axis_raise():
 
 
 def test_disable_blocks_jog_again():
-    c = make()
-    c.enable()
-    c.go_home()
+    c = ready()
     c.disable()
     res = c.jog_joint("left", 1.0)
     assert not res.ok and "disabled" in res.reason
+
+
+# --------------------------------------------------------------------------- #
+# Geometry swap (Settings tab)
+# --------------------------------------------------------------------------- #
+def test_update_geometry_reresolves_pose():
+    from bung_cover_robot.robot.fivebar_kinematics import FiveBarConfig
+
+    c = ready()
+    c.update_geometry(FiveBarConfig(l1_mm=225.0))  # small change, still valid
+    assert c.kin.config.l1_mm == 225.0
+    # Current pose remains resolved/valid.
+    assert 0.0 < c.state.metrics["reach_fraction"] <= 0.85

@@ -18,8 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from ..robot.driver import RobotDriver
-from ..robot.fivebar_kinematics import FiveBarKinematics
+from ..robot.driver import DryRunRobotDriver, RobotDriver
+from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
 from ..robot.workspace import WorkspaceValidator
 
 Point = Tuple[float, float]
@@ -73,7 +73,7 @@ class RobotTestController:
         if state is None:
             raise ValueError(f"home {home_xy} is not a valid pose: {res}")
         self._state: RobotState = state
-        self._homed = False
+        self._referenced = False  # hardware home found (switches), from driver.home()
 
     # --- status -------------------------------------------------------------
     @property
@@ -89,8 +89,9 @@ class RobotTestController:
         return self.driver.is_enabled
 
     @property
-    def is_homed(self) -> bool:
-        return self._homed
+    def is_referenced(self) -> bool:
+        """True once the hardware home reference has been found (driver.home)."""
+        return self._referenced
 
     # --- enable -------------------------------------------------------------
     def enable(self) -> None:
@@ -103,19 +104,32 @@ class RobotTestController:
         self.driver.stop()
 
     # --- home ---------------------------------------------------------------
+    def home_reference(self) -> MoveResult:
+        """Run the hardware homing routine (find the home switches) and adopt the
+        reference pose the driver reports. Required before jogging."""
+        if not self.is_enabled:
+            return self._reject("drives are disabled — enable first")
+        self.driver.home()
+        angles = self.driver.read_angles()
+        if angles is not None:
+            state, reason = self._state_from_angles(*angles)
+            if state is None:
+                return self._reject(f"reported home pose is invalid: {reason}")
+            self._state = state
+        self._referenced = True
+        return MoveResult(True, "ok", self._state)
+
     def set_home(self) -> Point:
-        """Teach: capture the current pose as the home reference."""
+        """Teach: capture the current pose as the software home reference."""
         self._home_xy = self._state.tcp
         return self._home_xy
 
     def go_home(self) -> MoveResult:
-        """Drive the robot to the taught home reference."""
-        if not self.is_enabled:
-            return self._reject("drives are disabled — enable first")
-        result = self._move_to_xy(*self._home_xy)
-        if result.ok:
-            self._homed = True
-        return result
+        """Drive the robot to the taught software home pose."""
+        guard = self._motion_guard()
+        if guard is not None:
+            return guard
+        return self._move_to_xy(*self._home_xy)
 
     # --- jog ----------------------------------------------------------------
     def jog_joint(self, joint: str, delta_deg: float) -> MoveResult:
@@ -165,8 +179,8 @@ class RobotTestController:
     def _motion_guard(self) -> Optional[MoveResult]:
         if not self.is_enabled:
             return self._reject("drives are disabled — enable first")
-        if not self._homed:
-            return self._reject("robot is not homed — Go Home first")
+        if not self._referenced:
+            return self._reject("robot is not referenced — Home (find ref) first")
         return None
 
     def _move_to_xy(self, x: float, y: float) -> MoveResult:
@@ -218,3 +232,32 @@ class RobotTestController:
             ),
             "ok",
         )
+
+    def update_geometry(
+        self, config: FiveBarConfig, validator: Optional[WorkspaceValidator] = None
+    ) -> None:
+        """Swap in new geometry (used by the Settings tab after re-validation).
+
+        Rebuilds kinematics + validator and re-resolves the current pose. If the
+        current pose is no longer valid under the new geometry, snaps back to the
+        (validated) home pose.
+        """
+        self.kin = FiveBarKinematics(config)
+        self.validator = validator or WorkspaceValidator(self.kin)
+        state, _ = self._state_from_xy(*self._state.tcp)
+        if state is None:
+            state, _ = self._state_from_xy(*self._home_xy)
+        if state is None:
+            raise ValueError("home pose invalid under new geometry")
+        self._state = state
+
+
+def build_dry_run_controller(
+    home_xy: Point = DEFAULT_HOME_XY,
+    config: Optional[FiveBarConfig] = None,
+) -> RobotTestController:
+    """A controller backed by the simulated driver, referenced to a valid pose."""
+    kin = FiveBarKinematics(config) if config is not None else FiveBarKinematics()
+    jt = kin.inverse(*home_xy)
+    driver = DryRunRobotDriver(home_angles=(jt.left_deg, jt.right_deg))
+    return RobotTestController(driver, kin, home_xy=home_xy)

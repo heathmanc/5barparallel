@@ -35,7 +35,10 @@ the hole pattern at one repeatable position, not a moving target.
 | `robot/workspace.py` (singularity/reach guard) | **Done, tested** |
 | `config/robot_config.yaml` | **Done** (verified values) |
 | `tests/test_kinematics.py` | **Done** (encodes the design verification) |
-| `plc/*`, `vision/*`, `robot/planner.py`, `app/*`, `main.py` | **To build** (see §14) |
+| `vision/camera.py` (Basler/pypylon + mock) | **Done, tested** |
+| `robot/driver.py`, `plc/{tags,compactlogix_client,plc_robot_driver}.py` | **Done, tested** (manual jog/home) |
+| `app/robot_test_controller.py`, `gui/*` (Robot Test + Settings tabs) | **Done, tested** |
+| `plc/handshake.py`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | **To build** (see §14) |
 
 Nothing hardware has been purchased yet, so geometry can still be trimmed if the
 one open input (exact hole span, §17) turns out smaller — but the current design
@@ -329,6 +332,42 @@ VisionRobot.Status.ReadyForVision  BOOL
 6. On `Faulted`, stop and report `FaultCode`.
 
 `CommandID` exists to reject stale/duplicated commands.
+
+**Manual jog/home surface (`VisionRobot.Manual.*`, for the Robot Test tab):**
+Separate from the automatic pick/place handshake above. Jog is
+**absolute-incremental** — Python computes a *validated* absolute angle target
+and the PLC does one coordinated move to it (never a continuous velocity jog, so
+every step is singularity-checked before motion).
+```
+VisionRobot.Manual.Enable         BOOL   VisionRobot.Status.Enabled          BOOL
+VisionRobot.Manual.HomeRequest    BOOL   VisionRobot.Status.Homed            BOOL
+VisionRobot.Manual.MoveToTarget   BOOL   VisionRobot.Status.InPosition       BOOL
+VisionRobot.Manual.Abort          BOOL   VisionRobot.Status.Moving           BOOL
+VisionRobot.Manual.TargetLeftDeg  REAL   VisionRobot.Status.ActualLeftDeg    REAL
+VisionRobot.Manual.TargetRightDeg REAL   VisionRobot.Status.ActualRightDeg   REAL
+VisionRobot.Manual.CommandID      DINT   VisionRobot.Status.CompleteCommandID DINT
+```
+- `enable`: write `Manual.Enable`, wait `Status.Enabled`.
+- `home`: pulse `Manual.HomeRequest`, wait `Status.Homed`; PLC runs the homing
+  routine and reports the reference angles in `ActualLeft/RightDeg`.
+- `move_to_angles`: write `TargetLeft/RightDeg`, bump `Manual.CommandID`, pulse
+  `MoveToTarget`, wait `CompleteCommandID == CommandID` **and** `InPosition`.
+Python side is `plc/plc_robot_driver.py`; `plc/compactlogix_client.py` includes a
+`SimulatedPlcClient` that emulates this ladder for `--sim-plc` and tests.
+
+**Homing & limit switches (open-loop steppers → homing is mandatory each
+power-up).** Because of the 3:1 reduction, the home flag must sense the
+**shoulder** rotation (60T pulley / L1 root), **not** the motor shaft (a
+motor-side flag is 3× ambiguous). Per shoulder:
+- **1 home/reference sensor** (inductive prox on the stationary base, flag on the
+  rotating shoulder hub) — mandatory. Approach one direction, back off, re-approach
+  slow for repeatability, then set the known home angle.
+- **2 hard overtravel limits** near the −20°/+200° ends, wired into the drive
+  ENABLE/fault chain (acts even if PLC logic hangs). Minimum viable = home switch
+  + PLC soft limits.
+Choose a **home pose with the arms spread (left-up/right-down splay), clear of the
+parallel-singularity band**, so both arms reach home without colliding. Homing is
+PLC-owned (§7); the Python `home()` just triggers it and waits for `Homed`.
 
 **PLC state machine (Studio 5000, for reference):**
 `0 IDLE → 10 MOVE_CAMERA_CLEAR → 20 WAIT_CAMERA_CLEAR → 30 WAIT_FOR_VISION_COMMAND

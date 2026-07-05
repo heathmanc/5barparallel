@@ -1,9 +1,13 @@
 """GUI entry point.
 
-    python -m bung_cover_robot.gui            # dry-run (no hardware)
+    python -m bung_cover_robot.gui                       # dry-run sim driver
+    python -m bung_cover_robot.gui --sim-plc             # PLC driver + simulated PLC
+    python -m bung_cover_robot.gui --plc 192.168.1.10/0  # PLC driver + real PLC
+    python -m bung_cover_robot.gui --config config/robot_config.yaml
 
-Today only a dry-run driver exists, so the GUI always runs simulated. When a
-PLC-backed RobotDriver lands, wire it here behind a --dry-run/--live flag.
+--dry-run uses the in-process DryRunRobotDriver. --sim-plc exercises the real
+PlcRobotDriver handshake against an in-memory PLC (no hardware). --plc drives a
+CompactLogix over EtherNet/IP.
 """
 
 from __future__ import annotations
@@ -13,34 +17,60 @@ import logging
 import sys
 from typing import List, Optional
 
-from ..app.robot_test_controller import RobotTestController
-from ..robot.driver import DryRunRobotDriver
+from ..app.robot_test_controller import (
+    DEFAULT_HOME_XY,
+    RobotTestController,
+    build_dry_run_controller,
+)
+from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
+
+
+def _build_controller(args) -> RobotTestController:
+    config = FiveBarConfig.from_yaml(args.config) if args.config else None
+
+    if args.plc:
+        from ..plc import CompactLogixClient, PlcRobotDriver
+
+        kin = FiveBarKinematics(config) if config else FiveBarKinematics()
+        driver = PlcRobotDriver(CompactLogixClient(args.plc))
+        driver.connect()
+        return RobotTestController(driver, kin, home_xy=DEFAULT_HOME_XY)
+
+    if args.sim_plc:
+        from ..plc import PlcRobotDriver, SimulatedPlcClient
+
+        kin = FiveBarKinematics(config) if config else FiveBarKinematics()
+        jt = kin.inverse(*DEFAULT_HOME_XY)
+        client = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
+        driver = PlcRobotDriver(client)
+        return RobotTestController(driver, kin, home_xy=DEFAULT_HOME_XY)
+
+    return build_dry_run_controller(config=config)
 
 
 def run_gui(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="bung_cover_robot.gui")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=True,
-        help="run with the simulated driver (default; only mode available today)",
-    )
+    parser.add_argument("--config", help="path to robot_config.yaml")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="in-process sim (default)")
+    mode.add_argument("--sim-plc", action="store_true", help="PLC driver + simulated PLC")
+    mode.add_argument("--plc", metavar="IP/SLOT", help="PLC driver + real CompactLogix")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    # Import Qt lazily so `--help` and import of this module don't require a
-    # display/Qt libraries.
+    # Import Qt lazily so --help doesn't require a display/Qt libraries.
     from PySide6.QtWidgets import QApplication
 
     from .main_window import MainWindow
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    controller = RobotTestController(DryRunRobotDriver())
-    window = MainWindow(controller)
+    controller = _build_controller(args)
+    window = MainWindow(controller, config_path=args.config)
     window.show()
     return app.exec()
 

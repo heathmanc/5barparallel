@@ -20,11 +20,12 @@ Only the **verified kinematics foundation** is implemented so far:
 | `src/bung_cover_robot/robot/workspace.py` | done, tested |
 | `config/camera_config.yaml` | done |
 | `src/bung_cover_robot/vision/camera.py` | done, tested — Basler (pypylon) + mock |
-| `src/bung_cover_robot/robot/driver.py` | done, tested — dry-run driver (PLC-backed later) |
-| `src/bung_cover_robot/app/robot_test_controller.py` | done, tested — home + jog logic |
-| `src/bung_cover_robot/gui/` | done — PySide6 HMI, Robot Test tab |
-| `tests/test_*.py` | done (kinematics, camera, driver, controller, GUI smoke) |
-| `plc/*`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | to build (Claude.md §14) |
+| `src/bung_cover_robot/robot/driver.py` | done, tested — dry-run + PLC-backed drivers |
+| `src/bung_cover_robot/plc/{tags,compactlogix_client,plc_robot_driver}.py` | done, tested — jog/home over EtherNet/IP + simulator |
+| `src/bung_cover_robot/app/robot_test_controller.py` | done, tested — reference + home + jog logic |
+| `src/bung_cover_robot/gui/` | done — PySide6 HMI, Robot Test + Settings tabs |
+| `tests/test_*.py` | done (kinematics, camera, driver, controller, PLC, GUI smoke) |
+| `plc/handshake.py`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | to build (Claude.md §14) |
 
 ## Setup
 
@@ -104,21 +105,36 @@ robot; every move is gated by `WorkspaceValidator` before it reaches the driver.
 
 ```bash
 pip install -e .[gui]
-python -m bung_cover_robot.gui        # dry-run (no hardware)
+python -m bung_cover_robot.gui                       # in-process dry-run sim
+python -m bung_cover_robot.gui --sim-plc             # PLC driver + simulated PLC
+python -m bung_cover_robot.gui --plc 192.168.1.10/0  # PLC driver + real CompactLogix
 ```
 
-Robot Test tab:
-- **Drives** — Enable / STOP. Jogging is refused while disabled.
-- **Home** — *Set Home (teach)* captures the current pose as the software home;
-  *Go Home* drives back to it. Jogging requires the robot to be homed first.
+**Robot Test tab:**
+- **Drives** — Enable / STOP. Motion is refused while disabled.
+- **Home** — *Home (find ref)* runs the hardware homing routine (find the home
+  switches) and adopts the reference pose; *Set Home (teach)* captures the
+  current pose as the software home; *Go Home* drives back to it. Jogging
+  requires the robot to be **referenced** first.
 - **Jog** — per-shoulder joint jog (L±, R±) and Cartesian TCP jog (X±, Y± in the
   robot frame), with independent joint-step (deg) and Cartesian-step (mm) sizes.
+  *Absolute-incremental*: each press computes a new absolute target, validates
+  it, and commands one coordinated move.
 - **Position / workspace** — live TCP, shoulder angles, drive pulses, and the
   parallel/serial singularity margins + reach fraction. A jog that would leave
-  the clean workspace is rejected and the reason is shown; the robot doesn't move.
+  the clean workspace is rejected with the reason; the robot doesn't move.
 
-The GUI is a thin view over the headless `RobotTestController`
-(`app/robot_test_controller.py`), which drives a swappable `RobotDriver`
-(`robot/driver.py`). Only `DryRunRobotDriver` exists today; a PLC-backed driver
-(needing a manual-jog tag surface on the PLC, separate from the §11 pick/place
-handshake) comes with the PLC layer.
+**Settings tab** — view/edit mechanical geometry (L1, L2, spacing, joint limits,
+branch, drivetrain) and the workspace guard thresholds. *Validate & Apply*
+re-runs the full work-zone validation and **refuses** geometry that can't clear
+every singularity/reach check (Claude.md §3); *Save to YAML* persists only
+validated geometry to `config/robot_config.yaml`.
+
+The GUI is a thin view over the headless `RobotTestController`, which drives a
+swappable `RobotDriver`:
+- `DryRunRobotDriver` — in-process simulation.
+- `PlcRobotDriver` — manual jog/home over EtherNet/IP (pycomm3), using the
+  `VisionRobot.Manual.*` tag surface (`plc/tags.py`). A `SimulatedPlcClient`
+  emulates the ladder so `--sim-plc` runs the real handshake with no hardware.
+  To drive a real robot, the Studio 5000 program must implement those tags +
+  the homing routine (see the PLC contract note below).
