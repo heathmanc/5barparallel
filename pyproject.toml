@@ -18,7 +18,11 @@ dependencies = [
 # opencv is used for frame save/convert/processing; pypylon drives the Basler.
 vision = ["opencv-python>=4.8", "pypylon>=3.0"]
 plc = ["pycomm3>=1.2"]
-dev = ["pytest>=7.0", "opencv-python-headless>=4.8"]
+gui = ["PySide6>=6.6"]
+dev = ["pytest>=7.0", "opencv-python-headless>=4.8", "PySide6>=6.6"]
+
+[project.scripts]
+bung-cover-gui = "bung_cover_robot.gui.app:run_gui"
 
 [tool.setuptools.packages.find]
 where = ["src"]

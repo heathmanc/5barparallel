@@ -20,8 +20,11 @@ Only the **verified kinematics foundation** is implemented so far:
 | `src/bung_cover_robot/robot/workspace.py` | done, tested |
 | `config/camera_config.yaml` | done |
 | `src/bung_cover_robot/vision/camera.py` | done, tested — Basler (pypylon) + mock |
-| `tests/test_kinematics.py`, `tests/test_camera.py` | done |
-| `plc/*`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/*`, `main.py` | to build (Claude.md §14) |
+| `src/bung_cover_robot/robot/driver.py` | done, tested — dry-run driver (PLC-backed later) |
+| `src/bung_cover_robot/app/robot_test_controller.py` | done, tested — home + jog logic |
+| `src/bung_cover_robot/gui/` | done — PySide6 HMI, Robot Test tab |
+| `tests/test_*.py` | done (kinematics, camera, driver, controller, GUI smoke) |
+| `plc/*`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | to build (Claude.md §14) |
 
 ## Setup
 
@@ -93,3 +96,29 @@ mapped to per-model GenICam nodes in `CONTROL_REGISTRY`; you can also pass a raw
 GenICam node name or extra nodes via `CameraControls(extra={...})`. On a real
 camera, `BaslerCamera.list_devices()` enumerates connected cameras and
 `control_range(name)` returns a control's `(min, max)` for building sliders.
+
+## GUI (robot HMI)
+
+A PySide6 tabbed HMI. The **Robot Test** tab establishes home and jogs the
+robot; every move is gated by `WorkspaceValidator` before it reaches the driver.
+
+```bash
+pip install -e .[gui]
+python -m bung_cover_robot.gui        # dry-run (no hardware)
+```
+
+Robot Test tab:
+- **Drives** — Enable / STOP. Jogging is refused while disabled.
+- **Home** — *Set Home (teach)* captures the current pose as the software home;
+  *Go Home* drives back to it. Jogging requires the robot to be homed first.
+- **Jog** — per-shoulder joint jog (L±, R±) and Cartesian TCP jog (X±, Y± in the
+  robot frame), with independent joint-step (deg) and Cartesian-step (mm) sizes.
+- **Position / workspace** — live TCP, shoulder angles, drive pulses, and the
+  parallel/serial singularity margins + reach fraction. A jog that would leave
+  the clean workspace is rejected and the reason is shown; the robot doesn't move.
+
+The GUI is a thin view over the headless `RobotTestController`
+(`app/robot_test_controller.py`), which drives a swappable `RobotDriver`
+(`robot/driver.py`). Only `DryRunRobotDriver` exists today; a PLC-backed driver
+(needing a manual-jog tag surface on the PLC, separate from the §11 pick/place
+handshake) comes with the PLC layer.
