@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="870" height="693" viewBox="0 0 870 693">
+<rect x="0" y="0" width="870.0" height="693.0" fill="#fff"/>
+<text x="435.0" y="34" font-family="sans-serif" font-size="21" font-weight="bold" text-anchor="middle" fill="#111">Home / limit flag on the arm (L1) at r≈40 mm — overhead, mm</text>
+<line x1="60.0" y1="540.0" x2="810.0" y2="540.0" stroke="#bbb"/>
+<line x1="435.0" y1="633.0" x2="435.0" y2="60.0" stroke="#bbb"/>
+<text x="806.0" y="532.0" font-family="sans-serif" font-size="13" text-anchor="end" fill="#888">+X (along conveyor)</text>
+<text x="443.0" y="74.0" font-family="sans-serif" font-size="13" fill="#888">+Y (reach)</text>
+<rect x="172.5" y="88.79999999999998" width="525.0" height="152.39999999999998" fill="#1976d2" fill-opacity="0.06" stroke="#1976d2" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="435.0" y="82.79999999999998" font-family="sans-serif" font-size="12" text-anchor="middle" fill="#1976d2">work zone</text>
+<circle cx="358.79999999999995" cy="540.0" r="42.900000000000006" fill="#eee" stroke="#bbb"/>
+<polyline points="436.3,568.2 438.1,562.7 439.5,557.2 440.5,551.5 441.1,545.8 441.3,540.0 441.1,534.2 440.5,528.5 439.5,522.8 438.1,517.3 436.3,511.8 434.2,506.4 431.6,501.3 428.8,496.3 425.5,491.5 422.0,487.0 418.1,482.7 414.0,478.7 409.6,475.0 404.9,471.6 400.1,468.6 395.0,465.8 389.7,463.5 384.3,461.5 378.8,460.0 373.1,458.8 367.4,458.0 361.7,457.6 355.9,457.6 350.2,458.0 344.5,458.8 338.8,460.0 333.3,461.5 327.9,463.5 322.6,465.8 317.6,468.6 312.7,471.6 308.0,475.0 303.6,478.7 299.5,482.7 295.6,487.0 292.1,491.5 288.8,496.3 286.0,501.3 283.4,506.4 281.3,511.8 279.5,517.3 278.1,522.8 277.1,528.5 276.5,534.2 276.3,540.0 276.5,545.8 277.1,551.5 278.1,557.2 279.5,562.7 281.3,568.2" fill="none" stroke="#d9d9d9" stroke-width="6" stroke-linecap="round"/>
+<line x1="358.79999999999995" y1="540.0" x2="460.28680304487807" y2="576.9381754791722" stroke="#c62828" stroke-width="1.3" stroke-dasharray="5 3"/>
+<rect x="409.1815572471545" y="554.5212085995402" width="12" height="12" fill="#c62828" stroke="#7f0000"/>
+<text x="485.65850380609766" y="590.1727193489653" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#c62828">−20°</text>
+<line x1="358.79999999999995" y1="540.0" x2="257.31319695512184" y2="576.9381754791722" stroke="#c62828" stroke-width="1.3" stroke-dasharray="5 3"/>
+<rect x="296.4184427528455" y="554.5212085995402" width="12" height="12" fill="#c62828" stroke="#7f0000"/>
+<text x="231.94149619390234" y="590.1727193489653" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#c62828">+200°</text>
+<rect x="308.74856903599334" y="491.2079637735684" width="14" height="14" fill="#2e7d32" stroke="#14421a" stroke-width="1.3"/>
+<circle cx="511.20000000000005" cy="540.0" r="42.900000000000006" fill="#eee" stroke="#bbb"/>
+<polyline points="588.7,568.2 590.5,562.7 591.9,557.2 592.9,551.5 593.5,545.8 593.7,540.0 593.5,534.2 592.9,528.5 591.9,522.8 590.5,517.3 588.7,511.8 586.6,506.4 584.0,501.3 581.2,496.3 577.9,491.5 574.4,487.0 570.5,482.7 566.4,478.7 562.0,475.0 557.3,471.6 552.5,468.6 547.4,465.8 542.1,463.5 536.7,461.5 531.2,460.0 525.5,458.8 519.8,458.0 514.1,457.6 508.3,457.6 502.6,458.0 496.9,458.8 491.2,460.0 485.7,461.5 480.3,463.5 475.0,465.8 470.0,468.6 465.1,471.6 460.4,475.0 456.0,478.7 451.9,482.7 448.0,487.0 444.5,491.5 441.2,496.3 438.4,501.3 435.8,506.4 433.7,511.8 431.9,517.3 430.5,522.8 429.5,528.5 428.9,534.2 428.7,540.0 428.9,545.8 429.5,551.5 430.5,557.2 431.9,562.7 433.7,568.2" fill="none" stroke="#d9d9d9" stroke-width="6" stroke-linecap="round"/>
+<line x1="511.20000000000005" y1="540.0" x2="612.6868030448782" y2="576.9381754791722" stroke="#c62828" stroke-width="1.3" stroke-dasharray="5 3"/>
+<rect x="561.5815572471545" y="554.5212085995402" width="12" height="12" fill="#c62828" stroke="#7f0000"/>
+<text x="638.0585038060976" y="590.1727193489653" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#c62828">−20°</text>
+<line x1="511.20000000000005" y1="540.0" x2="409.71319695512193" y2="576.9381754791722" stroke="#c62828" stroke-width="1.3" stroke-dasharray="5 3"/>
+<rect x="448.81844275284544" y="554.5212085995402" width="12" height="12" fill="#c62828" stroke="#7f0000"/>
+<text x="384.34149619390234" y="590.1727193489653" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#c62828">+200°</text>
+<rect x="547.2514309640067" y="491.2079637735684" width="14" height="14" fill="#2e7d32" stroke="#14421a" stroke-width="1.3"/>
+<line x1="358.79999999999995" y1="540.0" x2="122.0171296979635" y2="310.1438007546262" stroke="#333" stroke-width="6" stroke-linecap="round"/>
+<line x1="122.0171296979635" y1="310.1438007546262" x2="435.0" y2="165.0" stroke="#1565c0" stroke-width="5" stroke-linecap="round"/>
+<line x1="511.20000000000005" y1="540.0" x2="747.9828703020365" y2="310.1438007546262" stroke="#333" stroke-width="6" stroke-linecap="round"/>
+<line x1="747.9828703020365" y1="310.1438007546262" x2="435.0" y2="165.0" stroke="#1565c0" stroke-width="5" stroke-linecap="round"/>
+<text x="231.79827865618043" y="416.71349313202677" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">HOME 136°</text>
+<text x="638.2017213438195" y="416.71349313202677" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">HOME 44°</text>
+<text x="299.74856903599334" y="524.2079637735684" font-family="sans-serif" font-size="11.5" text-anchor="end" fill="#2e7d32" font-weight="bold">flag tab on L1</text>
+<circle cx="122.0171296979635" cy="310.1438007546262" r="5" fill="#333" stroke="#000"/>
+<circle cx="747.9828703020365" cy="310.1438007546262" r="5" fill="#333" stroke="#000"/>
+<circle cx="435.0" cy="165.0" r="6" fill="#1565c0" stroke="#000"/>
+<text x="122.0171296979635" y="300.1438007546262" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#111">L elbow (−209,153)</text>
+<text x="747.9828703020365" y="300.1438007546262" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#111">R elbow (209,153)</text>
+<text x="435.0" y="153.0" font-family="sans-serif" font-size="12" text-anchor="middle" fill="#1565c0">TCP (0,250)</text>
+<circle cx="358.79999999999995" cy="540.0" r="6" fill="#000" stroke="#000"/>
+<circle cx="511.20000000000005" cy="540.0" r="6" fill="#000" stroke="#000"/>
+<text x="358.79999999999995" y="574.0" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#111">L base (−50.8,0)</text>
+<text x="511.20000000000005" y="574.0" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#111">R base (+50.8,0)</text>
+<text x="60" y="653.0" font-family="sans-serif" font-size="11.5" fill="#555">Small tab on proximal link L1 at r≈40 (green square). Sensor on a short base bracket at each trip angle. Limits −20°/+200° use the same L1 flag.</text>
+<text x="60" y="671.0" font-family="sans-serif" font-size="11.5" fill="#7f0000" font-weight="bold">Flag L1 only (proximal). Never L2 (distal, blue) — it floats with both joint angles.</text>
+<rect x="634.0" y="541.0" width="216" height="86" fill="#fafafa" stroke="#ccc"/>
+<rect x="646.0" y="550.0" width="12" height="12" fill="#2e7d32"/>
+<text x="664.0" y="560.0" font-family="sans-serif" font-size="11.5" fill="#333">home flag on L1</text>
+<rect x="646.0" y="568.0" width="12" height="12" fill="#c62828"/>
+<text x="664.0" y="578.0" font-family="sans-serif" font-size="11.5" fill="#333">limit flag on L1 (−20/+200)</text>
+<rect x="646.0" y="586.0" width="12" height="12" fill="#333"/>
+<text x="664.0" y="596.0" font-family="sans-serif" font-size="11.5" fill="#333">L1 proximal (flag this)</text>
+<rect x="646.0" y="604.0" width="12" height="12" fill="#1565c0"/>
+<text x="664.0" y="614.0" font-family="sans-serif" font-size="11.5" fill="#333">L2 distal (do NOT flag)</text>
+</svg>
