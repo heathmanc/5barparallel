@@ -130,6 +130,12 @@ re-runs the full work-zone validation and **refuses** geometry that can't clear
 every singularity/reach check (Claude.md §3); *Save to YAML* persists only
 validated geometry to `config/robot_config.yaml`.
 
+**PLC tab** — connect/disconnect the motion driver at runtime (dry-run,
+simulated PLC, or a real CompactLogix by IP/slot) and a read-only table of the
+full tag contract the PLC must implement. To build the Studio 5000 side, see
+[`docs/plc_program.md`](docs/plc_program.md) (UDT, AOIs, manual + auto state
+machines, homing, faults) and [`docs/homing.md`](docs/homing.md).
+
 The GUI is a thin view over the headless `RobotTestController`, which drives a
 swappable `RobotDriver`:
 - `DryRunRobotDriver` — in-process simulation.

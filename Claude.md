@@ -353,7 +353,9 @@ VisionRobot.Manual.CommandID      DINT   VisionRobot.Status.CompleteCommandID DI
 - `move_to_angles`: write `TargetLeft/RightDeg`, bump `Manual.CommandID`, pulse
   `MoveToTarget`, wait `CompleteCommandID == CommandID` **and** `InPosition`.
 Python side is `plc/plc_robot_driver.py`; `plc/compactlogix_client.py` includes a
-`SimulatedPlcClient` that emulates this ladder for `--sim-plc` and tests.
+`SimulatedPlcClient` that emulates this ladder for `--sim-plc` and tests. The
+Studio 5000 implementation outline (UDT, AOIs, manual + auto state machines,
+homing, faults) is in `docs/plc_program.md`.
 
 **Homing & limit switches (open-loop steppers → homing is mandatory each
 power-up).** Because of the 3:1 reduction, the home flag must sense the
