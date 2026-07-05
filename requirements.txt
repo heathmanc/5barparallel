@@ -1,10 +1,14 @@
-# Runtime dependency for the kinematics foundation.
+# Runtime dependencies for the implemented layers (kinematics + camera).
 PyYAML>=6.0
+numpy>=1.24
 
-# Test tooling.
+# Test tooling. opencv-headless backs the diagnostic frame-save path in tests.
 pytest>=7.0
+opencv-python-headless>=4.8
 
-# Needed by the still-to-build layers (Claude.md §14); uncomment as you go.
-# numpy>=1.24
-# opencv-python>=4.8
-# pycomm3>=1.2
+# Vision hardware/runtime (uncomment on the vision PC):
+#   opencv-python>=4.8   # full OpenCV (GUI-capable) instead of headless
+#   pypylon>=3.0         # Basler pylon SDK Python bindings (real camera)
+
+# Needed by the still-to-build PLC layer (Claude.md §14):
+#   pycomm3>=1.2

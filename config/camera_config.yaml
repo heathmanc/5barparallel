@@ -1,0 +1,45 @@
+# Basler camera configuration (Claude.md §12, §13).
+#
+# `camera` holds device-level settings; `controls` holds the imaging controls
+# pushed to the camera's GenICam node map. Logical control names are resolved to
+# the right node for your Basler model automatically (e.g. `brightness` ->
+# BslBrightness on ace2/dart, Brightness on older models). Set a control to null
+# (or omit it) to leave the camera's current value untouched.
+
+camera:
+  serial_number: null        # target a specific camera by serial; null = first found
+  device_index: 0            # which enumerated device to use when serial is null
+  output_pixel_format: BGR8  # frames handed to OpenCV: BGR8 (color) or Mono8 (gray)
+  grab_timeout_ms: 5000
+  # Sensor note (Claude.md §13): a 2592x1944 sensor needs lens undistortion
+  # before the homography, or the corners drift several pixels.
+  mock_width: 2592           # frame size used only by the dry-run MockCamera
+  mock_height: 1944
+
+controls:
+  # --- exposure ---
+  exposure_auto: "Off"       # Off | Once | Continuous
+  exposure_time_us: 8000.0   # microseconds; ignored unless exposure_auto is Off
+  # --- gain ---
+  gain_auto: "Off"           # Off | Once | Continuous
+  gain: 2.0                  # dB; ignored unless gain_auto is Off
+  # --- tone / appearance ---
+  brightness: 0.0
+  contrast: 1.0
+  gamma: 1.0
+  black_level: 0.0
+  saturation: 1.0
+  sharpness: 0.0
+  # --- white balance (color cameras) ---
+  white_balance_auto: "Continuous"   # Off | Once | Continuous
+  # --- orientation ---
+  reverse_x: false
+  reverse_y: false
+  # --- region of interest (null = full frame) ---
+  offset_x: null
+  offset_y: null
+  width: null
+  height: null
+  # --- frame rate ---
+  frame_rate_enable: false
+  frame_rate: null           # frames/s; only applied when frame_rate_enable is true
