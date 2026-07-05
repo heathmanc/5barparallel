@@ -52,6 +52,57 @@ def test_plc_tab_lists_every_tag(qapp):
     assert cells["VisionRobot.Status.ActualLeftDeg"] == "REAL"
 
 
+def test_plc_tab_connect_simulated_and_disconnect(qapp):
+    from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    win = MainWindow()  # dry-run by default
+    plc, rt = win.plc_tab, win.robot_test_tab
+    assert isinstance(win.controller.driver, DryRunRobotDriver)
+
+    # Reference against the dry-run driver first...
+    rt.enable_btn.click()
+    rt._on_home_reference()
+    assert win.controller.is_referenced
+
+    # ...then connecting the simulated PLC swaps the driver and forces re-home.
+    plc._on_connect_sim()
+    assert isinstance(win.controller.driver, PlcRobotDriver)
+    assert isinstance(win.controller.driver.client, SimulatedPlcClient)
+    assert "simulated PLC" in plc.status_label.text()
+    assert not win.controller.is_referenced
+    assert not rt.enable_btn.isChecked()  # refreshed after swap
+
+    # And it really drives: enable + home over the PLC handshake.
+    rt.enable_btn.click()
+    rt._on_home_reference()
+    assert win.controller.is_referenced
+
+    plc._on_disconnect()
+    assert isinstance(win.controller.driver, DryRunRobotDriver)
+    assert "dry-run" in plc.status_label.text()
+
+
+def test_plc_tab_connect_real_without_pycomm3_shows_error(qapp):
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    win = MainWindow()
+    plc = win.plc_tab
+    plc.path_edit.setText("192.168.1.10/0")
+    plc._on_connect_real()
+    # pycomm3 isn't installed here -> graceful error, driver unchanged.
+    assert "failed" in plc.status_label.text().lower()
+    assert isinstance(win.controller.driver, DryRunRobotDriver)
+
+
+def test_plc_tab_connect_real_requires_path(qapp):
+    win = MainWindow()
+    plc = win.plc_tab
+    plc.path_edit.setText("")
+    plc._on_connect_real()
+    assert "IP/slot" in plc.status_label.text()
+
+
 def test_jog_disabled_until_enabled_and_referenced(qapp):
     tab = RobotTestTab(build_dry_run_controller())
     assert all(not b.isEnabled() for b in tab._jog_buttons)

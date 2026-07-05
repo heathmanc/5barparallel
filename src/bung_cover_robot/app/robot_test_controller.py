@@ -93,6 +93,28 @@ class RobotTestController:
         """True once the hardware home reference has been found (driver.home)."""
         return self._referenced
 
+    # --- driver ------------------------------------------------------------
+    def set_driver(self, driver: RobotDriver) -> None:
+        """Hot-swap the motion driver (e.g. connect/disconnect a real PLC).
+
+        Disables and closes the old driver, then requires re-homing against the
+        new one (a fresh connection has no known position reference)."""
+        old = self.driver
+        if old is not driver:
+            try:
+                if old.is_enabled:
+                    old.disable()
+            except Exception:  # best effort; the old link may already be gone
+                pass
+            closer = getattr(old, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:
+                    pass
+        self.driver = driver
+        self._referenced = False
+
     # --- enable -------------------------------------------------------------
     def enable(self) -> None:
         self.driver.enable()

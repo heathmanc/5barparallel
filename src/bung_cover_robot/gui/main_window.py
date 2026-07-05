@@ -30,7 +30,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.robot_test_tab = RobotTestTab(self.controller)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
-        self.plc_tab = PlcTab()
+        self.plc_tab = PlcTab(self.controller)
         self.tabs.addTab(self.robot_test_tab, "Robot Test")
         self.tabs.addTab(self.settings_tab, "Settings")
         self.tabs.addTab(self.plc_tab, "PLC")
@@ -38,3 +38,5 @@ class MainWindow(QMainWindow):
 
         # Applying new geometry in Settings must refresh the Robot Test readout.
         self.settings_tab.geometryChanged.connect(self.robot_test_tab.refresh_all)
+        # Connecting/disconnecting a driver resets referenced/enabled state.
+        self.plc_tab.connectionChanged.connect(self.robot_test_tab.refresh_all)

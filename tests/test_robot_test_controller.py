@@ -169,6 +169,18 @@ def test_update_geometry_reresolves_pose():
 # --------------------------------------------------------------------------- #
 # Homing config wiring
 # --------------------------------------------------------------------------- #
+def test_set_driver_swaps_and_requires_rehome():
+    c = ready()  # dry-run, enabled + referenced
+    assert c.is_referenced and c.is_enabled
+    old = c.driver
+    new = DryRunRobotDriver(home_angles=old.read_angles())
+    c.set_driver(new)
+    assert c.driver is new
+    assert not c.is_referenced   # fresh driver -> must re-home
+    assert not c.is_enabled      # new dry-run starts disabled
+    assert not old.is_enabled    # old driver was disabled on swap
+
+
 def test_factory_uses_configured_home_reference():
     from bung_cover_robot.robot import HomingConfig
 

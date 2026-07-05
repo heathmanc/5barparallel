@@ -234,6 +234,7 @@ class RobotTestTab(QWidget):
         enabled = self.controller.is_enabled
         referenced = self.controller.is_referenced
         self.enable_btn.setText("Enabled" if enabled else "Enable")
+        self.enable_btn.setChecked(enabled)  # keep the toggle in sync after a swap
         self.ref_btn.setEnabled(enabled)
         # Jogging needs both enabled drives and a found home reference.
         for btn in getattr(self, "_jog_buttons", []):
