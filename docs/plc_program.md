@@ -152,6 +152,10 @@ time.
 
 ## 5. Add-On Instructions <a id="5-aoi"></a>
 
+> **Full drop-in build (ladder visuals + Structured Text) for every routine in
+> §5–§7 is in [`docs/plc_ladder.md`](plc_ladder.md).** The outlines below are the
+> design intent; that sheet is what you build from.
+
 Three reusable AOIs keep the logic clean and testable.
 
 ### `AOI_AxisMove` — move one ClearLink axis to an absolute angle
@@ -184,6 +188,8 @@ OUTPUT  Fault         BOOL     // set on timeout
 // sequence (see §8): fast approach -> switch -> back off -> slow re-approach
 // -> set Axis reference so ActualDeg = HomeAngleDeg -> Homed := TRUE
 ```
+> **Full drop-in build (ladder visuals + Structured Text) for `AOI_HomeAxis`
+> and the `R30_Homing` coordinator is in [`docs/plc_homing.md`](plc_homing.md).**
 
 ### `AOI_CmdHandshake` — CommandID acknowledgement
 ```
