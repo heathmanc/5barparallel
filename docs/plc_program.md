@@ -152,6 +152,10 @@ time.
 
 ## 5. Add-On Instructions <a id="5-aoi"></a>
 
+> **Full drop-in build (ladder visuals + Structured Text) for every routine in
+> §5–§7 is in [`docs/plc_ladder.md`](plc_ladder.md).** The outlines below are the
+> design intent; that sheet is what you build from.
+
 Three reusable AOIs keep the logic clean and testable.
 
 ### `AOI_AxisMove` — move one ClearLink axis to an absolute angle
