@@ -164,3 +164,19 @@ def test_update_geometry_reresolves_pose():
     assert c.kin.config.l1_mm == 225.0
     # Current pose remains resolved/valid.
     assert 0.0 < c.state.metrics["reach_fraction"] <= 0.85
+
+
+# --------------------------------------------------------------------------- #
+# Homing config wiring
+# --------------------------------------------------------------------------- #
+def test_factory_uses_configured_home_reference():
+    from bung_cover_robot.robot import HomingConfig
+
+    homing = HomingConfig()  # verified reference
+    c = build_dry_run_controller(homing=homing)
+    assert c.home_xy == homing.home_tcp_mm
+    c.enable()
+    c.home_reference()
+    # Driver reports the configured home angles; controller adopts them.
+    assert c.driver.read_angles() == pytest.approx(homing.home_angles)
+    assert c.state.tcp == pytest.approx(homing.home_tcp_mm, abs=1e-3)

@@ -226,23 +226,25 @@ class SettingsTab(QWidget):
 
         cfg = self._read_config()
         lim = self._read_limits()
-        data = {
-            "geometry": {
-                "l1_mm": cfg.l1_mm,
-                "l2_mm": cfg.l2_mm,
-                "base_spacing_mm": cfg.base_spacing_mm,
-            },
-            "assembly": {"left_elbow": cfg.left_elbow, "right_elbow": cfg.right_elbow},
-            "joint_limits": {"min_deg": cfg.joint_min_deg, "max_deg": cfg.joint_max_deg},
-            "drivetrain": {
-                "pulses_per_rev": cfg.pulses_per_rev,
-                "belt_reduction": cfg.belt_reduction,
-            },
-            "singularity": {
-                "parallel_min_deg": lim.parallel_min_deg,
-                "serial_min_deg": lim.serial_min_deg,
-                "reach_fraction_max": lim.reach_fraction_max,
-            },
+        # Preserve any other sections (e.g. homing) already in the file.
+        data = {}
+        if self.config_path.exists():
+            data = yaml.safe_load(self.config_path.read_text()) or {}
+        data["geometry"] = {
+            "l1_mm": cfg.l1_mm,
+            "l2_mm": cfg.l2_mm,
+            "base_spacing_mm": cfg.base_spacing_mm,
+        }
+        data["assembly"] = {"left_elbow": cfg.left_elbow, "right_elbow": cfg.right_elbow}
+        data["joint_limits"] = {"min_deg": cfg.joint_min_deg, "max_deg": cfg.joint_max_deg}
+        data["drivetrain"] = {
+            "pulses_per_rev": cfg.pulses_per_rev,
+            "belt_reduction": cfg.belt_reduction,
+        }
+        data["singularity"] = {
+            "parallel_min_deg": lim.parallel_min_deg,
+            "serial_min_deg": lim.serial_min_deg,
+            "reach_fraction_max": lim.reach_fraction_max,
         }
         self.config_path.write_text(yaml.safe_dump(data, sort_keys=False))
         self._status(f"Saved to {self.config_path}.", ok=True)

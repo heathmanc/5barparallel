@@ -94,3 +94,27 @@ def test_settings_refuses_geometry_that_breaks_workzone(qapp):
     assert st._on_apply() is False
     assert "Refused" in st.status_label.text()
     assert win.controller.kin.config.l1_mm == before  # unchanged
+
+
+def test_settings_save_preserves_homing_block(qapp, tmp_path):
+    import shutil
+
+    import yaml
+
+    from pathlib import Path
+
+    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
+    from bung_cover_robot.gui.settings_tab import SettingsTab
+
+    src = Path(__file__).resolve().parents[1] / "config" / "robot_config.yaml"
+    dst = tmp_path / "robot_config.yaml"
+    shutil.copy(src, dst)
+
+    st = SettingsTab(build_dry_run_controller(), config_path=dst)
+    st._floats["l1_mm"].setValue(221.0)  # a valid tweak
+    st._on_save()
+
+    data = yaml.safe_load(dst.read_text())
+    assert data["geometry"]["l1_mm"] == pytest.approx(221.0)
+    assert "homing" in data  # not clobbered
+    assert data["homing"]["flag_radius_mm"] == 40.0

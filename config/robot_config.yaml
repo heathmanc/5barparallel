@@ -26,3 +26,19 @@ singularity:
   parallel_min_deg: 20.0    # min degrees from the distal links being collinear
   serial_min_deg: 15.0      # min degrees from an arm being straight/folded
   reach_fraction_max: 0.85  # TCP distance / full reach (stiffness cap)
+
+homing:
+  # Home/limit switch reference — see docs/homing.md for the overhead figure.
+  # The home flag is a small tab on the PROXIMAL link L1 (never L2) at
+  # flag_radius_mm from the shoulder pivot; the sensor mounts on a short base
+  # bracket at the home trip angle. Both shoulders share the same trip angles.
+  # Mid-travel centre home (TCP = home_tcp_mm); the flag passes the sensor during
+  # normal motion, so the PLC reads it only during the homing routine.
+  home_left_deg: 135.8504   # left shoulder angle at the home reference pose
+  home_right_deg: 44.1496   # right shoulder angle at the home reference pose
+  home_tcp_mm: [0.0, 250.0] # TCP these angles correspond to (informational)
+  flag_radius_mm: 40.0      # tab radius on L1 (sensor bracket reaches to this)
+  # Hard travel limits — mirror joint_limits above; document the switch angles
+  # for the PLC. Wire into the drive ENABLE/fault chain.
+  limit_min_deg: -20.0
+  limit_max_deg: 200.0

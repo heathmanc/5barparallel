@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from ..robot.driver import DryRunRobotDriver, RobotDriver
+from ..robot.driver import DryRunRobotDriver, HomingConfig, RobotDriver
 from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
 from ..robot.workspace import WorkspaceValidator
 
@@ -253,11 +253,14 @@ class RobotTestController:
 
 
 def build_dry_run_controller(
-    home_xy: Point = DEFAULT_HOME_XY,
     config: Optional[FiveBarConfig] = None,
+    homing: Optional[HomingConfig] = None,
+    home_xy: Optional[Point] = None,
 ) -> RobotTestController:
-    """A controller backed by the simulated driver, referenced to a valid pose."""
+    """A controller backed by the simulated driver, using the configured home
+    reference (config/robot_config.yaml `homing` block)."""
     kin = FiveBarKinematics(config) if config is not None else FiveBarKinematics()
-    jt = kin.inverse(*home_xy)
-    driver = DryRunRobotDriver(home_angles=(jt.left_deg, jt.right_deg))
-    return RobotTestController(driver, kin, home_xy=home_xy)
+    homing = homing or HomingConfig()
+    driver = DryRunRobotDriver(home_angles=homing.home_angles)
+    hx = home_xy if home_xy is not None else homing.home_tcp_mm
+    return RobotTestController(driver, kin, home_xy=hx)
