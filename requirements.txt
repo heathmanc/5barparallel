@@ -1,0 +1,10 @@
+# Runtime dependency for the kinematics foundation.
+PyYAML>=6.0
+
+# Test tooling.
+pytest>=7.0
+
+# Needed by the still-to-build layers (Claude.md §14); uncomment as you go.
+# numpy>=1.24
+# opencv-python>=4.8
+# pycomm3>=1.2
