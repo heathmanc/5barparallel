@@ -468,12 +468,12 @@ blocks the HMI; Stop halts after the current pick). The loop is closed:
 **detect → calibrate (pixel→robot) → validate → plan → PLC pick/place handshake
 → re-image**, running in dry-run, `--sim-plc`, or on a real PLC. Remaining:
 
-1. **`app/diagnostics.py`** — save annotated images on any detection/validation
-   failure.
-2. **`main.py`** — CLI entry, `--config`, `--dry-run` / `--sim-plc`.
+1. **`main.py`** — CLI entry, `--config`, `--dry-run` / `--sim-plc`.
 
 (`config/recipes.yaml` + `app/recipes.py` are done — per-recipe calibration,
-hole count, and changeover are wired into the Calibration and Vision tabs.)
+hole count, and changeover are wired into the Calibration and Vision tabs.
+`app/diagnostics.py` (save annotated fail frames) is **deferred** — not needed
+right now.)
 
 Keep growing `tests/` alongside (planner logic, calibration round-trips, a
 dry-run cycle-manager smoke test).
