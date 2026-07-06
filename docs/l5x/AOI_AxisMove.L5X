@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" TargetName="AOI_AxisMove" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="RobotController">
+<Programs Use="Context">
+<Program Use="Context" Name="Robot">
+<Routines Use="Context">
+<Routine Use="Target" Name="AOI_AxisMove" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment><![CDATA[Motor 0 absolute move. Create tags: Move0_Execute/Move0_ons/Move0_Fault/Move0_InPosition (BOOL), Move0_Steps (DINT), Move0_Target_Deg (REAL), EM806_0_ALM (BOOL, alias to the EM806 ALM digital input). Constants: STEPS_PER_DEG (REAL 26.66667), MOVE_VEL/MOVE_ACC (DINT). Copy this routine for Motor 1 (Motor0_ -> Motor1_).]]></Comment>
+<Text><![CDATA[OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[Convert the target angle to steps.]]></Comment>
+<Text><![CDATA[CPT(Move0_Steps,TRUNC(Move0_Target_Deg * STEPS_PER_DEG));]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, and latch Load Position Data.]]></Comment>
+<Text><![CDATA[XIC(Move0_Execute)ONS(Move0_ons)XIO(Move0_Fault)MOV(Move0_Steps,ClearLink:O1.Motor0_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor0_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data);]]></Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Comment><![CDATA[ClearLink acknowledges the load -> drop Load Position Data.]]></Comment>
+<Text><![CDATA[XIC(ClearLink:I1.Motor0_Status_Load_Posn_Move_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data);]]></Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Comment><![CDATA[Move done = At Target Position (needs HLFB Inversion for the EM806).]]></Comment>
+<Text><![CDATA[XIC(ClearLink:I1.Motor0_Status_At_Target_Posn)XIO(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTE(Move0_InPosition);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.]]></Comment>
+<Text><![CDATA[[XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),XIC(ClearLink:I1.Motor0_Status_Shutdowns_Pres),XIC(EM806_0_ALM)]OTE(Move0_Fault);]]></Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>
