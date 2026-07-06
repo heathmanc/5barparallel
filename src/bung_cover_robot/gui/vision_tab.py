@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -21,11 +22,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..app.cycle_manager import CycleManager
+from ..app.recipes import RecipeStore
 from ..app.robot_test_controller import RobotTestController
 from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
 from ..vision.detect_covers import CoverDetector
-from ..vision.detect_holes import HoleDetector
+from ..vision.detect_holes import HoleDetector, HoleDetectorConfig
 from ..vision.detection import annotate
 from . import theme
 from .cycle_worker import CycleWorker
@@ -34,17 +36,22 @@ from .widgets import ImageView, StatusPill
 
 
 class VisionTab(QWidget):
+    # emitted when the operator changes the active recipe (changeover)
+    recipeChanged = Signal(str)
+
     def __init__(
         self,
         controller: RobotTestController,
         camera: Camera,
         calibration=None,
+        recipes: Optional[RecipeStore] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.camera = camera
         self.calibration = calibration  # HomographyTransform (pixel->robot) or None
+        self.recipes = recipes
         self.hole_detector = HoleDetector()
         self.cover_detector = CoverDetector()
         self._frame = None
@@ -80,6 +87,17 @@ class VisionTab(QWidget):
         panel.setFixedWidth(260)
         v = QVBoxLayout(panel)
         v.setContentsMargins(0, 0, 0, 0)
+
+        recipe_box = QGroupBox("Recipe (changeover)")
+        rv = QVBoxLayout(recipe_box)
+        self.recipe_combo = QComboBox()
+        if self.recipes is not None:
+            for r in self.recipes.list():
+                self.recipe_combo.addItem(r.name, r.key)
+        self.recipe_combo.currentIndexChanged.connect(self._on_recipe_changed)
+        self.recipe_combo.setEnabled(self.recipes is not None)
+        rv.addWidget(self.recipe_combo)
+        v.addWidget(recipe_box)
 
         status_box = QGroupBox("System status")
         grid = QGridLayout(status_box)
@@ -157,6 +175,20 @@ class VisionTab(QWidget):
 
     def set_calibration(self, calibration) -> None:
         self.calibration = calibration
+
+    # --- recipe (changeover) ------------------------------------------------
+    def active_recipe_key(self) -> Optional[str]:
+        key = self.recipe_combo.currentData()
+        return str(key) if key is not None else None
+
+    def _on_recipe_changed(self) -> None:
+        key = self.active_recipe_key()
+        if key is not None:
+            self.recipeChanged.emit(key)
+
+    def set_hole_count(self, count: int) -> None:
+        """Apply the active recipe's expected vent-hole count to the detector."""
+        self.hole_detector = HoleDetector(HoleDetectorConfig(expected_count=count))
 
     # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:

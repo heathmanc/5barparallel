@@ -14,6 +14,7 @@ from .cycle_manager import (
     JobRunner,
     make_job_runner,
 )
+from .recipes import Recipe, RecipeError, RecipeStore, slugify_key
 from .robot_test_controller import (
     RobotTestController,
     build_dry_run_controller,
@@ -27,7 +28,11 @@ __all__ = [
     "DryRunJobRunner",
     "HandshakeJobRunner",
     "JobRunner",
+    "Recipe",
+    "RecipeError",
+    "RecipeStore",
     "RobotTestController",
     "build_dry_run_controller",
     "make_job_runner",
+    "slugify_key",
 ]

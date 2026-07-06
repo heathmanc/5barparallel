@@ -1,0 +1,128 @@
+"""Battery recipes (Claude.md §13).
+
+A *recipe* is a battery type. Because the vent holes and the loose covers share
+one plane that a changeover shifts, each recipe owns its own pixel->robot
+calibration — stored per-recipe at ``calibration/<key>.npy`` by
+``vision.calibration.CalibrationManager``. A recipe also carries the few
+process values that vary by battery type (vent-hole count, cover diameter).
+
+Selecting a recipe at changeover loads that recipe's calibration and detection
+parameters for the whole cycle.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional
+
+_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+class RecipeError(Exception):
+    """Missing recipe or invalid recipe key."""
+
+
+def slugify_key(text: str) -> str:
+    """Turn free text into a filename-safe recipe key (calibration filename)."""
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", text.strip()).strip("-")
+    return slug.lower()
+
+
+@dataclass(frozen=True)
+class Recipe:
+    key: str                       # filename-safe id; also the calibration key
+    name: str                      # human-readable label
+    hole_count: int = 6            # expected vent holes (feeds the hole detector)
+    cover_diameter_mm: float = 0.0  # nominal cover size (0 = unspecified)
+
+    def __post_init__(self) -> None:
+        if not _KEY_RE.match(self.key):
+            raise RecipeError(
+                f"invalid recipe key {self.key!r} (use letters, digits, - and _)"
+            )
+        if self.hole_count < 1:
+            raise RecipeError("hole_count must be >= 1")
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Recipe":
+        return cls(
+            key=str(data["key"]),
+            name=str(data.get("name", data["key"])),
+            hole_count=int(data.get("hole_count", 6)),
+            cover_diameter_mm=float(data.get("cover_diameter_mm", 0.0)),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "name": self.name,
+            "hole_count": self.hole_count,
+            "cover_diameter_mm": self.cover_diameter_mm,
+        }
+
+
+_DEFAULT_RECIPES = (
+    Recipe("g31-6", "Group 31 (6-vent)", hole_count=6, cover_diameter_mm=18.0),
+    Recipe("g24-6", "Group 24 (6-vent)", hole_count=6, cover_diameter_mm=18.0),
+)
+
+
+class RecipeStore:
+    """The set of known recipes, backed by ``config/recipes.yaml``."""
+
+    def __init__(
+        self, recipes: Optional[List[Recipe]] = None, path: Optional[str | Path] = None
+    ) -> None:
+        self.path: Optional[Path] = Path(path) if path else None
+        source = recipes if recipes is not None else list(_DEFAULT_RECIPES)
+        self._recipes: Dict[str, Recipe] = {r.key: r for r in source}
+
+    # --- loading ------------------------------------------------------------
+    @classmethod
+    def load(cls, path: str | Path) -> "RecipeStore":
+        """Load from YAML; falls back to the built-in defaults if the file is
+        missing or empty (still remembering ``path`` so new recipes persist)."""
+        import yaml
+
+        p = Path(path)
+        if not p.exists():
+            return cls(path=p)
+        data = yaml.safe_load(p.read_text()) or {}
+        recipes = [Recipe.from_dict(d) for d in data.get("recipes", [])]
+        return cls(recipes or None, path=p)
+
+    def save(self) -> Optional[Path]:
+        if self.path is None:
+            return None
+        import yaml
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            yaml.safe_dump(
+                {"recipes": [r.to_dict() for r in self.list()]}, sort_keys=False
+            )
+        )
+        return self.path
+
+    # --- access -------------------------------------------------------------
+    def list(self) -> List[Recipe]:
+        return list(self._recipes.values())
+
+    def keys(self) -> List[str]:
+        return list(self._recipes.keys())
+
+    def has(self, key: str) -> bool:
+        return key in self._recipes
+
+    def get(self, key: str) -> Recipe:
+        if key not in self._recipes:
+            raise RecipeError(f"no recipe {key!r}")
+        return self._recipes[key]
+
+    def add(self, recipe: Recipe) -> Recipe:
+        """Add (or replace) a recipe and persist the store."""
+        self._recipes[recipe.key] = recipe
+        self.save()
+        return recipe
