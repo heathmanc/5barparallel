@@ -18,48 +18,72 @@ pasteable; the ladder is the visual to rebuild rung-by-rung.
 
 ## Shared: `AxisIF` UDT & constants
 
-One `AxisIF` per shoulder (`Ax0`, `Ax1`), wrapping the ClearLink AOP assembly
-(map each member to the real AOP member — names vary by revision). Superset of
-the homing members in `plc_homing.md`:
+One `AxisIF` per shoulder (`Ax0`, `Ax1`), aliasing the ClearLink **Step-Dir**
+`ClearLink:O1`/`:I1` motor block. Members alias the **exact AOP tags** (full list
++ homing members in `docs/plc_homing.md` §1); the move-related superset:
 
-| Member | Type | Use |
-|---|---|---|
-| `Enable` | BOOL | energize the drive |
-| `Ready` | BOOL | drive enabled & healthy |
-| `Stop` | BOOL | stop motion |
-| `Alarm` | BOOL | EM806 ALM (fault) |
-| `CmdPosition` | DINT | absolute move target (steps) |
-| `MoveTrigger` | BOOL | request the absolute move |
-| `MoveDone` | BOOL | move profile complete |
-| `ActualSteps` | DINT | current commanded count |
-| `JogHome`/`JogBack` | BOOL | homing jog directions |
-| `JogVel` | DINT | jog velocity (steps/s) |
-| `Redefine` | BOOL | set current position |
-| `PosRef` | DINT | value written on redefine |
+| Member | Real AOP tag (Motor 0) |
+|---|---|
+| `MoveDist` | `ClearLink:O1.Motor0_Move_Dist` |
+| `VelLimit` | `ClearLink:O1.Motor0_Vel_Limit` |
+| `AccelLim` | `ClearLink:O1.Motor0_Accel_Lim` |
+| `Enable` | `ClearLink:O1.Motor0_Output_Reg_Enable` |
+| `AbsFlag` | `ClearLink:O1.Motor0_Output_Reg_Abs_Flag` |
+| `LoadPosnData` | `ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data` |
+| `CmdPosition` | `ClearLink:I1.Motor0_CommandedPosn` |
+| `AtTargetPosn` | `ClearLink:I1.Motor0_Status_At_Target_Posn` |
+| `StepsActive` | `ClearLink:I1.Motor0_Status_Steps_Active` |
+| `LoadPosnMoveAck` | `ClearLink:I1.Motor0_Status_Load_Posn_Move_Ack` |
+| `MotorInFault` | `ClearLink:I1.Motor0_Status_Motor_In_Fault` |
+| `ShutdownsPres` | `ClearLink:I1.Motor0_Status_Shutdowns_Pres` |
+| `ALM` | EM806 alarm → a ClearLink digital input (DIP object) |
 
-Constants: `STEPS_PER_DEG := 26.66667`, plus `VAC_SETTLE`, `BLOWOFF_TIME` (timer
-presets, ms) and the pose angles `PickL/PickR/DropL/DropR`,
-`CAMERA_CLEAR_L/CAMERA_CLEAR_R`. Fault codes are the table in `plc_program.md` §9.
+> **No Teknic motion AOI, but working example projects** — Teknic ships
+> CompactLogix examples (`SD_Position_Move`, `SD_Homing`, `SD_Jog`, …); build from
+> those. The **exact AOP tag names** are in `docs/plc_homing.md` §1
+> (`ClearLink:O1.Motor0_Output_Reg_Enable`, `..._Load_Posn_Data`,
+> `ClearLink:I1.Motor0_Status_At_Target_Posn`, …). There is no
+> `MoveTrigger`/`MoveDone`/`Redefine` member — those were invented; use the
+> Load-Posn-Data → Ack handshake, and for homing the ClearLink's built-in homing
+> move (`plc_homing.md`).
+
+Constants: `STEPS_PER_DEG := 26.66667`, `MOVE_VEL/MOVE_ACC/MOVE_DEC` (move
+profile), plus `VAC_SETTLE`, `BLOWOFF_TIME` (timer presets, ms) and the pose
+angles `PickL/PickR/DropL/DropR`, `CAMERA_CLEAR_L/CAMERA_CLEAR_R`. Fault codes are
+the table in `plc_program.md` §9.
 
 ---
 
 ## `AOI_AxisMove` — move one shoulder to an absolute angle
 
 Params: `In` TargetDeg (REAL), Execute (BOOL), StepsPerDeg (REAL) · `InOut` Ax
-(`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` TargetSteps (DINT).
+(`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` prevExec, Loaded
+(BOOL).
 
-![AOI_AxisMove ladder](plc_axismove_ladder.svg)
+> ⚠️ **`plc_axismove_ladder.svg` shows the superseded `MoveTrigger`/`MoveDone`
+> interface.** Rebuild from the corrected ST below (which mirrors Teknic's
+> `SD_Position_Move`): load the move, latch **Load_Posn_Data**, clear it on the
+> **Ack**, and take *move done* from **At_Target_Posn** (`Steps_Active == 0` if
+> the EM806's HLFB Inversion isn't set — §3).
 
 ```pascal
-TargetSteps := TRUNC(TargetDeg * StepsPerDeg);
-IF Execute AND NOT Fault THEN
-    Ax.CmdPosition := TargetSteps;
-    Ax.MoveTrigger := 1;
-ELSE
-    Ax.MoveTrigger := 0;
+Ax.Enable := 1;                                 (* Motor_Output_Reg_Enable *)
+
+IF Execute AND NOT prevExec AND NOT Fault THEN  (* rising edge: load the move *)
+    Ax.MoveDist  := TRUNC(TargetDeg * StepsPerDeg);
+    Ax.VelLimit  := MOVE_VEL;
+    Ax.AccelLim  := MOVE_ACC;
+    Ax.AbsFlag   := 1;                           (* absolute move *)
+    Ax.LoadPosnData := 1;                        (* Output_Reg_Load_Posn_Data *)
+    Loaded := 1;
 END_IF;
-InPosition := Ax.MoveDone AND (Ax.CmdPosition = TargetSteps);
-Fault      := Ax.Alarm;
+prevExec := Execute;
+
+IF Ax.LoadPosnMoveAck THEN Ax.LoadPosnData := 0; END_IF;   (* handshake ack *)
+
+InPosition := Loaded AND Ax.AtTargetPosn AND NOT Ax.LoadPosnData;
+IF InPosition THEN Loaded := 0; END_IF;
+Fault := Ax.MotorInFault OR Ax.ShutdownsPres OR Ax.ALM;
 ```
 
 ---
