@@ -46,6 +46,7 @@ error and I'll fix the generator.
 
 from __future__ import annotations
 
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -53,6 +54,9 @@ from xml.sax.saxutils import escape
 
 Rung = Tuple[str, str]  # (comment, neutral text)
 
+# Controller name — used as the L5X Controller context AND, crucially, the tag
+# CSV's SCOPE column (an empty SCOPE makes Studio 5000 import nothing). Override
+# with your real controller name:  python scripts/render_plc_l5x.py MyController
 CONTROLLER = "RobotController"
 PROGRAM = "Robot"
 EXPORT_OPTS = (
@@ -340,9 +344,10 @@ class Tag:
             radix = "Float" if self.dtype == "REAL" else "Decimal"
             attrs = (f"RADIX := {radix}, ExternalAccess := Read/Write, "
                      f"Constant := {const}")
-        # controller scope (empty SCOPE column); simple/bare DATATYPE + empty
-        # SPECIFIER, matching how Logix itself exports a controller tag row.
-        return f"TAG,,{self.name},{_csv(self.desc)},{self.dtype},,{_csv('(' + attrs + ')')}"
+        # SCOPE = controller name (NOT empty — an empty SCOPE imports nothing);
+        # bare DATATYPE + empty SPECIFIER, matching how Logix exports a tag row.
+        return (f"TAG,{CONTROLLER},{self.name},{_csv(self.desc)},{self.dtype},,"
+                f"{_csv('(' + attrs + ')')}")
 
 
 def _csv(field: str) -> str:
@@ -364,7 +369,7 @@ def _glue_tags() -> List[Tag]:
     # --- constants & tuning values (CSV carries no values — set after import) ---
     add("STEPS_PER_DEG", "REAL", "26.66667", True,
         "3200 pulses/rev * 3:1 / 360. Set value to 26.66667 after import.")
-    add("MOVE_VEL", "DINT", "20000", desc="Move speed, steps/s (<=500000). Set ~20000.")
+    add("MOVE_VEL", "DINT", "20000", desc="Move speed, steps/s (max 500000). Set ~20000.")
     add("MOVE_ACC", "DINT", "100000", desc="Move accel, steps/s^2. Set ~100000.")
     add("MOVE_DEC", "DINT", "0", desc="Move decel, steps/s^2. 0 => use accel.")
     add("HOME_VEL_0", "DINT", "-2000",
@@ -470,11 +475,16 @@ def robot_tags_csv() -> str:
         "TYPE,SCOPE,NAME,DESCRIPTION,DATATYPE,SPECIFIER,ATTRIBUTES",
     ]
     rows = [t.csv_row() for t in _glue_tags()]
-    return "\n".join(header + rows) + "\n"
+    # CRLF — Studio 5000 (Windows) imports nothing from an LF-only CSV.
+    return "\r\n".join(header + rows) + "\r\n"
 
 
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    global CONTROLLER
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        CONTROLLER = sys.argv[1].strip()
+        print(f"controller/scope = {CONTROLLER}")
     out = Path(__file__).resolve().parents[1] / "docs" / "l5x"
     out.mkdir(parents=True, exist_ok=True)
 
@@ -501,7 +511,8 @@ def main() -> None:
         print(f"wrote {out / name}")
 
     csv_text = robot_tags_csv()
-    (out / "RobotTags.csv").write_text(csv_text)
+    # write_bytes so the CRLF line endings survive verbatim on any platform
+    (out / "RobotTags.csv").write_bytes(csv_text.encode("ascii"))
     print(f"wrote {out / 'RobotTags.csv'}")
 
 
