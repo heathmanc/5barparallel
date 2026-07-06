@@ -1,0 +1,3 @@
+# Studio 5000 tag-import CSV must keep its CRLF line endings — Logix on Windows
+# imports nothing from an LF-only file. Treat as binary so git never normalizes it.
+docs/l5x/*.csv -text

@@ -134,10 +134,21 @@ create the nested types from one combined file, so they're split, leaves first:
 | `4_VisionRobot_Status.L5X` | `VisionRobot_Status` |
 | `5_VisionRobot.L5X` | `VisionRobot` (references the four above — import it **last**) |
 
-**2 — the tags, as a CSV** (`Controller Tags → right-click → Import…`, **after**
+**2 — the tags, as a CSV** (`Tools → Import → Tags and Logic Comments…`, **after**
 the UDT exists — the file is a Rockwell tag CSV, not L5X). These are all
-**controller-scope** (empty `SCOPE` column) so both the vision PC and every
-program routine can reach them:
+**controller-scope** so both the vision PC and every program routine can reach them.
+
+> ⚠️ **Two things that make Logix import *nothing* — both already handled in the
+> shipped file, but know them if you regenerate or hand-edit:**
+> - **`SCOPE` must be your controller's name, not blank.** The file ships with
+>   `SCOPE = RobotController`. If your controller has a different name, either
+>   regenerate — `python scripts/render_plc_l5x.py YourControllerName` — or
+>   find/replace `RobotController` in the CSV, or in the import dialog choose the
+>   option to ignore/trim the scope.
+> - **Line endings must be CRLF.** The file is written with CRLF and marked
+>   `-text` in `.gitattributes` so git won't convert it. If you open and re-save
+>   it in an editor, keep Windows (CRLF) line endings or the import silently does
+>   nothing.
 
 | `docs/l5x/…` | Creates (controller scope) |
 |---|---|
