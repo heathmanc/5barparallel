@@ -340,10 +340,9 @@ class Tag:
             radix = "Float" if self.dtype == "REAL" else "Decimal"
             attrs = (f"RADIX := {radix}, ExternalAccess := Read/Write, "
                      f"Constant := {const}")
-        return ",".join([
-            "TAG", "", self.name, _csv(self.desc), _csv(self.dtype), '""',
-            _csv(f"({attrs})"),
-        ])
+        # controller scope (empty SCOPE column); simple/bare DATATYPE + empty
+        # SPECIFIER, matching how Logix itself exports a controller tag row.
+        return f"TAG,,{self.name},{_csv(self.desc)},{self.dtype},,{_csv('(' + attrs + ')')}"
 
 
 def _csv(field: str) -> str:
@@ -352,57 +351,112 @@ def _csv(field: str) -> str:
 
 
 def _glue_tags() -> List[Tag]:
+    """Every controller-scope tag the whole PLC program references, excluding the
+    ClearLink module tags (from the AOP) and the VisionRobot.* members (from the
+    UDT). Grouped by the routine that owns it (plc_program.md / plc_ladder.md /
+    plc_homing.md). Physical I/O tags are base BOOLs to alias/map to real points.
+    """
     tags: List[Tag] = []
-    # tuning + fixed values (values are entered by hand — CSV carries no values)
-    tags.append(Tag("STEPS_PER_DEG", "REAL", "26.66667", constant=True,
-                    desc="3200 pulses/rev * 3:1 / 360. Fixed mechanical ratio. "
-                         "Set value to 26.66667 after import."))
-    tags.append(Tag("MOVE_VEL", "DINT", "20000",
-                    desc="Absolute-move speed, steps/s (<= 500000). Set ~20000, tune."))
-    tags.append(Tag("MOVE_ACC", "DINT", "100000",
-                    desc="Absolute-move accel, steps/s^2. Set ~100000, tune."))
-    tags.append(Tag("HOME_VEL_0", "DINT", "-2000",
-                    desc="Motor 0 homing speed, steps/s, SIGNED toward the prox. "
-                         "Set ~-2000, tune sign+magnitude at commissioning."))
-    tags.append(Tag("HOME_VEL_1", "DINT", "2000",
-                    desc="Motor 1 homing speed, steps/s, SIGNED toward the prox. "
-                         "Shoulders often home opposite ways; set ~2000, tune."))
-    tags.append(Tag("HOME_ACC", "DINT", "50000",
-                    desc="Homing accel, steps/s^2. Set ~50000."))
-    tags.append(Tag("HOME_OFFSET_L", "DINT", "0",
-                    desc="Left switch angle * STEPS_PER_DEG so ActualLeftDeg reads "
-                         "~135.85 after homing. Set at commissioning."))
-    tags.append(Tag("HOME_OFFSET_R", "DINT", "0",
-                    desc="Right switch angle * STEPS_PER_DEG so ActualRightDeg "
-                         "reads ~44.15 after homing. Set at commissioning."))
-    # per-motor glue
+
+    def add(name, dtype, value="0", constant=False, desc=""):
+        tags.append(Tag(name, dtype, value, constant=constant, desc=desc))
+
+    # --- constants & tuning values (CSV carries no values — set after import) ---
+    add("STEPS_PER_DEG", "REAL", "26.66667", True,
+        "3200 pulses/rev * 3:1 / 360. Set value to 26.66667 after import.")
+    add("MOVE_VEL", "DINT", "20000", desc="Move speed, steps/s (<=500000). Set ~20000.")
+    add("MOVE_ACC", "DINT", "100000", desc="Move accel, steps/s^2. Set ~100000.")
+    add("MOVE_DEC", "DINT", "0", desc="Move decel, steps/s^2. 0 => use accel.")
+    add("HOME_VEL_0", "DINT", "-2000",
+        desc="Motor 0 homing speed, steps/s, signed toward the prox. Tune.")
+    add("HOME_VEL_1", "DINT", "2000",
+        desc="Motor 1 homing speed, steps/s, signed toward the prox. Tune.")
+    add("HOME_ACC", "DINT", "50000", desc="Homing accel, steps/s^2. Set ~50000.")
+    add("HOME_OFFSET_L", "DINT", "0",
+        desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning.")
+    add("HOME_OFFSET_R", "DINT", "0",
+        desc="Right switch angle * STEPS_PER_DEG (ActualRightDeg ~44.15). Set at commissioning.")
+    add("VAC_SETTLE", "DINT", "300", desc="Vacuum settle time, ms (VacTmr preset). Tune.")
+    add("BLOWOFF_TIME", "DINT", "200", desc="Blowoff time, ms (BlowTmr preset). Tune.")
+    add("CAMERA_CLEAR_L", "REAL", "0.0",
+        desc="Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose.")
+    add("CAMERA_CLEAR_R", "REAL", "0.0",
+        desc="Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose.")
+
+    # --- per-motor move + home glue (R_MoveMotor* / R_HomeMotor*) ---
     for m in (0, 1):
-        tags += [
-            Tag(f"Move{m}_Execute", "BOOL"),
-            Tag(f"Move{m}_ons", "BOOL"),
-            Tag(f"Move{m}_Fault", "BOOL"),
-            Tag(f"Move{m}_InPosition", "BOOL"),
-            Tag(f"Move{m}_Steps", "DINT"),
-            Tag(f"Move{m}_Target_Deg", "REAL", "0.0"),
-            Tag(f"Home{m}_Req", "BOOL"),
-            Tag(f"Home{m}_ons", "BOOL"),
-            Tag(f"Home{m}_State", "DINT"),
-            Tag(f"Home{m}_Tmr", "TIMER"),
-            Tag(f"Ax{m}_HomeDone", "BOOL"),
-            Tag(f"Ax{m}_HomeFault", "BOOL"),
-            Tag(f"EM806_{m}_ALM", "BOOL",
-                desc=f"Motor {m} EM806 ALM. After import, change this to an ALIAS "
-                     f"of the ClearLink digital input the drive alarm is wired to."),
-        ]
-    # coordinator scope
-    tags += [
-        Tag("HomeStep", "DINT"),
-        Tag("HR_ons", "BOOL"),
-        Tag("SoftLimitsEnable", "BOOL"),
-        Tag("VisionRobot", "VisionRobot",
-            desc="Vision-PC handshake surface (pycomm3 reads/writes by name). "
-                 "Import the VisionRobot UDT .L5X files first so this type resolves."),
-    ]
+        add(f"Move{m}_Execute", "BOOL", desc=f"Rising edge starts a Motor {m} absolute move.")
+        add(f"Move{m}_ons", "BOOL", desc=f"ONS storage for Move{m}_Execute.")
+        add(f"Move{m}_Fault", "BOOL", desc=f"Motor {m} move fault (drive fault / shutdown / ALM).")
+        add(f"Move{m}_InPosition", "BOOL", desc=f"Motor {m} at target.")
+        add(f"Move{m}_Steps", "DINT", desc=f"Motor {m} target in steps (deg * STEPS_PER_DEG).")
+        add(f"Move{m}_Target_Deg", "REAL", "0.0", desc=f"Motor {m} absolute target angle, deg.")
+        add(f"Home{m}_Req", "BOOL", desc=f"Request homing of Motor {m} (set by R30_Homing).")
+        add(f"Home{m}_ons", "BOOL", desc=f"ONS storage for Home{m}_Req.")
+        add(f"Home{m}_State", "DINT", desc=f"Motor {m} homing sub-state.")
+        add(f"Home{m}_Tmr", "TIMER", desc=f"Motor {m} homing timeout timer.")
+        add(f"Ax{m}_HomeDone", "BOOL", desc=f"Motor {m} homed.")
+        add(f"Ax{m}_HomeFault", "BOOL", desc=f"Motor {m} homing fault.")
+        add(f"Ax{m}_Ready", "BOOL",
+            desc=f"Motor {m} drive ready (map to ClearLink:I1.Motor{m}_Status_Enabled).")
+        add(f"EM806_{m}_ALM", "BOOL",
+            desc=f"Motor {m} EM806 ALM. Change to an ALIAS of the ClearLink DI the drive alarm is wired to.")
+
+    # --- homing coordinator (R30_Homing) ---
+    add("HomeStep", "DINT", desc="Homing coordinator state.")
+    add("HR_ons", "BOOL", desc="ONS storage for VisionRobot.Manual.HomeRequest.")
+    add("SoftLimitsEnable", "BOOL", desc="Enable soft limits after homing (mirror Config Register SoftLimitEnable).")
+
+    # --- safety (R10_Safety): physical inputs + logic bits ---
+    add("EStop_Pressed", "BOOL", desc="E-stop pressed input. Map/alias to the hardwired E-stop.")
+    add("EStop_OK", "BOOL", desc="E-stop circuit healthy (safety-relay feedback). Map to input.")
+    add("Guard_Closed", "BOOL", desc="Guard / interlock closed input. Map to input.")
+    add("Ax0_LimitMin", "BOOL", desc="Left shoulder min hard-limit (-20 deg) input. Map to input.")
+    add("Ax0_LimitMax", "BOOL", desc="Left shoulder max hard-limit (+200 deg) input. Map to input.")
+    add("Ax1_LimitMin", "BOOL", desc="Right shoulder min hard-limit input. Map to input.")
+    add("Ax1_LimitMax", "BOOL", desc="Right shoulder max hard-limit input. Map to input.")
+    add("SafetyOK", "BOOL", desc="Aggregate safe: no fault, E-stop OK, guard closed.")
+    add("EnableReq", "BOOL", desc="Drive-enable request (set by manual/auto).")
+    add("Reset_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.Reset in R10.")
+
+    # --- manual jog/home (R40_Manual) + mode selector ---
+    add("AutoMode", "BOOL", desc="Mode: 1 = auto (R50) owns motion, 0 = manual (R40).")
+    add("WithinLimits", "BOOL", desc="Manual target within -20..+200 deg soft limits.")
+    add("MoveActive", "BOOL", desc="A manual coordinated move is in progress.")
+    add("MTT_prev", "BOOL", desc="Edge storage for VisionRobot.Manual.MoveToTarget.")
+
+    # --- automatic pick/place (R50_Auto) ---
+    add("State", "DINT", desc="Auto pick/place state (0 idle .. 200 done, 900 fault).")
+    add("RPP_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.RequestPickPlace.")
+    add("AR_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.Reset in R50.")
+    add("VacTmr", "TIMER", desc="Vacuum settle timer (preset VAC_SETTLE).")
+    add("BlowTmr", "TIMER", desc="Blowoff timer (preset BLOWOFF_TIME).")
+    add("CmdCameraClear", "BOOL", desc="Dispatch: move to the camera-clear pose.")
+    add("CmdMovePick", "BOOL", desc="Dispatch: move above the pick.")
+    add("CmdMoveDrop", "BOOL", desc="Dispatch: move above the drop.")
+    add("Arrived", "BOOL", desc="Both axes in position after an auto move.")
+    add("AtCameraClear", "BOOL", desc="Arrived at the camera-clear pose.")
+    add("AtPick", "BOOL", desc="Arrived above the pick.")
+    add("AtDrop", "BOOL", desc="Arrived above the drop.")
+    add("AutoTL", "REAL", "0.0", desc="Auto move target, left shoulder deg.")
+    add("AutoTR", "REAL", "0.0", desc="Auto move target, right shoulder deg.")
+    add("AutoMove", "BOOL", desc="Auto move request (drives Move0/Move1 in auto mode).")
+    add("PickL", "REAL", "0.0", desc="Working copy of VisionRobot.Target.Pick_LeftDeg (latched state 40).")
+    add("PickR", "REAL", "0.0", desc="Working copy of VisionRobot.Target.Pick_RightDeg.")
+    add("DropL", "REAL", "0.0", desc="Working copy of VisionRobot.Target.Drop_LeftDeg.")
+    add("DropR", "REAL", "0.0", desc="Working copy of VisionRobot.Target.Drop_RightDeg.")
+    add("CylinderDown", "BOOL", desc="Z down solenoid output. Map/alias to the actual output.")
+    add("VacuumOn", "BOOL", desc="Vacuum solenoid output. Map/alias to the actual output.")
+    add("Blowoff", "BOOL", desc="Blowoff solenoid output. Map/alias to the actual output.")
+    add("PickDown", "BOOL", desc="Z-down-at-pick reed switch input. Map to input.")
+    add("PickUp", "BOOL", desc="Z-up-at-pick reed switch input. Map to input.")
+    add("DropDown", "BOOL", desc="Z-down-at-drop reed switch input. Map to input.")
+    add("DropUp", "BOOL", desc="Z-up-at-drop reed switch input. Map to input.")
+    add("VacuumSensor", "BOOL", desc="Vacuum-confirm sensor input. Map to input.")
+
+    # --- the vision handshake surface (import the UDT files first) ---
+    add("VisionRobot", "VisionRobot",
+        desc="Vision-PC handshake surface (pycomm3 by name). Import the VisionRobot UDT .L5X files first.")
     return tags
 
 
