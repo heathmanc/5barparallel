@@ -9,23 +9,45 @@ workspace/singularity guard, and hands one pick/place job to a CompactLogix PLC.
 See [`Claude.md`](Claude.md) for the full design, the verified geometry, and the
 hardware/software responsibility split.
 
+## Screenshots
+
+A PySide6 dark-theme HMI. The **Vision** tab is the main run screen — detected
+vent holes (numbered) and loose covers (green = reachable and correctly sized,
+red = outside the clean work zone), with live drive / home / PLC / camera status
+and the automatic pick-place cycle behind **Start**.
+
+![Vision tab](docs/screenshots/vision.png)
+
+|  |  |
+|---|---|
+| **Calibration** — click known points, fit a per-recipe pixel→robot homography (RMS residual reported) | **Camera** — Basler imaging controls with a live preview |
+| ![Calibration tab](docs/screenshots/calibration.png) | ![Camera tab](docs/screenshots/camera.png) |
+| **Robot Test** — reference, teach home, and jog (every move workspace-validated) | **Settings** — geometry + workspace-guard thresholds, re-validated on apply |
+| ![Robot Test tab](docs/screenshots/robot_test.png) | ![Settings tab](docs/screenshots/settings.png) |
+| **PLC** — connect a driver at runtime + the full tag contract the Studio 5000 program must implement |  |
+| ![PLC tab](docs/screenshots/plc.png) |  |
+
 ## Status
 
-Only the **verified kinematics foundation** is implemented so far:
+The full pipeline is implemented and tested end-to-end (141 tests) — it runs in
+dry-run, against a simulated PLC, or on real hardware:
 
-| Module | Status |
+> **capture → detect (holes + covers) → per-recipe calibration (pixel→robot) →
+> workspace/singularity validation → plan pick & drop → PLC pick/place handshake
+> → re-image → next hole.**
+
+| Area | Status |
 |---|---|
-| `config/robot_config.yaml` | done — verified geometry |
-| `src/bung_cover_robot/robot/fivebar_kinematics.py` | done, tested |
-| `src/bung_cover_robot/robot/workspace.py` | done, tested |
-| `config/camera_config.yaml` | done |
-| `src/bung_cover_robot/vision/camera.py` | done, tested — Basler (pypylon) + mock |
-| `src/bung_cover_robot/robot/driver.py` | done, tested — dry-run + PLC-backed drivers |
-| `src/bung_cover_robot/plc/{tags,compactlogix_client,plc_robot_driver}.py` | done, tested — jog/home over EtherNet/IP + simulator |
-| `src/bung_cover_robot/app/robot_test_controller.py` | done, tested — reference + home + jog logic |
-| `src/bung_cover_robot/gui/` | done — PySide6 HMI, Robot Test + Settings tabs |
-| `tests/test_*.py` | done (kinematics, camera, driver, controller, PLC, GUI smoke) |
-| `plc/handshake.py`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | to build (Claude.md §14) |
+| Kinematics + workspace/singularity guard (`robot/{fivebar_kinematics,workspace}.py`) | done, tested |
+| Camera — Basler (pypylon) + mock (`vision/camera.py`) | done, tested |
+| Detection — holes (collinear) + covers (quality / size / reachability) (`vision/detect_*.py`) | done, tested |
+| Per-recipe calibration + changeover (`vision/calibration.py`, `app/recipes.py`) | done, tested |
+| Motion drivers — dry-run + PLC over EtherNet/IP + simulator (`robot/driver.py`, `plc/*`) | done, tested |
+| Planner + pick/place handshake (`robot/planner.py`, `plc/handshake.py`) | done, tested |
+| Automatic cycle, off the UI thread (`app/cycle_manager.py`, `gui/cycle_worker.py`) | done, tested |
+| PySide6 HMI — Vision · Camera · Calibration · Robot Test · Settings · PLC | done, tested |
+| CLI entry (`main.py`, `app/launch.py`) | done, tested |
+| `app/diagnostics.py` (save annotated fail frames) | deferred |
 
 ## Setup
 
@@ -100,15 +122,37 @@ camera, `BaslerCamera.list_devices()` enumerates connected cameras and
 
 ## GUI (robot HMI)
 
-A PySide6 tabbed HMI. The **Robot Test** tab establishes home and jogs the
-robot; every move is gated by `WorkspaceValidator` before it reaches the driver.
+A PySide6 tabbed HMI (see [Screenshots](#screenshots)). Every commanded move is
+gated by `WorkspaceValidator` before it reaches the driver.
 
 ```bash
 pip install -e .[gui]
-python -m bung_cover_robot.gui                       # in-process dry-run sim
-python -m bung_cover_robot.gui --sim-plc             # PLC driver + simulated PLC
-python -m bung_cover_robot.gui --plc 192.168.1.10/0  # PLC driver + real CompactLogix
+bung-cover-robot                         # dry-run: sim driver + demo scene
+bung-cover-robot --sim-plc               # PLC driver + simulated PLC (real handshake)
+bung-cover-robot --plc 192.168.1.10/0    # PLC driver + real CompactLogix
+bung-cover-robot --camera basler         # real Basler (else the mock demo scene)
+bung-cover-robot --config /path/to/config  # config dir (robot/camera/recipes yaml)
 ```
+
+`--dry-run` / `--sim-plc` / `--plc` select the motion backend and `--camera
+{auto,mock,basler}` the camera, independently; `auto` picks a Basler with a real
+PLC, else the mock scene. Also runs as `python -m bung_cover_robot`.
+
+**Vision tab** (main screen) — capture, **Detect** (holes + covers with live
+reachability), and **Start / Stop** the automatic pick-place cycle. Each pick
+re-images (loose covers shift), and the cycle runs on a worker thread so a
+multi-second PLC handshake never freezes the HMI. A **Recipe (changeover)**
+selector loads the active battery type's calibration + vent-hole count.
+
+**Camera tab** — connect a Basler (or the mock), with exposure / gain /
+brightness / contrast / gamma controls written through to the camera and a live
+preview.
+
+**Calibration tab** — build a real pixel→robot calibration per recipe: pick the
+recipe (or add one), click known points on a captured frame, type their
+robot-frame XY, **fit** the homography (≥4 non-collinear points; reports the RMS
+residual in mm), and **save**. A saved calibration is adopted by the Vision tab
+live when it's the active recipe.
 
 **Robot Test tab:**
 - **Drives** — Enable / STOP. Motion is refused while disabled.
