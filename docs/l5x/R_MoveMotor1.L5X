@@ -12,7 +12,7 @@
 </Rung>
 <Rung Number="1" Type="N">
 <Comment><![CDATA[Convert the target angle to steps.]]></Comment>
-<Text><![CDATA[CPT(Move1_Steps,TRUNC(Move1_Target_Deg * STEPS_PER_DEG));]]></Text>
+<Text><![CDATA[CPT(Move1_Steps,TRN(Move1_Target_Deg * STEPS_PER_DEG));]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
 <Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, and latch Load Position Data.]]></Comment>

@@ -120,7 +120,7 @@ def move_rungs(m: int) -> List[Rung]:
          f".L5X files + RobotTags.csv first. Twin routine: R_MoveMotor{other}.",
          f"OTE({o}Output_Reg_Enable);"),
         ("Convert the target angle to steps.",
-         f"CPT(Move{m}_Steps,TRUNC(Move{m}_Target_Deg * STEPS_PER_DEG));"),
+         f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG));"),
         ("Rising edge of Execute: load Move Distance / limits, set Absolute, and "
          "latch Load Position Data.",
          f"XIC(Move{m}_Execute)ONS(Move{m}_ons)XIO(Move{m}_Fault)"
