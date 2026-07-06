@@ -63,6 +63,14 @@ def test_vision_tab_capture_and_status(qapp):
     assert vt.pill_home.text() == "REFERENCED"
 
 
+def test_vision_tab_detect_overlay(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    vt._on_detect()
+    assert "holes" in vt.status_label.text()
+    assert "6 holes" in vt.status_label.text()
+
+
 def test_camera_tab_controls_and_grab(qapp):
     win = MainWindow()
     ct = win.camera_tab

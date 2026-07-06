@@ -23,6 +23,9 @@ from PySide6.QtWidgets import (
 from ..app.robot_test_controller import RobotTestController
 from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
+from ..vision.detect_covers import CoverDetector
+from ..vision.detect_holes import HoleDetector
+from ..vision.detection import annotate
 from . import theme
 from .imaging import ndarray_to_qpixmap
 from .widgets import ImageView, StatusPill
@@ -38,6 +41,9 @@ class VisionTab(QWidget):
         super().__init__(parent)
         self.controller = controller
         self.camera = camera
+        self.hole_detector = HoleDetector()
+        self.cover_detector = CoverDetector()
+        self._frame = None
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -88,13 +94,15 @@ class VisionTab(QWidget):
         rb = QVBoxLayout(run_box)
         self.capture_btn = QPushButton("Capture frame")
         self.capture_btn.clicked.connect(self._on_capture)
+        self.detect_btn = QPushButton("Detect")
+        self.detect_btn.clicked.connect(self._on_detect)
         self.start_btn = QPushButton("Start cycle")
         self.start_btn.setProperty("accent", "primary")
         self.start_btn.clicked.connect(self._on_start)
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setProperty("accent", "danger")
         self.stop_btn.clicked.connect(self._on_stop)
-        for b in (self.capture_btn, self.start_btn, self.stop_btn):
+        for b in (self.capture_btn, self.detect_btn, self.start_btn, self.stop_btn):
             rb.addWidget(b)
         v.addWidget(run_box)
         v.addStretch(1)
@@ -116,7 +124,26 @@ class VisionTab(QWidget):
         except CameraError as exc:
             self._set_status(f"Capture failed: {exc}", theme.DANGER)
             return
+        self._frame = frame
         self.view.set_pixmap(ndarray_to_qpixmap(frame))
+
+    def _on_detect(self) -> None:
+        if self._frame is None:
+            self._capture()
+        if self._frame is None:
+            return
+        holes = self.hole_detector.detect(self._frame)
+        # No calibration yet, so covers are checked for geometric quality only
+        # (reachability is added once vision/calibration provides pixel->robot).
+        covers = self.cover_detector.detect(self._frame)
+        overlay = annotate(self._frame, holes.holes, covers.covers)
+        self.view.set_pixmap(ndarray_to_qpixmap(overlay))
+        collinear = "collinear ✓" if holes.ok else holes.reason
+        self._set_status(
+            f"{holes.count} holes ({collinear}) · {covers.count} covers, "
+            f"{len(covers.accepted)} pickable.",
+            theme.SUCCESS if holes.ok else theme.WARN,
+        )
 
     # --- run (placeholder until cycle_manager exists) -----------------------
     def _on_start(self) -> None:
