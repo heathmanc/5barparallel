@@ -58,19 +58,28 @@ values come from the `homing:` block in `config/robot_config.yaml`.
 > A single slow approach is enough — you do **not** need the old back-off /
 > re-approach dance (that was a hand-rolled workaround the ClearLink doesn't need).
 
-**Axis interface UDT `AxisIF`** — an alias/wrapper over the ClearLink Step-Dir
-assembly members for one motor (`<module>:O1` / `:I1`, `docs/plc_program.md` §3).
-Map each member to the real assembly tag; `*.n` are register bits:
+**Axis interface `AxisIF`** — an alias over the ClearLink Step-Dir tags for one
+motor (`ClearLink:O1`/`:I1`, `docs/plc_program.md` §3). These are the **exact AOP
+tag names** from Teknic's `SD_Homing`/`SD_Position_Move` examples (Motor 0 shown;
+Motor 1 is `Motor1_*`):
 
-| Member | Type | Real ClearLink member (Step & Direction) |
-|---|---|---|
-| `MoveDistance` | DINT | Output · Move Distance (steps) |
-| `JogVelocity` | DINT | Output · Jog Velocity (steps/s) |
-| `AccelLimit` | UDINT | Output · Acceleration Limit |
-| `OutReg` | DWORD | Output · **Output Register** — `.0` Enable, `.1` Absolute, `.2` HomingMoveFlag, `.3` LoadPositionMove, `.4` LoadVelocityMove, `.6` ClearAlerts |
-| `CmdPosition` | DINT | Input · Commanded Position (open-loop position) |
-| `StatusReg` | DWORD | Input · **Status Register** — `.1` StepsActive, `.10` Enabled, `.13` HasHomed, `.16` ReadyToHome, `.17` ShutdownsPresent, `.20` LoadVelMoveAck |
-| `ALM` | BOOL | EM806 alarm, wired to a ClearLink digital input (read via the DIP object) |
+| `AxisIF` member | Real AOP tag |
+|---|---|
+| `JogVel` | `ClearLink:O1.Motor0_Jog_Vel` |
+| `AccelLim` | `ClearLink:O1.Motor0_Accel_Lim` |
+| `Enable` | `ClearLink:O1.Motor0_Output_Reg_Enable` |
+| `HomeFlag` | `ClearLink:O1.Motor0_Output_Reg_Home_Flag` |
+| `LoadVelData` | `ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data` |
+| `ClearFault` | `ClearLink:O1.Motor0_Output_Reg_Clear_Fault` |
+| `ClearAlerts` | `ClearLink:O1.Motor0_Output_Reg_Clear_Alerts` |
+| `CmdPosition` | `ClearLink:I1.Motor0_CommandedPosn` (open-loop position) |
+| `HLFB_ON` | `ClearLink:I1.Motor0_Status_HLFB_ON` |
+| `ReadyToHome` | `ClearLink:I1.Motor0_Status_Ready_To_Home` |
+| `LoadVelMoveAck` | `ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack` |
+| `HasHomed` | `ClearLink:I1.Motor0_Status_Has_Homed` |
+| `ClearFaultAck` | `ClearLink:I1.Motor0_Status_Clear_Motor_Fault_Ack` |
+| `ShutdownsPres` | `ClearLink:I1.Motor0_Status_Shutdowns_Pres` |
+| `ALM` | EM806 alarm → a ClearLink digital input (read via the DIP object) |
 
 > Open-loop reminder (`docs/plc_program.md` §3): `CmdPosition` is the ClearLink's
 > *commanded* step count, not encoder feedback. The ClearLink homing move
@@ -100,64 +109,72 @@ prevReq (BOOL).
 > Structured Text below (it is short — three states). The coordinator ladder in
 > §3 is still valid.
 
-### Structured Text (drop-in)
+### Structured Text (drop-in) — mirrors Teknic `SD_Homing`
 
 ```pascal
 (* AOI_HomeAxis — command the ClearLink's built-in homing move for one shoulder.
-   Homing itself (approach, sensor detection, zeroing) is done by ClearLink. *)
+   State names/sequence follow Teknic's SD_Homing example; the ClearLink itself
+   does the approach, sensor detection, and zeroing. *)
 
 HomeTmr.PRE := TimeoutPreset;
-HomeTmr.TimerEnable := (Step = 10);      (* time only the homing move *)
+HomeTmr.TimerEnable := (Step >= 10) AND (Step < 60);
 TONR(HomeTmr);
 
 CASE Step OF
-    0:  (* idle — wait for a request, and for the axis to be ready to home *)
+    0:  (* idle *)
         Done := 0;
-        IF HomeReq AND NOT prevReq AND NOT Fault THEN
-            IF Ax.StatusReg.16 THEN          (* Ready to Home *)
-                (* load one slow homing velocity move toward the switch *)
-                Ax.OutReg.0 := 1;            (* Enable *)
-                Ax.OutReg.2 := 1;            (* Homing Move Flag *)
-                Ax.JogVelocity := HomeVel;   (* signed: toward the prox *)
-                Ax.AccelLimit  := HomeAccel;
-                Ax.OutReg.4 := 1;            (* Load Velocity Move (rising edge) *)
-                Step := 10;
-            ELSE
-                Fault := 1;  Step := 900;    (* not ready: homing not enabled,
-                                                not enabled, or shutdown present *)
-            END_IF;
+        IF HomeReq AND NOT prevReq AND NOT Fault THEN Step := 10; END_IF;
+
+    10: (* ENABLING — wait for HLFB (EM806: needs HLFB Inversion, §3/plc_program) *)
+        Ax.Enable := 1;
+        IF Ax.HLFB_ON THEN Step := 20; END_IF;
+
+    20: (* CLEAR MOTOR FAULTS — ensure Ready To Home *)
+        Ax.ClearFault := 1;
+        IF Ax.ClearFaultAck THEN Ax.ClearFault := 0;  Step := 30; END_IF;
+
+    30: (* CLEAR ALERTS — clear any latched shutdown *)
+        Ax.ClearAlerts := 1;
+        IF NOT Ax.ShutdownsPres THEN Ax.ClearAlerts := 0;  Step := 40; END_IF;
+
+    40: (* CHECK READY TO HOME *)
+        IF Ax.ReadyToHome THEN Step := 50;
+        ELSIF HomeTmr.DN THEN Fault := 1;  Step := 900; END_IF;
+
+    50: (* BEGIN HOMING MOVE — homing flag + a velocity move toward the prox *)
+        Ax.HomeFlag := 1;                    (* Output_Reg_Home_Flag *)
+        Ax.JogVel   := HomeVel;              (* signed: toward the prox *)
+        Ax.AccelLim := HomeAccel;
+        Ax.LoadVelData := 1;                 (* Output_Reg_Load_Vel_Data *)
+        Step := 55;
+
+    55: (* WAIT FOR HOMING MOVE ACK -> clear the load + homing flag *)
+        IF Ax.LoadVelMoveAck THEN
+            Ax.LoadVelData := 0;  Ax.HomeFlag := 0;
+            Step := 60;
         END_IF;
 
-    10: (* homing move running — ClearLink drives to the sensor and zeroes there *)
-        IF Ax.StatusReg.20 THEN Ax.OutReg.4 := 0; END_IF;   (* clear load ack *)
-        IF Ax.StatusReg.13 THEN              (* Has Homed -> datum established *)
-            Ax.OutReg.2 := 0;                (* drop Homing Move Flag *)
-            Done := 1;
-            Step := 50;
-        ELSIF HomeTmr.DN THEN
-            Fault := 1;  Step := 900;
-        END_IF;
+    60: (* HOMING — ClearLink drives to the sensor and zeroes position there *)
+        IF Ax.HasHomed THEN Done := 1;  Step := 70;
+        ELSIF HomeTmr.DN THEN Fault := 1;  Step := 900; END_IF;
 
-    50: (* homed / idle — hold *)
+    70: (* homed / idle — hold *)
         ;
 
     900:(* fault — clear move bits, wait for coordinator reset *)
-        Ax.OutReg.2 := 0;  Ax.OutReg.4 := 0;
+        Ax.HomeFlag := 0;  Ax.LoadVelData := 0;
 END_CASE;
 
 prevReq := HomeReq;
 
 (* drive alarm or a ClearLink shutdown at any time -> fault *)
-IF Ax.ALM OR Ax.StatusReg.17 THEN
-    Fault := 1;  Step := 900;
-END_IF;
+IF Ax.ALM OR Ax.ShutdownsPres THEN Fault := 1;  Step := 900; END_IF;
 ```
 
-`Ax.JogVelocity` is **signed** — its sign sets the approach direction, so flip
-the sign per shoulder without touching the logic. The ClearLink stops the move
-and sets `Commanded Position := 0` the instant the home sensor trips; the home
-*angle* is applied by `HOME_OFFSET_*` when the coordinator publishes `ActualDeg`
-(§3).
+`Ax.JogVel` is **signed** — its sign sets the approach direction, so flip the sign
+per shoulder without touching the logic. The ClearLink stops the move and sets
+`CmdPosition := 0` the instant the home sensor trips; the home *angle* is applied
+by `HOME_OFFSET_*` when the coordinator publishes `ActualDeg` (§3).
 
 ---
 

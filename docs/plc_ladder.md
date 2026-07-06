@@ -19,27 +19,32 @@ pasteable; the ladder is the visual to rebuild rung-by-rung.
 ## Shared: `AxisIF` UDT & constants
 
 One `AxisIF` per shoulder (`Ax0`, `Ax1`), aliasing the ClearLink **Step-Dir**
-`:O1`/`:I1` motor block. Member names below are the real ones from the Teknic
-*Object Data Reference* Rev. 1.15 (see `docs/plc_program.md` §3); `*.n` are
-register bits:
+`ClearLink:O1`/`:I1` motor block. Members alias the **exact AOP tags** (full list
++ homing members in `docs/plc_homing.md` §1); the move-related superset:
 
-| Member | Type | Real ClearLink member |
-|---|---|---|
-| `MoveDistance` | DINT | Output · Move Distance (steps target) |
-| `VelocityLimit` | UDINT | Output · Velocity Limit (steps/s, ≤500k) |
-| `AccelLimit`/`DecelLimit` | UDINT | Output · Acceleration/Deceleration Limit |
-| `JogVelocity` | DINT | Output · Jog Velocity (steps/s) |
-| `OutReg` | DWORD | Output · **Output Register** — `.0` Enable, `.1` Absolute, `.2` HomingMoveFlag, `.3` LoadPositionMove, `.4` LoadVelocityMove, `.5` SW-E-Stop, `.6` ClearAlerts |
-| `CmdPosition` | DINT | Input · Commanded Position (open-loop position) |
-| `StatusReg` | DWORD | Input · **Status Register** — `.1` StepsActive, `.10` Enabled, `.13` HasHomed, `.16` ReadyToHome, `.17` ShutdownsPresent, `.19` LoadPosMoveAck |
-| `ALM` | BOOL | EM806 alarm → a ClearLink digital input (DIP object) |
+| Member | Real AOP tag (Motor 0) |
+|---|---|
+| `MoveDist` | `ClearLink:O1.Motor0_Move_Dist` |
+| `VelLimit` | `ClearLink:O1.Motor0_Vel_Limit` |
+| `AccelLim` | `ClearLink:O1.Motor0_Accel_Lim` |
+| `Enable` | `ClearLink:O1.Motor0_Output_Reg_Enable` |
+| `AbsFlag` | `ClearLink:O1.Motor0_Output_Reg_Abs_Flag` |
+| `LoadPosnData` | `ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data` |
+| `CmdPosition` | `ClearLink:I1.Motor0_CommandedPosn` |
+| `AtTargetPosn` | `ClearLink:I1.Motor0_Status_At_Target_Posn` |
+| `StepsActive` | `ClearLink:I1.Motor0_Status_Steps_Active` |
+| `LoadPosnMoveAck` | `ClearLink:I1.Motor0_Status_Load_Posn_Move_Ack` |
+| `MotorInFault` | `ClearLink:I1.Motor0_Status_Motor_In_Fault` |
+| `ShutdownsPres` | `ClearLink:I1.Motor0_Status_Shutdowns_Pres` |
+| `ALM` | EM806 alarm → a ClearLink digital input (DIP object) |
 
-> **No Teknic motion AOI** — the AOP only exposes these assembly tags; the AOIs
-> below are ours. `Enable` is `OutReg.0`; the "drive ready" flag is `StatusReg.10`
-> (with `HLFB Inversion` set for the HLFB-less EM806, §3); "stop" is a SW E-Stop
-> (`OutReg.5`); "move done" is `NOT StatusReg.1` (Steps Active). There is no
+> **No Teknic motion AOI, but working example projects** — Teknic ships
+> CompactLogix examples (`SD_Position_Move`, `SD_Homing`, `SD_Jog`, …); build from
+> those. The **exact AOP tag names** are in `docs/plc_homing.md` §1
+> (`ClearLink:O1.Motor0_Output_Reg_Enable`, `..._Load_Posn_Data`,
+> `ClearLink:I1.Motor0_Status_At_Target_Posn`, …). There is no
 > `MoveTrigger`/`MoveDone`/`Redefine` member — those were invented; use the
-> Load-Position-Move handshake and, for homing, the ClearLink's built-in homing
+> Load-Posn-Data → Ack handshake, and for homing the ClearLink's built-in homing
 > move (`plc_homing.md`).
 
 Constants: `STEPS_PER_DEG := 26.66667`, `MOVE_VEL/MOVE_ACC/MOVE_DEC` (move
@@ -52,32 +57,33 @@ the table in `plc_program.md` §9.
 ## `AOI_AxisMove` — move one shoulder to an absolute angle
 
 Params: `In` TargetDeg (REAL), Execute (BOOL), StepsPerDeg (REAL) · `InOut` Ax
-(`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` TargetSteps (DINT),
-prevExec (BOOL).
+(`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` prevExec, Loaded
+(BOOL).
 
 > ⚠️ **`plc_axismove_ladder.svg` shows the superseded `MoveTrigger`/`MoveDone`
-> interface.** Rebuild from the corrected ST below: load the move, pulse
-> **Load Position Move** with its ack handshake, and take *move done* from
-> **Steps Active** (there is no closed-loop `MoveDone` on an open-loop drive).
+> interface.** Rebuild from the corrected ST below (which mirrors Teknic's
+> `SD_Position_Move`): load the move, latch **Load_Posn_Data**, clear it on the
+> **Ack**, and take *move done* from **At_Target_Posn** (`Steps_Active == 0` if
+> the EM806's HLFB Inversion isn't set — §3).
 
 ```pascal
-TargetSteps := TRUNC(TargetDeg * StepsPerDeg);
+Ax.Enable := 1;                                 (* Motor_Output_Reg_Enable *)
 
-(* rising edge: load targets + pulse Load Position Move (Output Register bit 3) *)
-IF Execute AND NOT prevExec AND NOT Fault THEN
-    Ax.MoveDistance  := TargetSteps;
-    Ax.VelocityLimit := MOVE_VEL;
-    Ax.AccelLimit    := MOVE_ACC;
-    Ax.DecelLimit    := MOVE_DEC;
-    Ax.OutReg.1 := 1;              (* Absolute Flag *)
-    Ax.OutReg.3 := 1;              (* Load Position Move *)
+IF Execute AND NOT prevExec AND NOT Fault THEN  (* rising edge: load the move *)
+    Ax.MoveDist  := TRUNC(TargetDeg * StepsPerDeg);
+    Ax.VelLimit  := MOVE_VEL;
+    Ax.AccelLim  := MOVE_ACC;
+    Ax.AbsFlag   := 1;                           (* absolute move *)
+    Ax.LoadPosnData := 1;                        (* Output_Reg_Load_Posn_Data *)
+    Loaded := 1;
 END_IF;
 prevExec := Execute;
 
-IF Ax.StatusReg.19 THEN Ax.OutReg.3 := 0; END_IF;   (* clear on Load-Move Ack *)
+IF Ax.LoadPosnMoveAck THEN Ax.LoadPosnData := 0; END_IF;   (* handshake ack *)
 
-InPosition := NOT Ax.StatusReg.1 AND NOT Ax.OutReg.3; (* Steps Active == 0 *)
-Fault      := Ax.StatusReg.17 OR Ax.ALM;              (* shutdown OR drive alarm *)
+InPosition := Loaded AND Ax.AtTargetPosn AND NOT Ax.LoadPosnData;
+IF InPosition THEN Loaded := 0; END_IF;
+Fault := Ax.MotorInFault OR Ax.ShutdownsPres OR Ax.ALM;
 ```
 
 ---
