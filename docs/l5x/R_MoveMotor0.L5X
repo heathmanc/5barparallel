@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<RSLogix5000Content SchemaRevision="1.0" TargetName="AOI_AxisMove" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="R_MoveMotor0" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
 <Controller Use="Context" Name="RobotController">
 <Programs Use="Context">
 <Program Use="Context" Name="Robot">
 <Routines Use="Context">
-<Routine Use="Target" Name="AOI_AxisMove" Type="RLL">
+<Routine Use="Target" Name="R_MoveMotor0" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[Motor 0 absolute move. Create tags: Move0_Execute/Move0_ons/Move0_Fault/Move0_InPosition (BOOL), Move0_Steps (DINT), Move0_Target_Deg (REAL), EM806_0_ALM (BOOL, alias to the EM806 ALM digital input). Constants: STEPS_PER_DEG (REAL 26.66667), MOVE_VEL/MOVE_ACC (DINT). Copy this routine for Motor 1 (Motor0_ -> Motor1_).]]></Comment>
+<Comment><![CDATA[R_MoveMotor0: Motor 0 absolute move. Tags/constants come from RobotTags.L5X (Move0_Execute/ons/Fault/InPosition, Move0_Steps, Move0_Target_Deg, EM806_0_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) and the ClearLink module (ClearLink:O1/:I1). Import VisionRobot_UDT.L5X + RobotTags.L5X first. Twin routine: R_MoveMotor1.]]></Comment>
 <Text><![CDATA[OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">

@@ -19,11 +19,12 @@ sheet in [`plc_homing.md`](plc_homing.md), the ladder visuals in
 2. **Configure the EM806** for 1 µs / 500 kHz step pulses (§1).
 3. **Give the ClearLink a static IP** with a Rockwell/Molex tool (§2).
 4. **Import the ClearLink EDS**, add the module as **"Step Dir"** (§3).
-5. **Import Teknic's example `.L5K`** and lift the routines you need (§4).
+5. **Import Teknic's example `.L5K`** (reference) and **this repo's `.L5X`** in
+   order: `VisionRobot_UDT.L5X` → `RobotTags.L5X` → the `R_*`/`R30_*` routines (§4).
 6. **Set the Configuration assembly** (home sensor, homing enable, HLFB/Enable
    inversion, soft limits) (§5).
-7. **Create the `VisionRobot` UDT + tags** and the glue that maps the ClearLink
-   motion to them (§6).
+7. **Finish the `VisionRobot` glue** — alias `EM806_*_ALM` to the drive-alarm
+   inputs, set `HOME_OFFSET_L/R`, and tie the routines into your task (§6).
 8. **Commission** in the order in §7.
 
 **Hardware:** CompactLogix (e.g. 1769-L16ER, EtherNet/IP scanner) · Teknic
@@ -103,8 +104,8 @@ the routine into your project and retarget its tags to your `ClearLink` module.
 
 | Example `.L5K` | Use it for | Notes |
 |---|---|---|
-| **`SD_Homing`** | the homing routine (`R30_Homing` / `AOI_HomeAxis`) | one motor; duplicate for M-1 and sequence both (§`plc_homing.md`) |
-| **`SD_Position_Move`** | moving a shoulder to an **absolute angle** (`AOI_AxisMove`) | the example moves *incrementally* — set `Abs_Flag` for absolute (§`plc_program.md` §3) |
+| **`SD_Homing`** | the homing routines (`R_HomeMotor0/1`, sequenced by `R30_Homing`) | one motor each; the repo ships both — see the `.L5X` table below |
+| **`SD_Position_Move`** | moving a shoulder to an **absolute angle** (`R_MoveMotor0/1`) | the example moves *incrementally* — the repo routines set `Abs_Flag` for absolute (§`plc_program.md` §3) |
 | **`SD_Jog`** | manual velocity jogging during bring-up | handy to confirm direction/wiring before homing |
 | **`SD_Velocity_Move`** | reference for velocity moves | not needed for the pick/place cycle |
 
@@ -114,27 +115,49 @@ Motor 0 = left / Motor 1 = right, and drive both from the coordinator/dispatcher
 in `plc_program.md`. The corrected per-axis logic and ladder visuals (matched to
 these examples) are in `plc_homing.md` and `plc_ladder.md`.
 
-### Importable routines in this repo (`docs/l5x/`)
+### Importable files in this repo (`docs/l5x/`)
 
-We also ship the corrected ladder as **importable Studio 5000 routine `.L5X`** —
-the same neutral rung text as Teknic's examples, so you can import instead of
-re-typing. **Right-click a Program → Import Routine…** and pick the file:
+The repo ships the whole motion side as **importable Studio 5000 `.L5X`** so you
+don't re-type it. **Import in this order** — later files reference what earlier
+ones create (the `VisionRobot` tag needs its UDT; the routines need both):
+
+**1 — the UDT** (`Assets → Data Types → right-click → Import…`):
+
+| `docs/l5x/…` | Import as | Creates |
+|---|---|---|
+| `VisionRobot_UDT.L5X` | Data Type | `VisionRobot` + its four nested types (`_Cmd/_Target/_Manual/_Status`) |
+
+> In the Import Configuration dialog, confirm all **five** types show an
+> operation of *Create* — that's how the nested (Context) types come in from the
+> one file.
+
+**2 — the tags** (`Controller Tags → right-click → Import…`, after the UDT exists):
+
+| `docs/l5x/…` | Import as | Creates |
+|---|---|---|
+| `RobotTags.L5X` | Tags | the `VisionRobot` tag, the per-axis glue (`Move*/Home*/Ax*`, `EM806_*_ALM`), the coordinator tags (`HomeStep`, `HR_ons`, `SoftLimitsEnable`), and the tuning values (`STEPS_PER_DEG` const, `MOVE_VEL/ACC`, `HOME_VEL_0/1`, `HOME_ACC`, `HOME_OFFSET_L/R`) |
+
+**3 — the routines** (`right-click a Program → Import Routine…`, after the tags exist):
 
 | `docs/l5x/…` | Routine | Notes |
 |---|---|---|
-| `AOI_AxisMove.L5X` | absolute move, Motor 0 | copy for Motor 1 (`Motor0_`→`Motor1_`) |
-| `AOI_HomeAxis.L5X` | ClearLink homing move, Motor 0 | copy for Motor 1 |
-| `R30_Homing.L5X` | 2-axis homing coordinator | `JSR`s the two homing routines; offset-aware publish |
+| `R_MoveMotor0.L5X` / `R_MoveMotor1.L5X` | absolute move, per axis | mirrors `SD_Position_Move`, `Abs_Flag` set |
+| `R_HomeMotor0.L5X` / `R_HomeMotor1.L5X` | ClearLink homing move, per axis | mirrors `SD_Homing`; called by the coordinator |
+| `R30_Homing.L5X` | 2-axis homing coordinator | `JSR`s `R_HomeMotor0/1`; offset-aware angle publish |
 
-Each routine's **rung-0 comment lists the tags/constants to create** (locals like
-`Home0_State`, aliases like `EM806_0_ALM`, constants like `STEPS_PER_DEG`,
-`HOME_VEL`, `HOME_OFFSET_L/R`). The `ClearLink:O1/:I1/:C` tags come from the
-module (§3); the `VisionRobot.*` tags from §6. Undefined tags flag on import —
-that's expected; resolve them against what you created.
+> **These routines are plain Routines, not Add-On Instructions.** Teknic ships no
+> motion AOI, and a real AOI can only touch its own parameters/locals — not the
+> `ClearLink:O1/:I1` module tags directly. So they implement the design's
+> `AOI_AxisMove`/`AOI_HomeAxis` (`plc_program.md` §5) as **one routine per motor**.
+> That's why the file names are `R_MoveMotor*`/`R_HomeMotor*`, not `AOI_*`.
 
-> ⚠️ **Import-test these first.** They were generated without Studio 5000, so
-> they're schema-conformant but not import-verified. Import one, and if Logix
-> reports a schema/format error, send it to me and I'll fix the generator
+If you imported the tags/UDT first, nothing flags as undefined. The
+`ClearLink:O1/:I1/:C` tags come from the module (§3). Each routine's **rung-0
+comment** still names exactly what it references.
+
+> ⚠️ **Import-test the UDT first.** These were generated without Studio 5000, so
+> they're schema-conformant but not import-verified. If Logix reports a
+> schema/format error, send it to me and I'll fix the generator
 > (`scripts/render_plc_l5x.py`). For anything safety- or motion-critical, the
 > Teknic `.L5K` examples remain the ground truth to cross-check against.
 
@@ -160,16 +183,18 @@ Sent once when the connection is established. Per motor (`Motor0Config`,
 
 ---
 
-## 6. Tags you must create — the `VisionRobot` contract
+## 6. The `VisionRobot` contract — imported, then finished by hand
 
-Two tag groups exist. **You do not create the ClearLink assembly tags** (§3 — the
-AOP makes them). You **do** create the `VisionRobot` UDT — the surface the vision
-PC reads/writes over EtherNet/IP with pycomm3. It is the single source of truth:
-the app's **PLC tab** lists every tag and the driver reads/writes exactly these.
+Three tag groups exist. **You do not create the ClearLink assembly tags** (§3 —
+the AOP makes them). The **`VisionRobot` UDT + tag** and the **glue tags** you
+**import** from `VisionRobot_UDT.L5X` + `RobotTags.L5X` (§4) rather than hand-type.
+`VisionRobot` is the surface the vision PC reads/writes over EtherNet/IP with
+pycomm3 — the single source of truth: the app's **PLC tab** lists every tag and
+the driver reads/writes exactly these.
 
-Build one controller tag `VisionRobot` (UDT with `Cmd`/`Target`/`Manual`/`Status`
-members — full definition in [`plc_program.md`](plc_program.md#2-udt)). The
-essentials:
+After importing, the controller tag `VisionRobot` (UDT with
+`Cmd`/`Target`/`Manual`/`Status` members — full definition in
+[`plc_program.md`](plc_program.md#2-udt)) exists. The essentials:
 
 **Python writes (PC → PLC):**
 - `VisionRobot.Manual.Enable / HomeRequest / MoveToTarget / Abort`,
@@ -185,18 +210,24 @@ essentials:
   `Status.Ready / Busy / Done`, `Status.ActiveCommandID / CompleteCommandID /
   FailedCommandID`, `Status.VacuumOK / CameraClear / ReadyForVision`.
 
-**Glue you also create:** state-machine locals (`HomeStep`, per-axis
-`Ax*_HomeReq/Done/Fault`, `CURRENT_STATE`, …), the constants
-(`STEPS_PER_DEG := 26.66667`, `HOME_VEL`, `HOME_ACC`, `MOVE_VEL`, `MOVE_ACC`, and
-`HOME_OFFSET_L/R`), and the `AxisIF` aliases onto `ClearLink:O1/:I1` (member list
-in `plc_homing.md` §1).
+**Glue that comes in with `RobotTags.L5X`:** the state-machine tags (`HomeStep`,
+per-axis `Home*_State/Req`, `Ax*_HomeDone/Fault`, `Move*_*`, `HR_ons`,
+`SoftLimitsEnable`) and the tuning values (`STEPS_PER_DEG` const := 26.66667,
+`HOME_VEL_0/1`, `HOME_ACC`, `MOVE_VEL`, `MOVE_ACC`, `HOME_OFFSET_L/R`).
 
-**The bridge = your program.** The imported example logic (§4) reads/writes the
-`ClearLink:*` tags; your routines translate that to/from `VisionRobot.*`:
+**What you still finish by hand after importing:**
+- **Alias `EM806_0_ALM` / `EM806_1_ALM`** onto the ClearLink digital inputs the
+  two drive-alarm outputs are wired to (they import as plain BOOLs).
+- **Set `HOME_OFFSET_L/R`** (imported as 0) once you've measured them (below).
+- **Tune** `HOME_VEL_0/1` sign+magnitude, `MOVE_VEL/ACC`, `HOME_ACC` at
+  commissioning.
+
+**The bridge = your program.** The imported routines (§4) read/write the
+`ClearLink:*` tags and translate that to/from `VisionRobot.*`:
 - `Manual.Enable` → drive `Motor*_Output_Reg_Enable`; publish `Status.Enabled`.
 - `Manual.HomeRequest` → run `R30_Homing`; publish `Status.Homed` +
   `Status.ActualLeft/RightDeg` (**with the home offset**, §`plc_homing.md`).
-- `Manual.MoveToTarget` + `Target*Deg` → `AOI_AxisMove` per axis (deg × steps);
+- `Manual.MoveToTarget` + `Target*Deg` → `R_MoveMotor0/1` per axis (deg × steps);
   publish `Status.InPosition` + `Status.CompleteCommandID`.
 
 > **Home offset:** the ClearLink zeroes position **at the prox trip point**, not
@@ -214,8 +245,9 @@ in `plc_homing.md` §1).
    `STEPS_PER_DEG` is right (command 90°, measure the shoulder). Fix `Enable
    Inversion` / step wiring if needed.
 3. **Homing:** confirm each prox toggles (read its DIP) as the L1 flag passes;
-   run **Robot Test → Home (find ref)**; confirm `Has Homed`, tune `HOME_VEL`,
-   and set `HOME_OFFSET_L/R` so `ActualLeftDeg ≈ 135.85`, `ActualRightDeg ≈ 44.15`.
+   run **Robot Test → Home (find ref)**; confirm `Has Homed`, tune `HOME_VEL_0/1`
+   (sign = approach direction), and set `HOME_OFFSET_L/R` so
+   `ActualLeftDeg ≈ 135.85`, `ActualRightDeg ≈ 44.15`.
    Verify the sequential sweep can't collide the two arms.
 4. **Absolute moves:** jog via **Robot Test** (Cartesian/joint); confirm
    `CompleteCommandID` tracks each move and `InPosition`/`At_Target_Posn` gates it.

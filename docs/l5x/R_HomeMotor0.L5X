@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<RSLogix5000Content SchemaRevision="1.0" TargetName="AOI_HomeAxis" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="R_HomeMotor0" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
 <Controller Use="Context" Name="RobotController">
 <Programs Use="Context">
 <Program Use="Context" Name="Robot">
 <Routines Use="Context">
-<Routine Use="Target" Name="AOI_HomeAxis" Type="RLL">
+<Routine Use="Target" Name="R_HomeMotor0" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[Motor 0 homing. First set the Configuration assembly ClearLink:C.Motor0Config: Home_Sensor = prox input, Config Register Homing Enable (bit0)=1, HLFB Inversion (bit3)=1. Create tags: Home0_State (DINT), Home0_Req/Home0_ons/Ax0_HomeDone/Ax0_HomeFault (BOOL), Home0_Tmr (TIMER). Constants: HOME_VEL (signed, toward the prox) / HOME_ACC (DINT). Copy for Motor 1.]]></Comment>
+<Comment><![CDATA[R_HomeMotor0: Motor 0 homing. First set ClearLink:C.Motor0Config (Home_Sensor = the prox input, Config Register Homing Enable bit0=1, HLFB Inversion bit3=1). Tags come from RobotTags.L5X (Home0_State, Home0_Req/ons, Ax0_HomeDone/HomeFault, Home0_Tmr, EM806_0_ALM, HOME_VEL_0 signed toward the prox, HOME_ACC). R30_Homing JSRs R_HomeMotor0/R_HomeMotor1.]]></Comment>
 <Text><![CDATA[XIC(Home0_Req)ONS(Home0_ons)EQU(Home0_State,0)XIO(Ax0_HomeFault)MOV(10,Home0_State);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
@@ -40,7 +40,7 @@
 </Rung>
 <Rung Number="8" Type="N">
 <Comment><![CDATA[State 50 BEGIN HOMING MOVE: home flag + velocity move toward the prox.]]></Comment>
-<Text><![CDATA[EQU(Home0_State,50)OTL(ClearLink:O1.Motor0_Output_Reg_Home_Flag)MOV(HOME_VEL,ClearLink:O1.Motor0_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(55,Home0_State);]]></Text>
+<Text><![CDATA[EQU(Home0_State,50)OTL(ClearLink:O1.Motor0_Output_Reg_Home_Flag)MOV(HOME_VEL_0,ClearLink:O1.Motor0_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(55,Home0_State);]]></Text>
 </Rung>
 <Rung Number="9" Type="N">
 <Comment><![CDATA[State 55: on Load-Velocity ack, drop the load bit and homing flag.]]></Comment>
