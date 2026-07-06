@@ -50,6 +50,7 @@ class CalibrationTab(QWidget):
 
     # emits (recipe_key, HomographyTransform) when a calibration is saved
     calibrationSaved = Signal(str, object)
+    recipesChanged = Signal()  # a recipe was added to the shared store
 
     def __init__(
         self,
@@ -327,6 +328,7 @@ class CalibrationTab(QWidget):
         self.new_recipe_edit.clear()
         self._reload_recipes()
         self.recipe_combo.setCurrentIndex(self.recipe_combo.findData(key))
+        self.recipesChanged.emit()
         self._set_status(f"Added recipe '{key}'. Now calibrate it.", theme.SUCCESS)
 
     # --- helpers ------------------------------------------------------------

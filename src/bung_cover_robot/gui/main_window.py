@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self.plc_tab.connectionChanged.connect(self.vision_tab.refresh)
         self.camera_tab.cameraChanged.connect(self._on_camera_changed)
         self.calibration_tab.calibrationSaved.connect(self._on_calibration_saved)
+        self.calibration_tab.recipesChanged.connect(self.vision_tab.reload_recipes)
         self.vision_tab.recipeChanged.connect(self._apply_recipe)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -98,6 +99,7 @@ class MainWindow(QMainWindow):
         """Changeover: load the recipe's hole count + its own calibration."""
         recipe = self.recipes.get(key)
         self.vision_tab.set_hole_count(recipe.hole_count)
+        self.vision_tab.set_cover_diameter_mm(recipe.cover_diameter_mm)
         self.vision_tab.set_calibration(self._recipe_calibration(key))
         self.vision_tab.refresh()
 

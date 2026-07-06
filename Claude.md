@@ -440,7 +440,10 @@ Each **recipe owns its own calibration** — `calibration/<recipe_key>.npy`
 `save(key, t)` / `keys()`. Recipes themselves live in `config/recipes.yaml`
 (`app/recipes.py`: `Recipe`, `RecipeStore`), each carrying its vent-hole count
 and nominal cover size. At **changeover** the Vision tab loads the selected
-recipe's calibration + hole count; the `CycleManager` takes that one active
+recipe's calibration, its `hole_count` (feeds the hole detector's expected
+count), and its `cover_diameter_mm` (a **physical-size gate**: covers whose real
+diameter — measured through the calibration — is off the nominal by more than the
+tolerance are rejected; 0 disables it). The `CycleManager` takes that one active
 ``calibration`` and applies it to both holes and covers.
 
 **Building one interactively:** the **Calibration tab** (`gui/calibration_tab.py`)
