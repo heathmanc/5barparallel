@@ -67,8 +67,10 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from .main_window import MainWindow
+    from .theme import apply_theme
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
+    apply_theme(app)
     controller = _build_controller(args)
     window = MainWindow(controller, config_path=args.config)
     window.show()

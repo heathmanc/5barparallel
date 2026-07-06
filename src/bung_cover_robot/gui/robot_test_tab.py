@@ -52,6 +52,7 @@ class RobotTestTab(QWidget):
         self.enable_btn.setCheckable(True)
         self.enable_btn.clicked.connect(self._on_enable_toggled)
         self.stop_btn = QPushButton("STOP")
+        self.stop_btn.setProperty("accent", "danger")
         self.stop_btn.clicked.connect(self._on_stop)
         self.referenced_label = QLabel()
         row.addWidget(self.enable_btn)
@@ -225,9 +226,9 @@ class RobotTestTab(QWidget):
         referenced = self.controller.is_referenced
         self.referenced_label.setText("REFERENCED" if referenced else "NOT REFERENCED")
         self.referenced_label.setStyleSheet(
-            "color: #2e7d32; font-weight: bold;"
+            "color: #3fb950; font-weight: bold;"
             if referenced
-            else "color: #c62828; font-weight: bold;"
+            else "color: #f85149; font-weight: bold;"
         )
 
     def _update_enable_state(self) -> None:
@@ -243,5 +244,5 @@ class RobotTestTab(QWidget):
     def _set_status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
-            "color: #2e7d32;" if ok else "color: #c62828; font-weight: bold;"
+            "color: #3fb950;" if ok else "color: #f85149; font-weight: bold;"
         )
