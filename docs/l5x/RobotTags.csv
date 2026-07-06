@@ -12,6 +12,7 @@ TAG,,MOVE_DEC,"Move decel, steps/s^2. 0 => use accel.","DINT","","(RADIX := Deci
 TAG,,HOME_VEL_0,"Motor 0 homing speed, steps/s, signed toward the prox. Tune.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,HOME_VEL_1,"Motor 1 homing speed, steps/s, signed toward the prox. Tune.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,HOME_ACC,"Homing accel, steps/s^2. Set ~50000.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
+TAG,,HOME_TMO_MS,"Homing timeout, ms (loaded into Home*_Tmr.PRE). Homing beyond this faults.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,HOME_OFFSET_L,"Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,HOME_OFFSET_R,"Right switch angle * STEPS_PER_DEG (ActualRightDeg ~44.15). Set at commissioning.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,VAC_SETTLE,"Vacuum settle time, ms (VacTmr preset). Tune.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
