@@ -135,17 +135,29 @@ create the nested types from one combined file, so they're split, leaves first:
 | `5_VisionRobot.L5X` | `VisionRobot` (references the four above — import it **last**) |
 
 **2 — the tags, as a CSV** (`Controller Tags → right-click → Import…`, **after**
-the UDT exists — the file is a Rockwell tag CSV, not L5X):
+the UDT exists — the file is a Rockwell tag CSV, not L5X). These are all
+**controller-scope** (empty `SCOPE` column) so both the vision PC and every
+program routine can reach them:
 
-| `docs/l5x/…` | Creates |
+| `docs/l5x/…` | Creates (controller scope) |
 |---|---|
-| `RobotTags.csv` | the `VisionRobot` tag, the per-axis glue (`Move*/Home*/Ax*`, `EM806_*_ALM`), the coordinator tags (`HomeStep`, `HR_ons`, `SoftLimitsEnable`), and the tuning values (`STEPS_PER_DEG`, `MOVE_VEL/ACC`, `HOME_VEL_0/1`, `HOME_ACC`, `HOME_OFFSET_L/R`) |
+| `RobotTags.csv` | **every internal tag the whole program uses** — not just the motion glue. The `VisionRobot` tag; per-axis move/home glue (`Move*/Home*/Ax*`, `EM806_*_ALM`); homing coordinator (`HomeStep`, `HR_ons`, `SoftLimitsEnable`); safety (`EStop_*`, `Guard_Closed`, `Ax*_Limit*`, `SafetyOK`, `EnableReq`); manual (`AutoMode`, `WithinLimits`, `MoveActive`, `MTT_prev`); the auto pick/place state machine (`State`, `VacTmr`/`BlowTmr`, `Cmd*`/`At*`, poses `PickL/R`, `DropL/R`, pneumatics `CylinderDown`/`VacuumOn`/`Blowoff`, Z sensors `PickDown/Up`, `DropDown/Up`, `VacuumSensor`); and the tuning values |
 
-> ⚠️ **CSV import creates tag *definitions* only — it does not set values.** After
-> importing, set the values by hand (most you tune at commissioning anyway):
-> `STEPS_PER_DEG := 26.66667`, `MOVE_VEL ≈ 20000`, `MOVE_ACC ≈ 100000`,
-> `HOME_VEL_0/1` (signed, ≈ ∓2000), `HOME_ACC ≈ 50000`, and `HOME_OFFSET_L/R`
-> (§6/§7). Each tag's CSV description repeats its starting value.
+> ⚠️ **Two things the CSV can't do for you:**
+> 1. **Values.** CSV import creates *definitions* only — every tag comes in at
+>    0/false. Set the tuning values by hand (most you tune at commissioning):
+>    `STEPS_PER_DEG := 26.66667`, `MOVE_VEL/ACC`, `HOME_VEL_0/1` (signed),
+>    `HOME_ACC`, `VAC_SETTLE`/`BLOWOFF_TIME`, `CAMERA_CLEAR_L/R`, `HOME_OFFSET_L/R`.
+>    Each tag's CSV description repeats its starting value.
+> 2. **Physical I/O mapping.** The E-stop/guard/limit/Z-sensor inputs and the
+>    solenoid outputs (`CylinderDown`, `VacuumOn`, `Blowoff`) and `EM806_*_ALM`
+>    import as **base BOOLs** — after import, alias/map each to its real module
+>    point.
+
+> **These back the full program** (`R10_Safety`, `R20_Drives`, `R40_Manual`,
+> `R50_Auto`, `R60_Status`), whose logic is in
+> [`plc_ladder.md`](plc_ladder.md). Only the motion routines below are shipped as
+> importable `.L5X`; build the rest from that sheet — the tags are already here.
 
 **3 — the routines** (`right-click a Program → Import Routine…`, after the tags exist):
 
