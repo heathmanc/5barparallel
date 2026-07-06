@@ -20,7 +20,8 @@ sheet in [`plc_homing.md`](plc_homing.md), the ladder visuals in
 3. **Give the ClearLink a static IP** with a Rockwell/Molex tool (§2).
 4. **Import the ClearLink EDS**, add the module as **"Step Dir"** (§3).
 5. **Import Teknic's example `.L5K`** (reference) and **this repo's `.L5X`** in
-   order: `VisionRobot_UDT.L5X` → `RobotTags.L5X` → the `R_*`/`R30_*` routines (§4).
+   order: the five `#_VisionRobot*.L5X` UDT files → `RobotTags.csv` → the
+   `R_*`/`R30_*` routines (§4).
 6. **Set the Configuration assembly** (home sensor, homing enable, HLFB/Enable
    inversion, soft limits) (§5).
 7. **Finish the `VisionRobot` glue** — alias `EM806_*_ALM` to the drive-alarm
@@ -117,25 +118,34 @@ these examples) are in `plc_homing.md` and `plc_ladder.md`.
 
 ### Importable files in this repo (`docs/l5x/`)
 
-The repo ships the whole motion side as **importable Studio 5000 `.L5X`** so you
-don't re-type it. **Import in this order** — later files reference what earlier
-ones create (the `VisionRobot` tag needs its UDT; the routines need both):
+The repo ships the whole motion side ready to import so you don't re-type it.
+**Import in this order** — each group needs what the previous one creates (the
+`VisionRobot` tag needs its UDT; the routines need both):
 
-**1 — the UDT** (`Assets → Data Types → right-click → Import…`):
+**1 — the UDT, five files, in numeric order** (`Assets → Data Types →
+right-click → Import…`). Import each separately — Logix does **not** reliably
+create the nested types from one combined file, so they're split, leaves first:
 
-| `docs/l5x/…` | Import as | Creates |
-|---|---|---|
-| `VisionRobot_UDT.L5X` | Data Type | `VisionRobot` + its four nested types (`_Cmd/_Target/_Manual/_Status`) |
+| `docs/l5x/…` (import in order) | Creates data type |
+|---|---|
+| `1_VisionRobot_Cmd.L5X` | `VisionRobot_Cmd` |
+| `2_VisionRobot_Target.L5X` | `VisionRobot_Target` |
+| `3_VisionRobot_Manual.L5X` | `VisionRobot_Manual` |
+| `4_VisionRobot_Status.L5X` | `VisionRobot_Status` |
+| `5_VisionRobot.L5X` | `VisionRobot` (references the four above — import it **last**) |
 
-> In the Import Configuration dialog, confirm all **five** types show an
-> operation of *Create* — that's how the nested (Context) types come in from the
-> one file.
+**2 — the tags, as a CSV** (`Controller Tags → right-click → Import…`, **after**
+the UDT exists — the file is a Rockwell tag CSV, not L5X):
 
-**2 — the tags** (`Controller Tags → right-click → Import…`, after the UDT exists):
+| `docs/l5x/…` | Creates |
+|---|---|
+| `RobotTags.csv` | the `VisionRobot` tag, the per-axis glue (`Move*/Home*/Ax*`, `EM806_*_ALM`), the coordinator tags (`HomeStep`, `HR_ons`, `SoftLimitsEnable`), and the tuning values (`STEPS_PER_DEG`, `MOVE_VEL/ACC`, `HOME_VEL_0/1`, `HOME_ACC`, `HOME_OFFSET_L/R`) |
 
-| `docs/l5x/…` | Import as | Creates |
-|---|---|---|
-| `RobotTags.L5X` | Tags | the `VisionRobot` tag, the per-axis glue (`Move*/Home*/Ax*`, `EM806_*_ALM`), the coordinator tags (`HomeStep`, `HR_ons`, `SoftLimitsEnable`), and the tuning values (`STEPS_PER_DEG` const, `MOVE_VEL/ACC`, `HOME_VEL_0/1`, `HOME_ACC`, `HOME_OFFSET_L/R`) |
+> ⚠️ **CSV import creates tag *definitions* only — it does not set values.** After
+> importing, set the values by hand (most you tune at commissioning anyway):
+> `STEPS_PER_DEG := 26.66667`, `MOVE_VEL ≈ 20000`, `MOVE_ACC ≈ 100000`,
+> `HOME_VEL_0/1` (signed, ≈ ∓2000), `HOME_ACC ≈ 50000`, and `HOME_OFFSET_L/R`
+> (§6/§7). Each tag's CSV description repeats its starting value.
 
 **3 — the routines** (`right-click a Program → Import Routine…`, after the tags exist):
 
@@ -187,7 +197,8 @@ Sent once when the connection is established. Per motor (`Motor0Config`,
 
 Three tag groups exist. **You do not create the ClearLink assembly tags** (§3 —
 the AOP makes them). The **`VisionRobot` UDT + tag** and the **glue tags** you
-**import** from `VisionRobot_UDT.L5X` + `RobotTags.L5X` (§4) rather than hand-type.
+**import** from the five `#_VisionRobot*.L5X` UDT files + `RobotTags.csv` (§4)
+rather than hand-type.
 `VisionRobot` is the surface the vision PC reads/writes over EtherNet/IP with
 pycomm3 — the single source of truth: the app's **PLC tab** lists every tag and
 the driver reads/writes exactly these.
@@ -210,15 +221,18 @@ After importing, the controller tag `VisionRobot` (UDT with
   `Status.Ready / Busy / Done`, `Status.ActiveCommandID / CompleteCommandID /
   FailedCommandID`, `Status.VacuumOK / CameraClear / ReadyForVision`.
 
-**Glue that comes in with `RobotTags.L5X`:** the state-machine tags (`HomeStep`,
+**Glue that comes in with `RobotTags.csv`:** the state-machine tags (`HomeStep`,
 per-axis `Home*_State/Req`, `Ax*_HomeDone/Fault`, `Move*_*`, `HR_ons`,
-`SoftLimitsEnable`) and the tuning values (`STEPS_PER_DEG` const := 26.66667,
+`SoftLimitsEnable`) and the tuning-value tags (`STEPS_PER_DEG` const,
 `HOME_VEL_0/1`, `HOME_ACC`, `MOVE_VEL`, `MOVE_ACC`, `HOME_OFFSET_L/R`).
 
-**What you still finish by hand after importing:**
+**What you still finish by hand after importing** (CSV imports names/types, not
+values — so all of these start at 0/false):
+- **Set the tuning values:** `STEPS_PER_DEG := 26.66667` and the starting
+  velocities/accels from each tag's CSV description (§4 lists them).
 - **Alias `EM806_0_ALM` / `EM806_1_ALM`** onto the ClearLink digital inputs the
   two drive-alarm outputs are wired to (they import as plain BOOLs).
-- **Set `HOME_OFFSET_L/R`** (imported as 0) once you've measured them (below).
+- **Set `HOME_OFFSET_L/R`** once you've measured them (below).
 - **Tune** `HOME_VEL_0/1` sign+magnitude, `MOVE_VEL/ACC`, `HOME_ACC` at
   commissioning.
 
