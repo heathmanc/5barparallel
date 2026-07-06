@@ -7,7 +7,7 @@
 <Routine Use="Target" Name="R_MoveMotor1" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R_MoveMotor1: Motor 1 absolute move. Tags/constants come from RobotTags.L5X (Move1_Execute/ons/Fault/InPosition, Move1_Steps, Move1_Target_Deg, EM806_1_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) and the ClearLink module (ClearLink:O1/:I1). Import VisionRobot_UDT.L5X + RobotTags.L5X first. Twin routine: R_MoveMotor0.]]></Comment>
+<Comment><![CDATA[R_MoveMotor1: Motor 1 absolute move. Tags/constants come from RobotTags.csv (Move1_Execute/ons/Fault/InPosition, Move1_Steps, Move1_Target_Deg, EM806_1_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) and the ClearLink module (ClearLink:O1/:I1). Import the VisionRobot UDT .L5X files + RobotTags.csv first. Twin routine: R_MoveMotor0.]]></Comment>
 <Text><![CDATA[OTE(ClearLink:O1.Motor1_Output_Reg_Enable);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">

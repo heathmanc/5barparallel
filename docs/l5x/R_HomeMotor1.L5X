@@ -7,7 +7,7 @@
 <Routine Use="Target" Name="R_HomeMotor1" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R_HomeMotor1: Motor 1 homing. First set ClearLink:C.Motor1Config (Home_Sensor = the prox input, Config Register Homing Enable bit0=1, HLFB Inversion bit3=1). Tags come from RobotTags.L5X (Home1_State, Home1_Req/ons, Ax1_HomeDone/HomeFault, Home1_Tmr, EM806_1_ALM, HOME_VEL_1 signed toward the prox, HOME_ACC). R30_Homing JSRs R_HomeMotor0/R_HomeMotor1.]]></Comment>
+<Comment><![CDATA[R_HomeMotor1: Motor 1 homing. First set ClearLink:C.Motor1Config (Home_Sensor = the prox input, Config Register Homing Enable bit0=1, HLFB Inversion bit3=1). Tags come from RobotTags.csv (Home1_State, Home1_Req/ons, Ax1_HomeDone/HomeFault, Home1_Tmr, EM806_1_ALM, HOME_VEL_1 signed toward the prox, HOME_ACC). R30_Homing JSRs R_HomeMotor0/R_HomeMotor1.]]></Comment>
 <Text><![CDATA[XIC(Home1_Req)ONS(Home1_ons)EQU(Home1_State,0)XIO(Ax1_HomeFault)MOV(10,Home1_State);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">

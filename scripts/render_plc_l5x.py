@@ -1,36 +1,47 @@
 #!/usr/bin/env python3
-"""Emit importable Studio 5000 .L5X for the ClearLink motion side of the robot.
+"""Emit importable Studio 5000 files for the ClearLink motion side of the robot.
 
-Three kinds of partial-export file, imported **in this order**:
+Three kinds of file, imported **in this order**:
 
-    docs/l5x/VisionRobot_UDT.L5X   the VisionRobot UDT (5 nested data types)
-                                   -> Assets/Data Types -> Import  (do this FIRST)
-    docs/l5x/RobotTags.L5X         glue tags + tuning constants + the VisionRobot
-                                   tag  -> Controller Tags -> Import (SECOND)
-    docs/l5x/R_MoveMotor0.L5X      absolute move, Motor 0  \\  right-click a
-    docs/l5x/R_MoveMotor1.L5X      absolute move, Motor 1   |  Program ->
-    docs/l5x/R_HomeMotor0.L5X      ClearLink homing, Motor 0|  Import Routine…
-    docs/l5x/R_HomeMotor1.L5X      ClearLink homing, Motor 1|  (LAST, after the
-    docs/l5x/R30_Homing.L5X        2-axis homing coordinator/  tags exist)
+    docs/l5x/1_VisionRobot_Cmd.L5X      \\
+    docs/l5x/2_VisionRobot_Target.L5X    |  the VisionRobot UDT, one data type
+    docs/l5x/3_VisionRobot_Manual.L5X    |  per file, imported in numeric order
+    docs/l5x/4_VisionRobot_Status.L5X    |  (leaves 1-4 first, then the parent).
+    docs/l5x/5_VisionRobot.L5X          /   Assets/Data Types -> Import  (FIRST)
 
-The routines carry Rockwell **neutral rung text** — the same form used inside
-Teknic's own CompactLogix `.L5K` examples. They are plain **Routines**, not
-Add-On Instructions: Teknic ships no motion AOI, and a real AOI can only touch
-its own parameters/locals, not the `ClearLink:O1/:I1` module tags directly — so
-these implement the design's `AOI_AxisMove`/`AOI_HomeAxis` (docs/plc_program.md
-§5) as one routine per motor instead. `R30_Homing` `JSR`s `R_HomeMotor0` and
-`R_HomeMotor1`, so both are shipped.
+    docs/l5x/RobotTags.csv              the glue tags + tuning values + the
+                                       VisionRobot tag.  Controller Tags ->
+                                       Import (SECOND — needs the UDT to exist)
 
-They reference the ClearLink AOP tags (`ClearLink:O1/:I1/:C`, created when you
-add the "Step Dir" module), the `VisionRobot` UDT tag, and the glue tags — all of
-which come from the two import files above.
+    docs/l5x/R_MoveMotor0.L5X   absolute move, Motor 0  \\  right-click a Program
+    docs/l5x/R_MoveMotor1.L5X   absolute move, Motor 1   |  -> Import Routine…
+    docs/l5x/R_HomeMotor0.L5X   ClearLink homing, Motor 0|  (LAST, after the
+    docs/l5x/R_HomeMotor1.L5X   ClearLink homing, Motor 1|  UDT + tags exist)
+    docs/l5x/R30_Homing.L5X     2-axis homing coordinator/
+
+Why one UDT per file: Studio 5000 does not reliably *create* the nested
+(dependency) types from a single combined export — the parent then references
+types that don't exist yet and the import fails with "member … data type was
+missing". Importing each type as its own Target, leaves before the parent, is
+the documented, reliable order.
+
+Why the tags are CSV: Logix's bulk tag import is the Rockwell tag CSV
+(`TYPE,SCOPE,NAME,DESCRIPTION,DATATYPE,SPECIFIER,ATTRIBUTES`), not L5X. Note that
+CSV import creates tag *definitions* only — **it does not set values**, so the
+tuning values (STEPS_PER_DEG, MOVE_VEL, HOME_VEL_0/1, …) are entered once by hand
+after import (you tune most of them at commissioning anyway). See docs/plc_setup.md.
+
+The routines carry Rockwell **neutral rung text** (the form inside Teknic's own
+`.L5K` examples). They are plain **Routines**, not Add-On Instructions: Teknic
+ships no motion AOI, and a real AOI can't touch the `ClearLink:O1/:I1` module
+tags directly — so these implement the design's `AOI_AxisMove`/`AOI_HomeAxis`
+(docs/plc_program.md §5) as one routine per motor.
 
 Run:  python scripts/render_plc_l5x.py
 
-NOTE: generated on a machine without Studio 5000, so these are schema-conformant
-but not import-verified. Import the UDT file first and confirm the Import
-Configuration dialog offers to *Create* all five VisionRobot types; then the tags;
-then the routines. Report any schema error and I'll fix the generator.
+NOTE: generated without Studio 5000 — schema-conformant but not import-verified.
+Import the UDT files (1..5) first, then the CSV, then the routines. Report any
+error and I'll fix the generator.
 """
 
 from __future__ import annotations
@@ -100,10 +111,10 @@ def move_rungs(m: int) -> List[Rung]:
     other = 1 - m
     return [
         (f"R_MoveMotor{m}: Motor {m} absolute move. Tags/constants come from "
-         f"RobotTags.L5X (Move{m}_Execute/ons/Fault/InPosition, Move{m}_Steps, "
+         f"RobotTags.csv (Move{m}_Execute/ons/Fault/InPosition, Move{m}_Steps, "
          f"Move{m}_Target_Deg, EM806_{m}_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) "
-         f"and the ClearLink module (ClearLink:O1/:I1). Import VisionRobot_UDT.L5X "
-         f"+ RobotTags.L5X first. Twin routine: R_MoveMotor{other}.",
+         f"and the ClearLink module (ClearLink:O1/:I1). Import the VisionRobot UDT "
+         f".L5X files + RobotTags.csv first. Twin routine: R_MoveMotor{other}.",
          f"OTE({o}Output_Reg_Enable);"),
         ("Convert the target angle to steps.",
          f"CPT(Move{m}_Steps,TRUNC(Move{m}_Target_Deg * STEPS_PER_DEG));"),
@@ -131,7 +142,7 @@ def home_rungs(m: int) -> List[Rung]:
     return [
         (f"R_HomeMotor{m}: Motor {m} homing. First set ClearLink:C.Motor{m}Config "
          f"(Home_Sensor = the prox input, Config Register Homing Enable bit0=1, "
-         f"HLFB Inversion bit3=1). Tags come from RobotTags.L5X (Home{m}_State, "
+         f"HLFB Inversion bit3=1). Tags come from RobotTags.csv (Home{m}_State, "
          f"Home{m}_Req/ons, Ax{m}_HomeDone/HomeFault, Home{m}_Tmr, EM806_{m}_ALM, "
          f"HOME_VEL_{m} signed toward the prox, HOME_ACC). R30_Homing JSRs "
          f"R_HomeMotor0/R_HomeMotor1.",
@@ -178,10 +189,10 @@ def home_rungs(m: int) -> List[Rung]:
 
 COORD: List[Rung] = [
     ("R30_Homing: sequential 2-axis homing coordinator. JSRs R_HomeMotor0 / "
-     "R_HomeMotor1 and publishes VisionRobot.Status. Tags from RobotTags.L5X "
+     "R_HomeMotor1 and publishes VisionRobot.Status. Tags from RobotTags.csv "
      "(HomeStep, HR_ons, SoftLimitsEnable, Home0_Req/Home1_Req, Ax0/Ax1_HomeDone/"
-     "HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import "
-     "VisionRobot_UDT.L5X + RobotTags.L5X first.",
+     "HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import the "
+     "VisionRobot UDT .L5X files + RobotTags.csv first.",
      "XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)"
      "XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)"
      "MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)OTL(Home0_Req);"),
@@ -206,7 +217,8 @@ COORD: List[Rung] = [
 
 
 # --------------------------------------------------------------------------- #
-# DataType export — the VisionRobot UDT (BOOLs bit-packed into hidden SINTs)
+# DataType exports — one VisionRobot UDT per file (leaves first, then parent).
+# BOOLs bit-pack into hidden SINT hosts exactly as Logix exports them.
 # --------------------------------------------------------------------------- #
 Member = Tuple[str, str]  # (name, data type)
 
@@ -284,30 +296,27 @@ UDT_PARENT: List[Member] = [
     ("Manual", "VisionRobot_Manual"), ("Status", "VisionRobot_Status"),
 ]
 
+# import order: the four leaves (any order), then the parent that references them
+UDT_FILES: List[Tuple[str, str, List[Member]]] = [
+    ("1_VisionRobot_Cmd.L5X", "VisionRobot_Cmd", UDT_CMD),
+    ("2_VisionRobot_Target.L5X", "VisionRobot_Target", UDT_TARGET),
+    ("3_VisionRobot_Manual.L5X", "VisionRobot_Manual", UDT_MANUAL),
+    ("4_VisionRobot_Status.L5X", "VisionRobot_Status", UDT_STATUS),
+    ("5_VisionRobot.L5X", "VisionRobot", UDT_PARENT),
+]
 
-def _datatype(name: str, members: List[Member], use: str) -> str:
-    return (
-        f'<DataType Use="{use}" Name="{name}" Family="NoFamily" Class="User">\n'
-        f'<Members>\n{_pack_members(name, members)}\n</Members>\n'
-        f'</DataType>'
-    )
 
-
-def visionrobot_udt_l5x() -> str:
-    # leaves as context (declared first), the parent as the single target
-    leaves = [
-        ("VisionRobot_Cmd", UDT_CMD),
-        ("VisionRobot_Target", UDT_TARGET),
-        ("VisionRobot_Manual", UDT_MANUAL),
-        ("VisionRobot_Status", UDT_STATUS),
-    ]
-    body = "\n".join(_datatype(n, m, "Context") for n, m in leaves)
-    parent = _datatype("VisionRobot", UDT_PARENT, "Target")
-    return f'''{_content_open("VisionRobot", "DataType")}
+def datatype_l5x(name: str, members: List[Member]) -> str:
+    """One DataType as the single Target — no embedded dependencies, so the
+    referenced leaf types must already exist (import order 1..5)."""
+    return f'''{_content_open(name, "DataType")}
 <Controller Use="Context" Name="{CONTROLLER}">
 <DataTypes Use="Context">
-{body}
-{parent}
+<DataType Use="Target" Name="{name}" Family="NoFamily" Class="User">
+<Members>
+{_pack_members(name, members)}
+</Members>
+</DataType>
 </DataTypes>
 </Controller>
 </RSLogix5000Content>
@@ -315,7 +324,7 @@ def visionrobot_udt_l5x() -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Tag export — glue tags, tuning values, and the VisionRobot tag
+# Tag export — Rockwell tag CSV (definitions only; values set by hand after).
 # --------------------------------------------------------------------------- #
 class Tag:
     def __init__(self, name: str, dtype: str, value="0", *,
@@ -323,56 +332,43 @@ class Tag:
         self.name, self.dtype, self.value = name, dtype, value
         self.constant, self.desc = constant, desc
 
-    def xml(self, use: str) -> str:
+    def csv_row(self) -> str:
         const = "true" if self.constant else "false"
-        radix = {"REAL": "Float"}.get(self.dtype, "Decimal")
-        # structure tags (UDT, TIMER) carry no Radix on the <Tag> element
-        structure = self.dtype in ("TIMER", "VisionRobot")
-        open_attrs = (f'Use="{use}" Name="{self.name}" TagType="Base" '
-                      f'DataType="{self.dtype}"')
-        if not structure:
-            open_attrs += f' Radix="{radix}"'
-        open_attrs += f' Constant="{const}" ExternalAccess="Read/Write"'
-        desc = (f"<Description><![CDATA[{self.desc}]]></Description>\n"
-                if self.desc else "")
-
-        if self.dtype == "VisionRobot":
-            # minimal form — Logix materializes the structure with defaults
-            if not desc:
-                return f"<Tag {open_attrs}/>"
-            data = ""
-        elif self.dtype == "TIMER":
-            data = (
-                '<Data Format="Decorated">\n<Structure DataType="TIMER">\n'
-                '<DataValueMember Name="PRE" DataType="DINT" Radix="Decimal" Value="0"/>\n'
-                '<DataValueMember Name="ACC" DataType="DINT" Radix="Decimal" Value="0"/>\n'
-                '<DataValueMember Name="EN" DataType="BOOL" Value="0"/>\n'
-                '<DataValueMember Name="TT" DataType="BOOL" Value="0"/>\n'
-                '<DataValueMember Name="DN" DataType="BOOL" Value="0"/>\n'
-                '</Structure>\n</Data>\n'
-            )
+        if self.dtype in ("TIMER", "VisionRobot"):        # structured: no RADIX
+            attrs = f"ExternalAccess := Read/Write, Constant := {const}"
         else:
-            data = (f'<Data Format="Decorated">\n<DataValue DataType="{self.dtype}" '
-                    f'Radix="{radix}" Value="{self.value}"/>\n</Data>\n')
-        return f"<Tag {open_attrs}>\n{desc}{data}</Tag>"
+            radix = "Float" if self.dtype == "REAL" else "Decimal"
+            attrs = (f"RADIX := {radix}, ExternalAccess := Read/Write, "
+                     f"Constant := {const}")
+        return ",".join([
+            "TAG", "", self.name, _csv(self.desc), _csv(self.dtype), '""',
+            _csv(f"({attrs})"),
+        ])
+
+
+def _csv(field: str) -> str:
+    """Quote a CSV field, doubling any embedded double-quote."""
+    return '"' + field.replace('"', '""') + '"'
 
 
 def _glue_tags() -> List[Tag]:
     tags: List[Tag] = []
-    # tuning + fixed values
+    # tuning + fixed values (values are entered by hand — CSV carries no values)
     tags.append(Tag("STEPS_PER_DEG", "REAL", "26.66667", constant=True,
-                    desc="3200 pulses/rev * 3:1 / 360. Fixed mechanical ratio."))
+                    desc="3200 pulses/rev * 3:1 / 360. Fixed mechanical ratio. "
+                         "Set value to 26.66667 after import."))
     tags.append(Tag("MOVE_VEL", "DINT", "20000",
-                    desc="Absolute-move speed, steps/s (<= 500000). Tune."))
+                    desc="Absolute-move speed, steps/s (<= 500000). Set ~20000, tune."))
     tags.append(Tag("MOVE_ACC", "DINT", "100000",
-                    desc="Absolute-move accel, steps/s^2. Tune."))
+                    desc="Absolute-move accel, steps/s^2. Set ~100000, tune."))
     tags.append(Tag("HOME_VEL_0", "DINT", "-2000",
                     desc="Motor 0 homing speed, steps/s, SIGNED toward the prox. "
-                         "Tune sign+magnitude at commissioning."))
+                         "Set ~-2000, tune sign+magnitude at commissioning."))
     tags.append(Tag("HOME_VEL_1", "DINT", "2000",
                     desc="Motor 1 homing speed, steps/s, SIGNED toward the prox. "
-                         "The two shoulders often home in opposite directions."))
-    tags.append(Tag("HOME_ACC", "DINT", "50000", desc="Homing accel, steps/s^2."))
+                         "Shoulders often home opposite ways; set ~2000, tune."))
+    tags.append(Tag("HOME_ACC", "DINT", "50000",
+                    desc="Homing accel, steps/s^2. Set ~50000."))
     tags.append(Tag("HOME_OFFSET_L", "DINT", "0",
                     desc="Left switch angle * STEPS_PER_DEG so ActualLeftDeg reads "
                          "~135.85 after homing. Set at commissioning."))
@@ -395,8 +391,8 @@ def _glue_tags() -> List[Tag]:
             Tag(f"Ax{m}_HomeDone", "BOOL"),
             Tag(f"Ax{m}_HomeFault", "BOOL"),
             Tag(f"EM806_{m}_ALM", "BOOL",
-                desc=f"Motor {m} EM806 ALM. Alias this to the ClearLink digital "
-                     f"input the drive alarm is wired to (Discrete Input Point)."),
+                desc=f"Motor {m} EM806 ALM. After import, change this to an ALIAS "
+                     f"of the ClearLink digital input the drive alarm is wired to."),
         ]
     # coordinator scope
     tags += [
@@ -404,27 +400,23 @@ def _glue_tags() -> List[Tag]:
         Tag("HR_ons", "BOOL"),
         Tag("SoftLimitsEnable", "BOOL"),
         Tag("VisionRobot", "VisionRobot",
-            desc="The vision-PC handshake surface (pycomm3 reads/writes by name). "
-                 "Import VisionRobot_UDT.L5X first so this type resolves."),
+            desc="Vision-PC handshake surface (pycomm3 reads/writes by name). "
+                 "Import the VisionRobot UDT .L5X files first so this type resolves."),
     ]
     return tags
 
 
-def robot_tags_l5x() -> str:
-    tags = _glue_tags()
-    # exactly one Use="Target"; the rest are Use="Context" (all get a Create
-    # option in the Import Configuration dialog)
-    body = "\n".join(
-        t.xml("Target" if i == 0 else "Context") for i, t in enumerate(tags)
-    )
-    return f'''{_content_open(tags[0].name, "Tag")}
-<Controller Use="Context" Name="{CONTROLLER}">
-<Tags Use="Context">
-{body}
-</Tags>
-</Controller>
-</RSLogix5000Content>
-'''
+def robot_tags_csv() -> str:
+    header = [
+        'remark,"CSV-Import-Export"',
+        'remark,"Date = generated by scripts/render_plc_l5x.py"',
+        'remark,"Version = RSLogix 5000 v30.00"',
+        'remark,"Owner = "',
+        'remark,"Company = "',
+        "TYPE,SCOPE,NAME,DESCRIPTION,DATATYPE,SPECIFIER,ATTRIBUTES",
+    ]
+    rows = [t.csv_row() for t in _glue_tags()]
+    return "\n".join(header + rows) + "\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -432,26 +424,31 @@ def main() -> None:
     out = Path(__file__).resolve().parents[1] / "docs" / "l5x"
     out.mkdir(parents=True, exist_ok=True)
 
-    # remove the old, misleadingly-named "AOI_*" routine files
-    for stale in ("AOI_AxisMove.L5X", "AOI_HomeAxis.L5X"):
+    # remove superseded files (old AOI_* routines, combined UDT, L5X tags)
+    for stale in ("AOI_AxisMove.L5X", "AOI_HomeAxis.L5X",
+                  "VisionRobot_UDT.L5X", "RobotTags.L5X"):
         p = out / stale
         if p.exists():
             p.unlink()
-            print(f"removed stale {p.name}")
+            print(f"removed superseded {p.name}")
 
-    files = {
-        "VisionRobot_UDT.L5X": visionrobot_udt_l5x(),
-        "RobotTags.L5X": robot_tags_l5x(),
+    xml_files = {name: datatype_l5x(udt, members)
+                 for name, udt, members in UDT_FILES}
+    xml_files.update({
         "R_MoveMotor0.L5X": routine_l5x("R_MoveMotor0", move_rungs(0)),
         "R_MoveMotor1.L5X": routine_l5x("R_MoveMotor1", move_rungs(1)),
         "R_HomeMotor0.L5X": routine_l5x("R_HomeMotor0", home_rungs(0)),
         "R_HomeMotor1.L5X": routine_l5x("R_HomeMotor1", home_rungs(1)),
         "R30_Homing.L5X": routine_l5x("R30_Homing", COORD),
-    }
-    for name, text in files.items():
+    })
+    for name, text in xml_files.items():
         ET.fromstring(text)                      # well-formedness check
         (out / name).write_text(text)
         print(f"wrote {out / name}")
+
+    csv_text = robot_tags_csv()
+    (out / "RobotTags.csv").write_text(csv_text)
+    print(f"wrote {out / 'RobotTags.csv'}")
 
 
 if __name__ == "__main__":
