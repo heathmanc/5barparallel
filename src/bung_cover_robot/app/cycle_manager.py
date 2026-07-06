@@ -7,6 +7,11 @@ Ties the whole stack together for a full battery::
     -> plan pick & drop angles (robot.planner) -> PLC pick/place handshake
     -> re-image (loose covers shift each pick) -> next hole
 
+Holes and covers share one calibration plane (Claude.md §13). A battery-type
+changeover swaps the active homography (per-recipe), so the cycle only ever needs
+one ``calibration`` — the same pixel->robot transform maps both the vent holes and
+the loose covers.
+
 The manager owns no Qt; the Vision tab is a thin view that calls ``run_cycle`` and
 renders the returned steps. Every target is validated before a job is built, so a
 bad pose can never reach the PLC.
@@ -123,7 +128,6 @@ class CycleManager:
         controller: RobotTestController,
         camera: Camera,
         calibration: Optional[HomographyTransform],
-        hole_calibration: Optional[HomographyTransform] = None,
         hole_detector: Optional[HoleDetector] = None,
         cover_detector: Optional[CoverDetector] = None,
         job_runner: Optional[JobRunner] = None,
@@ -131,10 +135,8 @@ class CycleManager:
     ) -> None:
         self.controller = controller
         self.camera = camera
+        # One plane for both holes and covers; changeover swaps this per battery.
         self.calibration = calibration
-        # Holes sit on the battery-top plane; covers on the pick plane. With no
-        # separate battery calibration, fall back to the cover transform.
-        self.hole_calibration = hole_calibration or calibration
         self.hole_detector = hole_detector or HoleDetector()
         self.cover_detector = cover_detector or CoverDetector()
         self.job_runner = job_runner
@@ -173,7 +175,7 @@ class CycleManager:
         if holes.count == 0:
             return CycleResult(ok=False, reason="no holes detected")
         hole_xy = [
-            self.hole_calibration.pixel_to_robot(h.cx, h.cy) for h in holes.holes
+            self.calibration.pixel_to_robot(h.cx, h.cy) for h in holes.holes
         ]
         order = sort_holes_along_conveyor(hole_xy)[: self.config.max_holes]
 

@@ -233,6 +233,7 @@ bung_cover_5bar_robot/
     gui/                          # DONE, tested (dark HMI: Vision, Camera,
       main_window.py              #   Calibration, Robot Test, Settings, PLC tabs;
       calibration_tab.py          #   click correspondences -> fit -> save)
+      cycle_worker.py             #   threaded auto-cycle runner (Start/Stop)
   tests/
     test_kinematics.py            # DONE (+ camera, driver, plc, detection,
     ...                           #   calibration, controller, gui smoke)
@@ -416,33 +417,34 @@ blowoff, and debounce.
 
 ## 13. Calibration & coordinate flow
 
-Camera sees points on two Z planes:
-- cover pickup plane (fixed tray/table height),
-- battery top plane (recipe-dependent height).
-
-**v1:** a fixed homography for the pickup plane and a per-recipe homography for
-each battery-top height. Add a one-time **lens-undistortion** step
-(`cv2.undistortPoints` with the camera intrinsics) **before** the homography —
-without it, a 2592×1944 sensor's corners can be several pixels off, which can
+**The vent holes and the loose covers sit on the same plane.** A battery-type
+**changeover** shifts that plane (and the hole pattern), so calibration is
+**one homography per battery recipe** — the *same* transform maps both the holes
+and the covers for the loaded battery type. Add a one-time **lens-undistortion**
+step (`cv2.undistortPoints` with the camera intrinsics) **before** the homography
+— without it, a 2592×1944 sensor's corners can be several pixels off, which can
 exceed the placement tolerance.
 
 ```
 pixel point
-  -> undistort -> homography (per Z plane) -> ROBOT-frame XY
-  -> WorkspaceValidator.validate()         (reject if not ok)
-  -> FiveBarKinematics.inverse()           -> left/right shoulder degrees
+  -> undistort -> homography (active recipe) -> ROBOT-frame XY
+  -> WorkspaceValidator.validate()           (reject if not ok)
+  -> FiveBarKinematics.inverse()             -> left/right shoulder degrees
   -> PLC target tags
 ```
 
 Homographies live in `calibration/*.npy` (git-ignored). `CalibrationManager`
-exposes `get_cover_transform()` and `get_battery_transform(recipe_key)`.
+exposes `get_cover_transform()` (a bring-up default) and per-recipe
+`get_battery_transform(recipe_key)` — load the recipe's transform at changeover
+and use it for the whole cycle. The `CycleManager` takes one active
+``calibration`` and applies it to both holes and covers.
 
 **Building one interactively:** the **Calibration tab** (`gui/calibration_tab.py`)
 is the operator workflow — capture a frame, click each known point and type its
 robot-frame XY (mm), **fit** the homography (≥4 non-collinear points; it reports
-the RMS residual in mm), then **save** it as the cover-plane transform or a
-per-recipe battery-top transform. A saved cover calibration is broadcast to the
-Vision tab immediately, so cover reachability updates live. Intrinsics for the
+the RMS residual in mm), then **save** it (default plane or a per-recipe
+changeover plane). A saved calibration is broadcast to the Vision tab
+immediately, so cover reachability updates live. Intrinsics for the
 pre-homography undistortion are read from `config/camera_config.yaml`.
 
 ---
@@ -452,19 +454,18 @@ pre-homography undistortion are read from `config/camera_config.yaml`.
 Done so far: `plc/{tags,compactlogix_client,plc_robot_driver,handshake}.py`,
 `robot/{driver,planner}.py`, `vision/{camera,calibration,detect_holes,detect_covers,detection}.py`,
 `app/{robot_test_controller,cycle_manager}.py`, and the full `gui/*` HMI (incl.
-interactive calibration + the Start/Stop-wired automatic cycle). The loop is
-closed: **detect → calibrate (pixel→robot) → validate → plan → PLC pick/place
-handshake → re-image**, running in dry-run, `--sim-plc`, or on a real PLC.
-Remaining, in order:
+interactive calibration + the Start/Stop-wired automatic cycle, which runs on a
+worker thread — `gui/cycle_worker.py` — so a multi-second PLC handshake never
+blocks the HMI; Stop halts after the current pick). The loop is closed:
+**detect → calibrate (pixel→robot) → validate → plan → PLC pick/place handshake
+→ re-image**, running in dry-run, `--sim-plc`, or on a real PLC. Remaining:
 
 1. **`app/diagnostics.py`** — save annotated images on any detection/validation
    failure.
 2. **`main.py`** — CLI entry, `--config`, `--dry-run` / `--sim-plc`.
-3. **`config/recipes.yaml`** — recipes carry battery-top height, hole
-   count/spacing, expected cover diameter, etc. (`camera_config.yaml` is done.)
-4. **Threaded cycle run** — `CycleManager.run_cycle` is synchronous (instant in
-   dry-run/sim); move it to a worker thread before driving a *real* PLC so a
-   multi-second handshake doesn't block the HMI, and let Stop interrupt mid-job.
+3. **`config/recipes.yaml`** — recipes carry hole count/spacing, expected cover
+   diameter, and the calibration recipe key to load at changeover
+   (`camera_config.yaml` is done).
 
 Keep growing `tests/` alongside (planner logic, calibration round-trips, a
 dry-run cycle-manager smoke test).

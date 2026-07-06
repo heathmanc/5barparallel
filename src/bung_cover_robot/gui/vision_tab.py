@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -28,6 +28,7 @@ from ..vision.detect_covers import CoverDetector
 from ..vision.detect_holes import HoleDetector
 from ..vision.detection import annotate
 from . import theme
+from .cycle_worker import CycleWorker
 from .imaging import ndarray_to_qpixmap
 from .widgets import ImageView, StatusPill
 
@@ -47,8 +48,9 @@ class VisionTab(QWidget):
         self.hole_detector = HoleDetector()
         self.cover_detector = CoverDetector()
         self._frame = None
-        self._stop_requested = False
         self._running = False
+        self._thread: Optional[QThread] = None
+        self._worker: Optional[CycleWorker] = None
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -170,30 +172,54 @@ class VisionTab(QWidget):
             self._set_status(f"Cannot start: {block}", theme.WARN)
             return
 
-        self._stop_requested = False
+        # Run off the GUI thread — a real PLC handshake takes seconds per hole.
         self._running = True
-        self._set_start_enabled(False)
+        self.start_btn.setEnabled(False)
         self._set_status("Running automatic cycle…", theme.INFO)
-        try:
-            result = manager.run_cycle(should_stop=lambda: self._stop_requested)
-        finally:
-            self._running = False
-            self._set_start_enabled(True)
 
+        self._thread = QThread(self)
+        self._worker = CycleWorker(manager)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.stepDone.connect(self._on_cycle_step)
+        self._worker.finished.connect(self._on_cycle_finished)
+        self._thread.start()
+
+    def _on_cycle_step(self, step) -> None:
+        where = f"hole {step.hole_index}"
+        if step.ok:
+            self._set_status(f"Placed cover in {where}…", theme.INFO)
+        else:
+            self._set_status(f"{where}: {step.reason}", theme.WARN)
+
+    def _on_cycle_finished(self, result) -> None:
+        self._teardown_thread()
+        self._running = False
+        self.start_btn.setEnabled(True)
         self._show_overlay()
         self.refresh()
         placed = len(result.placed)
         color = theme.SUCCESS if result.ok else theme.WARN
-        self._set_status(f"Cycle done — placed {placed} cover(s). {result.reason}", color)
+        self._set_status(
+            f"Cycle done — placed {placed} cover(s). {result.reason}", color
+        )
 
     def _on_stop(self) -> None:
-        self._stop_requested = True
-        self.controller.stop()
-        if not self._running:
+        if self._running and self._worker is not None:
+            self._worker.request_stop()
+            self.controller.stop()
+            self._set_status("Stopping after the current pick…", theme.WARN)
+        else:
             self._set_status("Stopped.", theme.TEXT_DIM)
 
-    def _set_start_enabled(self, on: bool) -> None:
-        self.start_btn.setEnabled(on)
+    def _teardown_thread(self) -> None:
+        if self._thread is not None:
+            self._thread.quit()
+            self._thread.wait()
+            self._worker.deleteLater()
+            self._thread.deleteLater()
+            self._thread = None
+            self._worker = None
 
     def _show_overlay(self) -> None:
         """Redraw the current scene with detected holes + covers."""

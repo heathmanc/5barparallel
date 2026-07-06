@@ -79,15 +79,48 @@ def test_vision_tab_start_requires_enable_and_home(qapp):
     assert "Cannot start" in vt.status_label.text()
 
 
+def _wait_until(qapp, predicate, timeout_s=5.0):
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline and not predicate():
+        qapp.processEvents()
+    return predicate()
+
+
 def test_vision_tab_start_runs_cycle(qapp):
     win = MainWindow()
     vt = win.vision_tab
     win.controller.enable()
     win.controller.home_reference()
     vt._on_start()
-    # Cycle ran to completion over the dry-run driver and placed covers.
+    # The cycle runs on a worker thread; wait for it to finish.
+    assert _wait_until(qapp, lambda: not vt._running)
     assert "placed" in vt.status_label.text()
     assert vt.start_btn.isEnabled()  # re-enabled after the run
+    assert vt._thread is None  # worker thread torn down cleanly
+
+
+def test_cycle_worker_stop_before_run(qapp):
+    from bung_cover_robot.app.cycle_manager import CycleManager
+    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
+    from bung_cover_robot.gui.cycle_worker import CycleWorker
+    from bung_cover_robot.gui.imaging import demo_frame, demo_transform
+    from bung_cover_robot.vision.camera import CameraConfig, MockCamera
+
+    ctrl = build_dry_run_controller()
+    ctrl.enable()
+    ctrl.home_reference()
+    cam = MockCamera(
+        CameraConfig(mock_width=760, mock_height=520), frames=[demo_frame(760, 520)]
+    ).open()
+    worker = CycleWorker(CycleManager(ctrl, cam, demo_transform()))
+    results = []
+    worker.finished.connect(results.append)
+    worker.request_stop()
+    worker.run()  # synchronous; should_stop is honored between holes
+    assert len(results) == 1
+    assert results[0].steps == [] and "stopped" in results[0].reason.lower()
 
 
 def test_camera_tab_controls_and_grab(qapp):
