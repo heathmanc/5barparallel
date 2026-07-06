@@ -60,11 +60,11 @@ Params: `In` TargetDeg (REAL), Execute (BOOL), StepsPerDeg (REAL) · `InOut` Ax
 (`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` prevExec, Loaded
 (BOOL).
 
-> ⚠️ **`plc_axismove_ladder.svg` shows the superseded `MoveTrigger`/`MoveDone`
-> interface.** Rebuild from the corrected ST below (which mirrors Teknic's
-> `SD_Position_Move`): load the move, latch **Load_Posn_Data**, clear it on the
-> **Ack**, and take *move done* from **At_Target_Posn** (`Steps_Active == 0` if
-> the EM806's HLFB Inversion isn't set — §3).
+![AOI_AxisMove ladder](plc_axismove_ladder.svg)
+
+Mirrors Teknic's `SD_Position_Move`: load the move, latch **Load_Posn_Data**,
+clear it on the **Ack**, and take *move done* from **At_Target_Posn**
+(`Steps_Active == 0` if the EM806's HLFB Inversion isn't set — §3).
 
 ```pascal
 Ax.Enable := 1;                                 (* Motor_Output_Reg_Enable *)
