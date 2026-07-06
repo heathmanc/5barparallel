@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="VisionRobot" TargetType="DataType" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="RobotController">
+<DataTypes Use="Context">
+<DataType Use="Context" Name="VisionRobot_Cmd" Family="NoFamily" Class="User">
+<Members>
+<Member Name="ZZZZZZZZZZVisionRobot_Cmd0" DataType="SINT" Dimension="0" Radix="Decimal" Hidden="true" ExternalAccess="Read/Write"/>
+<Member Name="RequestPickPlace" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Cmd0" BitNumber="0" ExternalAccess="Read/Write"/>
+<Member Name="Abort" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Cmd0" BitNumber="1" ExternalAccess="Read/Write"/>
+<Member Name="Reset" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Cmd0" BitNumber="2" ExternalAccess="Read/Write"/>
+<Member Name="CommandID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+</Members>
+</DataType>
+<DataType Use="Context" Name="VisionRobot_Target" Family="NoFamily" Class="User">
+<Members>
+<Member Name="Pick_LeftDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Pick_RightDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Drop_LeftDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Drop_RightDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="HoleIndex" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="CoverID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+</Members>
+</DataType>
+<DataType Use="Context" Name="VisionRobot_Manual" Family="NoFamily" Class="User">
+<Members>
+<Member Name="ZZZZZZZZZZVisionRobot_Manual0" DataType="SINT" Dimension="0" Radix="Decimal" Hidden="true" ExternalAccess="Read/Write"/>
+<Member Name="Enable" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Manual0" BitNumber="0" ExternalAccess="Read/Write"/>
+<Member Name="HomeRequest" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Manual0" BitNumber="1" ExternalAccess="Read/Write"/>
+<Member Name="MoveToTarget" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Manual0" BitNumber="2" ExternalAccess="Read/Write"/>
+<Member Name="Abort" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Manual0" BitNumber="3" ExternalAccess="Read/Write"/>
+<Member Name="TargetLeftDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="TargetRightDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="CommandID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+</Members>
+</DataType>
+<DataType Use="Context" Name="VisionRobot_Status" Family="NoFamily" Class="User">
+<Members>
+<Member Name="ZZZZZZZZZZVisionRobot_Status0" DataType="SINT" Dimension="0" Radix="Decimal" Hidden="true" ExternalAccess="Read/Write"/>
+<Member Name="Ready" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status0" BitNumber="0" ExternalAccess="Read/Write"/>
+<Member Name="Busy" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status0" BitNumber="1" ExternalAccess="Read/Write"/>
+<Member Name="Done" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status0" BitNumber="2" ExternalAccess="Read/Write"/>
+<Member Name="Faulted" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status0" BitNumber="3" ExternalAccess="Read/Write"/>
+<Member Name="FaultCode" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="ZZZZZZZZZZVisionRobot_Status1" DataType="SINT" Dimension="0" Radix="Decimal" Hidden="true" ExternalAccess="Read/Write"/>
+<Member Name="Enabled" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status1" BitNumber="0" ExternalAccess="Read/Write"/>
+<Member Name="Homed" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status1" BitNumber="1" ExternalAccess="Read/Write"/>
+<Member Name="InPosition" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status1" BitNumber="2" ExternalAccess="Read/Write"/>
+<Member Name="Moving" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status1" BitNumber="3" ExternalAccess="Read/Write"/>
+<Member Name="ActualLeftDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="ActualRightDeg" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="ActiveCommandID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="CompleteCommandID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="FailedCommandID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="ZZZZZZZZZZVisionRobot_Status2" DataType="SINT" Dimension="0" Radix="Decimal" Hidden="true" ExternalAccess="Read/Write"/>
+<Member Name="VacuumOK" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="0" ExternalAccess="Read/Write"/>
+<Member Name="CameraClear" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="1" ExternalAccess="Read/Write"/>
+<Member Name="ReadyForVision" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="2" ExternalAccess="Read/Write"/>
+</Members>
+</DataType>
+<DataType Use="Target" Name="VisionRobot" Family="NoFamily" Class="User">
+<Members>
+<Member Name="Cmd" DataType="VisionRobot_Cmd" Dimension="0" Radix="NullType" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Target" DataType="VisionRobot_Target" Dimension="0" Radix="NullType" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Manual" DataType="VisionRobot_Manual" Dimension="0" Radix="NullType" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Status" DataType="VisionRobot_Status" Dimension="0" Radix="NullType" Hidden="false" ExternalAccess="Read/Write"/>
+</Members>
+</DataType>
+</DataTypes>
+</Controller>
+</RSLogix5000Content>

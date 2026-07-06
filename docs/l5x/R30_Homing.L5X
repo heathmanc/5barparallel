@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<RSLogix5000Content SchemaRevision="1.0" TargetName="R30_Homing" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="R30_Homing" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
 <Controller Use="Context" Name="RobotController">
 <Programs Use="Context">
 <Program Use="Context" Name="Robot">
@@ -7,7 +7,7 @@
 <Routine Use="Target" Name="R30_Homing" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[Homing coordinator. Runs the two per-axis homing routines (JSR) and publishes VisionRobot.Status. Create: HomeStep (DINT), HR_ons (BOOL), SoftLimitsEnable (BOOL), Home0_Req/Home1_Req (BOOL). Constants: STEPS_PER_DEG (REAL), HOME_OFFSET_L/HOME_OFFSET_R (DINT = switch angle x STEPS_PER_DEG). Requires routines R_HomeMotor0 / R_HomeMotor1 (this file's AOI_HomeAxis, one per motor).]]></Comment>
+<Comment><![CDATA[R30_Homing: sequential 2-axis homing coordinator. JSRs R_HomeMotor0 / R_HomeMotor1 and publishes VisionRobot.Status. Tags from RobotTags.L5X (HomeStep, HR_ons, SoftLimitsEnable, Home0_Req/Home1_Req, Ax0/Ax1_HomeDone/HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import VisionRobot_UDT.L5X + RobotTags.L5X first.]]></Comment>
 <Text><![CDATA[XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)OTL(Home0_Req);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
