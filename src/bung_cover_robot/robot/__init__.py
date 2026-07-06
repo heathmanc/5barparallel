@@ -12,6 +12,12 @@ from .fivebar_kinematics import (
     JointTarget,
     KinematicsError,
 )
+from .planner import (
+    PickPlaceJob,
+    PlanningError,
+    make_job,
+    sort_holes_along_conveyor,
+)
 from .workspace import SingularityLimits, ValidationResult, WorkspaceValidator
 
 __all__ = [
@@ -21,9 +27,13 @@ __all__ = [
     "HomingConfig",
     "JointTarget",
     "KinematicsError",
+    "PickPlaceJob",
+    "PlanningError",
     "RobotDriver",
     "RobotDriverError",
     "SingularityLimits",
     "ValidationResult",
     "WorkspaceValidator",
+    "make_job",
+    "sort_holes_along_conveyor",
 ]

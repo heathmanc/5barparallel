@@ -72,6 +72,24 @@ def test_vision_tab_detect_overlay(qapp):
     assert "6 holes" in vt.status_label.text()
 
 
+def test_vision_tab_start_requires_enable_and_home(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    vt._on_start()  # not enabled/referenced yet
+    assert "Cannot start" in vt.status_label.text()
+
+
+def test_vision_tab_start_runs_cycle(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    win.controller.enable()
+    win.controller.home_reference()
+    vt._on_start()
+    # Cycle ran to completion over the dry-run driver and placed covers.
+    assert "placed" in vt.status_label.text()
+    assert vt.start_btn.isEnabled()  # re-enabled after the run
+
+
 def test_camera_tab_controls_and_grab(qapp):
     win = MainWindow()
     ct = win.camera_tab

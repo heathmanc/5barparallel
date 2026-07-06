@@ -40,7 +40,8 @@ the hole pattern at one repeatable position, not a moving target.
 | `app/robot_test_controller.py`, `gui/*` (Vision + Camera + Calibration + Robot Test + Settings + PLC tabs) | **Done, tested** |
 | `vision/{calibration,detect_holes,detect_covers,detection}.py` | **Done, tested** |
 | Interactive calibration (click correspondences → fit homography → save; feeds Vision reachability) | **Done, tested** |
-| `plc/handshake.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | **To build** (see §14) |
+| `plc/handshake.py`, `robot/planner.py`, `app/cycle_manager.py` (full auto cycle, wired to Vision Start/Stop) | **Done, tested** |
+| `main.py`, `app/diagnostics.py`, `config/recipes.yaml` | **To build** (see §14) |
 
 Nothing hardware has been purchased yet, so geometry can still be trimmed if the
 one open input (exact hole span, §17) turns out smaller — but the current design
@@ -211,18 +212,18 @@ bung_cover_5bar_robot/
     main.py                       # TODO (CLI, --dry-run)
     app/
       robot_test_controller.py    # DONE, tested (headless jog/home logic)
-      cycle_manager.py            # TODO
+      cycle_manager.py            # DONE, tested (auto cycle + job runners)
       diagnostics.py              # TODO
     plc/
       tags.py                     # DONE, tested (single-source tag registry)
       compactlogix_client.py      # DONE, tested (pycomm3 wrapper + simulated)
-      plc_robot_driver.py         # DONE, tested (handshake driver)
-      handshake.py                # TODO (fold into cycle_manager job send)
+      plc_robot_driver.py         # DONE, tested (manual jog/home driver)
+      handshake.py                # DONE, tested (auto pick/place + timeout/recovery)
     robot/
       fivebar_kinematics.py       # DONE, tested
       workspace.py                # DONE, tested
       driver.py                   # DONE, tested (ABC + dry-run + homing)
-      planner.py                  # TODO (PickPlaceJob, make_job, sort_holes)
+      planner.py                  # DONE, tested (PickPlaceJob, make_job, sort_holes)
     vision/
       camera.py                   # DONE, tested (Basler/pypylon + mock)
       calibration.py              # DONE, tested (HomographyTransform, CalibrationManager)
@@ -448,23 +449,22 @@ pre-homography undistortion are read from `config/camera_config.yaml`.
 
 ## 14. What to build next (priority order)
 
-Done so far: `plc/{tags,compactlogix_client,plc_robot_driver}.py`,
-`robot/driver.py`, `vision/{camera,calibration,detect_holes,detect_covers,detection}.py`,
-`app/robot_test_controller.py`, and the full `gui/*` HMI (incl. interactive
-calibration). Remaining, in order:
+Done so far: `plc/{tags,compactlogix_client,plc_robot_driver,handshake}.py`,
+`robot/{driver,planner}.py`, `vision/{camera,calibration,detect_holes,detect_covers,detection}.py`,
+`app/{robot_test_controller,cycle_manager}.py`, and the full `gui/*` HMI (incl.
+interactive calibration + the Start/Stop-wired automatic cycle). The loop is
+closed: **detect → calibrate (pixel→robot) → validate → plan → PLC pick/place
+handshake → re-image**, running in dry-run, `--sim-plc`, or on a real PLC.
+Remaining, in order:
 
-1. **`robot/planner.py`** — `Point2D`, `PickPlaceJob`, `make_job()`,
-   `sort_holes_along_conveyor()`. A job must carry validated pick & drop
-   `JointTarget`s.
-2. **`app/cycle_manager.py`** — orchestrate the full 6-cover cycle (detect →
-   select reachable cover → IK → validate → PLC pick/place handshake →
-   re-image), and wire the Vision tab's Start/Stop buttons to it. Folds in the
-   `plc/handshake.py` job-send + timeout/recovery logic.
-3. **`app/diagnostics.py`** — save annotated images on any detection/validation
+1. **`app/diagnostics.py`** — save annotated images on any detection/validation
    failure.
-4. **`main.py`** — CLI entry, `--config`, `--dry-run`.
-5. **`config/recipes.yaml`** — recipes carry battery-top height, hole
+2. **`main.py`** — CLI entry, `--config`, `--dry-run` / `--sim-plc`.
+3. **`config/recipes.yaml`** — recipes carry battery-top height, hole
    count/spacing, expected cover diameter, etc. (`camera_config.yaml` is done.)
+4. **Threaded cycle run** — `CycleManager.run_cycle` is synchronous (instant in
+   dry-run/sim); move it to a worker thread before driving a *real* PLC so a
+   multi-second handshake doesn't block the HMI, and let Stop interrupt mid-job.
 
 Keep growing `tests/` alongside (planner logic, calibration round-trips, a
 dry-run cycle-manager smoke test).

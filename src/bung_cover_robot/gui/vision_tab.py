@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..app.cycle_manager import CycleManager
 from ..app.robot_test_controller import RobotTestController
 from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
@@ -46,6 +47,8 @@ class VisionTab(QWidget):
         self.hole_detector = HoleDetector()
         self.cover_detector = CoverDetector()
         self._frame = None
+        self._stop_requested = False
+        self._running = False
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -153,16 +156,58 @@ class VisionTab(QWidget):
     def set_calibration(self, calibration) -> None:
         self.calibration = calibration
 
-    # --- run (placeholder until cycle_manager exists) -----------------------
+    # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:
-        self._set_status(
-            "Automatic cycle not yet wired (app/cycle_manager + vision detection "
-            "are still to build).",
-            theme.WARN,
+        if self._running:
+            return
+        self.refresh()
+        manager = CycleManager(
+            self.controller, self.camera, self.calibration,
+            hole_detector=self.hole_detector, cover_detector=self.cover_detector,
         )
+        block = manager.preflight()
+        if block is not None:
+            self._set_status(f"Cannot start: {block}", theme.WARN)
+            return
+
+        self._stop_requested = False
+        self._running = True
+        self._set_start_enabled(False)
+        self._set_status("Running automatic cycle…", theme.INFO)
+        try:
+            result = manager.run_cycle(should_stop=lambda: self._stop_requested)
+        finally:
+            self._running = False
+            self._set_start_enabled(True)
+
+        self._show_overlay()
+        self.refresh()
+        placed = len(result.placed)
+        color = theme.SUCCESS if result.ok else theme.WARN
+        self._set_status(f"Cycle done — placed {placed} cover(s). {result.reason}", color)
 
     def _on_stop(self) -> None:
-        self._set_status("Stopped.", theme.TEXT_DIM)
+        self._stop_requested = True
+        self.controller.stop()
+        if not self._running:
+            self._set_status("Stopped.", theme.TEXT_DIM)
+
+    def _set_start_enabled(self, on: bool) -> None:
+        self.start_btn.setEnabled(on)
+
+    def _show_overlay(self) -> None:
+        """Redraw the current scene with detected holes + covers."""
+        try:
+            frame = self.camera.grab()
+        except CameraError:
+            return
+        self._frame = frame
+        holes = self.hole_detector.detect(frame)
+        to_robot = self.calibration.pixel_to_robot if self.calibration else None
+        validator = self.controller.validator if self.calibration else None
+        covers = self.cover_detector.detect(frame, to_robot, validator)
+        overlay = annotate(frame, holes.holes, covers.covers)
+        self.view.set_pixmap(ndarray_to_qpixmap(overlay))
 
     # --- status -------------------------------------------------------------
     def refresh(self) -> None:
