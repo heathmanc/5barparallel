@@ -7,7 +7,7 @@
 <Routine Use="Target" Name="R_HomeMotor0" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R_HomeMotor0: Motor 0 homing. First set ClearLink:C.Motor0Config (Home_Sensor = the prox input, Config Register Homing Enable bit0=1, HLFB Inversion bit3=1). Tags come from RobotTags.csv (Home0_State, Home0_Req/ons, Ax0_HomeDone/HomeFault, Home0_Tmr, EM806_0_ALM, HOME_VEL_0 signed toward the prox, HOME_ACC). R30_Homing JSRs R_HomeMotor0/R_HomeMotor1.]]></Comment>
+<Comment><![CDATA[R_HomeMotor0: Motor 0 homing. First set ClearLink:C.Motor0Config (Home_Sensor = the prox input, Config Register Homing Enable bit0=1, HLFB Inversion bit3=1). Tags come from RobotTags.csv (Home0_State, Home0_Req/ons, Ax0_HomeDone/HomeFault, Home0_Tmr, EM806_0_ALM, HOME_VEL_0 signed toward the prox, HOME_ACC, HOME_TMO_MS). R30_Homing JSRs R_HomeMotor0/R_HomeMotor1.]]></Comment>
 <Text><![CDATA[XIC(Home0_Req)ONS(Home0_ons)EQU(Home0_State,0)XIO(Ax0_HomeFault)MOV(10,Home0_State);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
@@ -51,14 +51,22 @@
 <Text><![CDATA[EQU(Home0_State,60)XIC(ClearLink:I1.Motor0_Status_Has_Homed)OTL(Ax0_HomeDone)MOV(70,Home0_State);]]></Text>
 </Rung>
 <Rung Number="11" Type="N">
-<Comment><![CDATA[Homing timeout (timer runs while homing) -> fault.]]></Comment>
-<Text><![CDATA[TONR(Home0_Tmr)XIC(Home0_Tmr.DN)OTL(Ax0_HomeFault)MOV(900,Home0_State);]]></Text>
+<Comment><![CDATA[Keep the timeout preset loaded (CSV imports Home_Tmr.PRE as 0, which would fault instantly). Set HOME_TMO_MS to the allowed homing time, ms.]]></Comment>
+<Text><![CDATA[MOV(HOME_TMO_MS,Home0_Tmr.PRE);]]></Text>
 </Rung>
 <Rung Number="12" Type="N">
+<Comment><![CDATA[Run the homing timeout while homing is active (States 10-60). TON is non-retentive, so it auto-resets when homing completes/faults/idles and each attempt starts fresh (use RTO + RES instead if you want retentive).]]></Comment>
+<Text><![CDATA[NEQ(Home0_State,0)LES(Home0_State,70)TON(Home0_Tmr,?,?);]]></Text>
+</Rung>
+<Rung Number="13" Type="N">
+<Comment><![CDATA[Homing timed out -> fault.]]></Comment>
+<Text><![CDATA[XIC(Home0_Tmr.DN)OTL(Ax0_HomeFault)MOV(900,Home0_State);]]></Text>
+</Rung>
+<Rung Number="14" Type="N">
 <Comment><![CDATA[EM806 alarm or ClearLink shutdown -> fault.]]></Comment>
 <Text><![CDATA[[XIC(EM806_0_ALM),XIC(ClearLink:I1.Motor0_Status_Shutdowns_Pres)]OTL(Ax0_HomeFault)MOV(900,Home0_State);]]></Text>
 </Rung>
-<Rung Number="13" Type="N">
+<Rung Number="15" Type="N">
 <Comment><![CDATA[State 900 FAULT: clear the move bits, hold for reset.]]></Comment>
 <Text><![CDATA[EQU(Home0_State,900)OTU(ClearLink:O1.Motor0_Output_Reg_Home_Flag)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data);]]></Text>
 </Rung>

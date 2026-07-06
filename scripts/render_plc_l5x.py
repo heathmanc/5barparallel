@@ -147,7 +147,7 @@ def home_rungs(m: int) -> List[Rung]:
          f"(Home_Sensor = the prox input, Config Register Homing Enable bit0=1, "
          f"HLFB Inversion bit3=1). Tags come from RobotTags.csv (Home{m}_State, "
          f"Home{m}_Req/ons, Ax{m}_HomeDone/HomeFault, Home{m}_Tmr, EM806_{m}_ALM, "
-         f"HOME_VEL_{m} signed toward the prox, HOME_ACC). R30_Homing JSRs "
+         f"HOME_VEL_{m} signed toward the prox, HOME_ACC, HOME_TMO_MS). R30_Homing JSRs "
          f"R_HomeMotor0/R_HomeMotor1.",
          f"XIC(Home{m}_Req)ONS(Home{m}_ons)EQU(Home{m}_State,0)XIO(Ax{m}_HomeFault)"
          f"MOV(10,Home{m}_State);"),
@@ -178,9 +178,15 @@ def home_rungs(m: int) -> List[Rung]:
         ("State 60 HOMING: ClearLink zeroes at the prox -> Has Homed.",
          f"EQU(Home{m}_State,60)XIC({i}Status_Has_Homed)OTL(Ax{m}_HomeDone)"
          f"MOV(70,Home{m}_State);"),
-        ("Homing timeout (timer runs while homing) -> fault.",
-         f"TONR(Home{m}_Tmr)XIC(Home{m}_Tmr.DN)OTL(Ax{m}_HomeFault)"
-         f"MOV(900,Home{m}_State);"),
+        ("Keep the timeout preset loaded (CSV imports Home_Tmr.PRE as 0, which "
+         "would fault instantly). Set HOME_TMO_MS to the allowed homing time, ms.",
+         f"MOV(HOME_TMO_MS,Home{m}_Tmr.PRE);"),
+        ("Run the homing timeout while homing is active (States 10-60). TON is "
+         "non-retentive, so it auto-resets when homing completes/faults/idles and "
+         "each attempt starts fresh (use RTO + RES instead if you want retentive).",
+         f"NEQ(Home{m}_State,0)LES(Home{m}_State,70)TON(Home{m}_Tmr,?,?);"),
+        ("Homing timed out -> fault.",
+         f"XIC(Home{m}_Tmr.DN)OTL(Ax{m}_HomeFault)MOV(900,Home{m}_State);"),
         ("EM806 alarm or ClearLink shutdown -> fault.",
          f"[XIC(EM806_{m}_ALM),XIC({i}Status_Shutdowns_Pres)]"
          f"OTL(Ax{m}_HomeFault)MOV(900,Home{m}_State);"),
@@ -378,6 +384,8 @@ def _glue_tags() -> List[Tag]:
     add("HOME_VEL_1", "DINT", "2000",
         desc="Motor 1 homing speed, steps/s, signed toward the prox. Tune.")
     add("HOME_ACC", "DINT", "50000", desc="Homing accel, steps/s^2. Set ~50000.")
+    add("HOME_TMO_MS", "DINT", "15000",
+        desc="Homing timeout, ms (loaded into Home*_Tmr.PRE). Homing beyond this faults.")
     add("HOME_OFFSET_L", "DINT", "0",
         desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning.")
     add("HOME_OFFSET_R", "DINT", "0",
