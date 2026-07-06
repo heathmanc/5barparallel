@@ -4,7 +4,7 @@
 # one plane that a changeover shifts, every recipe owns its own pixel->robot
 # calibration, stored at calibration/<key>.npy (git-ignored) and built in the
 # Calibration tab. `key` is the calibration filename; `hole_count` feeds the hole
-# detector; `cover_diameter_mm` is the nominal cover size (informational for now).
+# detector; `cover_diameter_mm` gates cover detection by physical size (0 = off).
 
 recipes:
   - key: g31-6

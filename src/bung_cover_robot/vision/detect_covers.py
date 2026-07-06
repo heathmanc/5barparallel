@@ -29,6 +29,10 @@ class CoverDetectorConfig:
     edge_margin_px: float = 8.0           # reject covers this close to the frame border
     min_gap_px: float = 6.0               # min clear gap to a neighbour (else "crowded")
     roi: Optional[ROI] = None
+    # Physical-size gate (per recipe): reject blobs whose real diameter is off the
+    # expected cover size. Needs a calibration (to_robot); 0 disables the check.
+    expected_diameter_mm: float = 0.0
+    diameter_tolerance: float = 0.4       # accept expected * (1 ± tolerance)
 
 
 @dataclass
@@ -80,9 +84,24 @@ class CoverDetector:
         covers: List[CoverDetection] = []
         for c in circles:
             robot_xy = to_robot(c.cx, c.cy) if to_robot else None
-            reason = self._classify(c, circles, w, h, robot_xy, validator)
+            diameter_mm = self._physical_diameter_mm(c, to_robot)
+            reason = self._classify(c, circles, w, h, robot_xy, diameter_mm, validator)
             covers.append(CoverDetection(c, robot_xy, reason == "ok", reason))
         return CoverDetectionResult(covers)
+
+    def _physical_diameter_mm(
+        self, c: Circle, to_robot: Optional[PixelToRobot]
+    ) -> Optional[float]:
+        """Real cover diameter (mm) via the calibration — the mean of the x- and
+        y-spans across the blob, so it's robust to a slightly anisotropic scale.
+        None when there's no calibration to measure with."""
+        if to_robot is None:
+            return None
+        ax, bx = to_robot(c.cx - c.radius, c.cy), to_robot(c.cx + c.radius, c.cy)
+        ay, by = to_robot(c.cx, c.cy - c.radius), to_robot(c.cx, c.cy + c.radius)
+        dx = float(np.hypot(bx[0] - ax[0], bx[1] - ax[1]))
+        dy = float(np.hypot(by[0] - ay[0], by[1] - ay[1]))
+        return 0.5 * (dx + dy)
 
     def _classify(
         self,
@@ -91,6 +110,7 @@ class CoverDetector:
         w: int,
         h: int,
         robot_xy: Optional[Tuple[float, float]],
+        diameter_mm: Optional[float],
         validator: Optional[WorkspaceValidator],
     ) -> str:
         cfg = self.config
@@ -103,6 +123,14 @@ class CoverDetector:
             dist = float(np.hypot(c.cx - o.cx, c.cy - o.cy))
             if dist < c.radius + o.radius + cfg.min_gap_px:
                 return "crowded (touching neighbour)"
+        if cfg.expected_diameter_mm > 0 and diameter_mm is not None:
+            lo = cfg.expected_diameter_mm * (1.0 - cfg.diameter_tolerance)
+            hi = cfg.expected_diameter_mm * (1.0 + cfg.diameter_tolerance)
+            if not (lo <= diameter_mm <= hi):
+                return (
+                    f"wrong size ({diameter_mm:.0f} mm, expected "
+                    f"~{cfg.expected_diameter_mm:.0f} mm)"
+                )
         if robot_xy is not None and validator is not None:
             res = validator.validate(*robot_xy)
             if not res.ok:

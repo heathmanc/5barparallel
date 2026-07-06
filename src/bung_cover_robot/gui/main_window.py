@@ -32,17 +32,17 @@ def _demo_camera() -> Camera:
     return cam.open()
 
 
-def _load_intrinsics() -> Optional[CameraIntrinsics]:
-    """Best-effort load of lens intrinsics from config/camera_config.yaml."""
+def _load_intrinsics(config_dir: Path) -> Optional[CameraIntrinsics]:
+    """Best-effort load of lens intrinsics from <config_dir>/camera_config.yaml."""
     try:
-        return CameraIntrinsics.from_yaml(_CONFIG_DIR / "camera_config.yaml")
+        return CameraIntrinsics.from_yaml(config_dir / "camera_config.yaml")
     except (OSError, ValueError, KeyError):
         return None
 
 
-def _load_recipes() -> RecipeStore:
+def _load_recipes(config_dir: Path) -> RecipeStore:
     try:
-        return RecipeStore.load(_CONFIG_DIR / "recipes.yaml")
+        return RecipeStore.load(config_dir / "recipes.yaml")
     except (OSError, ValueError, KeyError):
         return RecipeStore()
 
@@ -53,16 +53,24 @@ class MainWindow(QMainWindow):
         controller: Optional[RobotTestController] = None,
         camera: Optional[Camera] = None,
         config_path: Optional[str | Path] = None,
+        config_dir: Optional[str | Path] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("5-Bar Bung-Cover Robot — HMI")
         self.resize(1160, 780)
 
+        cfg_dir = Path(config_dir) if config_dir else _CONFIG_DIR
+        # Derive the settings save target from the config dir if not given.
+        if config_path is None and config_dir is not None:
+            candidate = cfg_dir / "robot_config.yaml"
+            if candidate.exists():
+                config_path = candidate
+
         self.controller = controller or build_dry_run_controller()
         self.camera = camera or _demo_camera()
-        self.calibration_manager = CalibrationManager(intrinsics=_load_intrinsics())
-        self.recipes = _load_recipes()
+        self.calibration_manager = CalibrationManager(intrinsics=_load_intrinsics(cfg_dir))
+        self.recipes = _load_recipes(cfg_dir)
 
         self.tabs = QTabWidget()
         self.vision_tab = VisionTab(self.controller, self.camera, None, self.recipes)
@@ -87,6 +95,7 @@ class MainWindow(QMainWindow):
         self.plc_tab.connectionChanged.connect(self.vision_tab.refresh)
         self.camera_tab.cameraChanged.connect(self._on_camera_changed)
         self.calibration_tab.calibrationSaved.connect(self._on_calibration_saved)
+        self.calibration_tab.recipesChanged.connect(self.vision_tab.reload_recipes)
         self.vision_tab.recipeChanged.connect(self._apply_recipe)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -98,6 +107,7 @@ class MainWindow(QMainWindow):
         """Changeover: load the recipe's hole count + its own calibration."""
         recipe = self.recipes.get(key)
         self.vision_tab.set_hole_count(recipe.hole_count)
+        self.vision_tab.set_cover_diameter_mm(recipe.cover_diameter_mm)
         self.vision_tab.set_calibration(self._recipe_calibration(key))
         self.vision_tab.refresh()
 

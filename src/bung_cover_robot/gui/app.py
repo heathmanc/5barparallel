@@ -17,35 +17,14 @@ import logging
 import sys
 from typing import List, Optional
 
-from ..app.robot_test_controller import (
-    RobotTestController,
-    build_dry_run_controller,
-)
-from ..robot.driver import HomingConfig
-from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
+from ..app.launch import build_controller
+from ..app.robot_test_controller import RobotTestController
 
 
 def _build_controller(args) -> RobotTestController:
-    config = FiveBarConfig.from_yaml(args.config) if args.config else None
-    homing = HomingConfig.from_yaml(args.config) if args.config else HomingConfig()
-
-    if args.plc:
-        from ..plc import CompactLogixClient, PlcRobotDriver
-
-        kin = FiveBarKinematics(config) if config else FiveBarKinematics()
-        driver = PlcRobotDriver(CompactLogixClient(args.plc))
-        driver.connect()
-        return RobotTestController(driver, kin, home_xy=homing.home_tcp_mm)
-
-    if args.sim_plc:
-        from ..plc import PlcRobotDriver, SimulatedPlcClient
-
-        kin = FiveBarKinematics(config) if config else FiveBarKinematics()
-        client = SimulatedPlcClient(home_angles=homing.home_angles).connect()
-        driver = PlcRobotDriver(client)
-        return RobotTestController(driver, kin, home_xy=homing.home_tcp_mm)
-
-    return build_dry_run_controller(config=config, homing=homing)
+    return build_controller(
+        config_path=args.config, sim_plc=args.sim_plc, plc=args.plc
+    )
 
 
 def run_gui(argv: Optional[List[str]] = None) -> int:

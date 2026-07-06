@@ -383,6 +383,29 @@ def test_vision_recipe_changeover_loads_calibration(qapp, tmp_path):
     )
 
 
+def test_changeover_applies_recipe_cover_size(qapp):
+    win = MainWindow()
+    # The active recipe's nominal cover size gates the Vision tab's detector.
+    active = win.recipes.get(win.vision_tab.active_recipe_key())
+    assert win.vision_tab.cover_detector.config.expected_diameter_mm == pytest.approx(
+        active.cover_diameter_mm
+    )
+
+
+def test_adding_recipe_refreshes_vision_dropdown(qapp, tmp_path):
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    win = MainWindow()
+    win.recipes.path = tmp_path / "recipes.yaml"  # don't touch the real config
+    win.calibration_manager = win.calibration_tab.manager = CalibrationManager(tmp_path)
+    before = win.vision_tab.recipe_combo.count()
+    win.calibration_tab.new_recipe_edit.setText("Group 65 8-vent")
+    win.calibration_tab._on_add_recipe()
+    # recipesChanged -> the Vision changeover dropdown gains the new recipe live.
+    assert win.vision_tab.recipe_combo.count() == before + 1
+    assert win.vision_tab.recipe_combo.findData("group-65-8-vent") >= 0
+
+
 # --------------------------------------------------------------------------- #
 # Settings tab
 # --------------------------------------------------------------------------- #

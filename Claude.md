@@ -42,7 +42,8 @@ the hole pattern at one repeatable position, not a moving target.
 | Interactive calibration (click correspondences → fit → save **per recipe**; feeds Vision reachability) | **Done, tested** |
 | `app/recipes.py` + `config/recipes.yaml` (per-recipe calibration + hole count; Vision changeover) | **Done, tested** |
 | `plc/handshake.py`, `robot/planner.py`, `app/cycle_manager.py` (full auto cycle, wired to Vision Start/Stop) | **Done, tested** |
-| `main.py`, `app/diagnostics.py` | **To build** (see §14) |
+| `main.py` + `app/launch.py` (CLI: `--dry-run`/`--sim-plc`/`--plc`, `--camera`, `--config`) | **Done, tested** |
+| `app/diagnostics.py` (save annotated fail frames) | **Deferred** (not needed now) |
 
 Nothing hardware has been purchased yet, so geometry can still be trimmed if the
 one open input (exact hole span, §17) turns out smaller — but the current design
@@ -210,8 +211,10 @@ bung_cover_5bar_robot/
   calibration/                    # per-recipe .npy homographies (git-ignored)
   src/bung_cover_robot/
     __init__.py
-    main.py                       # TODO (CLI, --dry-run)
+    main.py                       # DONE, tested (CLI: --dry-run/--sim-plc/--plc,
+                                  #   --camera, --config; also python -m bung_cover_robot)
     app/
+      launch.py                   # DONE, tested (headless backend builder)
       robot_test_controller.py    # DONE, tested (headless jog/home logic)
       cycle_manager.py            # DONE, tested (auto cycle + job runners)
       recipes.py                  # DONE, tested (Recipe, RecipeStore)
@@ -440,7 +443,10 @@ Each **recipe owns its own calibration** — `calibration/<recipe_key>.npy`
 `save(key, t)` / `keys()`. Recipes themselves live in `config/recipes.yaml`
 (`app/recipes.py`: `Recipe`, `RecipeStore`), each carrying its vent-hole count
 and nominal cover size. At **changeover** the Vision tab loads the selected
-recipe's calibration + hole count; the `CycleManager` takes that one active
+recipe's calibration, its `hole_count` (feeds the hole detector's expected
+count), and its `cover_diameter_mm` (a **physical-size gate**: covers whose real
+diameter — measured through the calibration — is off the nominal by more than the
+tolerance are rejected; 0 disables it). The `CycleManager` takes that one active
 ``calibration`` and applies it to both holes and covers.
 
 **Building one interactively:** the **Calibration tab** (`gui/calibration_tab.py`)
@@ -463,17 +469,16 @@ Start/Stop-wired automatic cycle, which runs on a worker thread —
 `gui/cycle_worker.py` — so a multi-second PLC handshake never
 blocks the HMI; Stop halts after the current pick). The loop is closed:
 **detect → calibrate (pixel→robot) → validate → plan → PLC pick/place handshake
-→ re-image**, running in dry-run, `--sim-plc`, or on a real PLC. Remaining:
+→ re-image**, running in dry-run, `--sim-plc`, or on a real PLC.
 
-1. **`app/diagnostics.py`** — save annotated images on any detection/validation
-   failure.
-2. **`main.py`** — CLI entry, `--config`, `--dry-run` / `--sim-plc`.
+**The build-out is complete.** Launch with `bung-cover-robot` (or
+`python -m bung_cover_robot`): `--dry-run` / `--sim-plc` / `--plc IP/SLOT` select
+the motion backend, `--camera {auto,mock,basler}` the camera, `--config DIR` the
+config directory. `app/launch.py` builds the controller headlessly; `main.py`
+adds camera selection and launches the HMI.
 
-(`config/recipes.yaml` + `app/recipes.py` are done — per-recipe calibration,
-hole count, and changeover are wired into the Calibration and Vision tabs.)
-
-Keep growing `tests/` alongside (planner logic, calibration round-trips, a
-dry-run cycle-manager smoke test).
+Only deferred item: `app/diagnostics.py` (save annotated fail frames) — not
+needed right now. Keep growing `tests/` alongside any new work.
 
 ---
 

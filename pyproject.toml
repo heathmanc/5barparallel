@@ -22,6 +22,7 @@ gui = ["PySide6>=6.6"]
 dev = ["pytest>=7.0", "opencv-python-headless>=4.8", "PySide6>=6.6"]
 
 [project.scripts]
+bung-cover-robot = "bung_cover_robot.main:main"
 bung-cover-gui = "bung_cover_robot.gui.app:run_gui"
 
 [tool.setuptools.packages.find]

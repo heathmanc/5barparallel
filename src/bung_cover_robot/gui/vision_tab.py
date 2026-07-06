@@ -26,7 +26,7 @@ from ..app.recipes import RecipeStore
 from ..app.robot_test_controller import RobotTestController
 from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
-from ..vision.detect_covers import CoverDetector
+from ..vision.detect_covers import CoverDetector, CoverDetectorConfig
 from ..vision.detect_holes import HoleDetector, HoleDetectorConfig
 from ..vision.detection import annotate
 from . import theme
@@ -186,9 +186,31 @@ class VisionTab(QWidget):
         if key is not None:
             self.recipeChanged.emit(key)
 
+    def reload_recipes(self) -> None:
+        """Repopulate the changeover combo from the store (e.g. after a recipe is
+        added elsewhere), keeping the current selection if it still exists."""
+        if self.recipes is None:
+            return
+        current = self.active_recipe_key()
+        self.recipe_combo.blockSignals(True)
+        self.recipe_combo.clear()
+        for r in self.recipes.list():
+            self.recipe_combo.addItem(r.name, r.key)
+        idx = self.recipe_combo.findData(current)
+        if idx >= 0:
+            self.recipe_combo.setCurrentIndex(idx)
+        self.recipe_combo.blockSignals(False)
+
     def set_hole_count(self, count: int) -> None:
         """Apply the active recipe's expected vent-hole count to the detector."""
         self.hole_detector = HoleDetector(HoleDetectorConfig(expected_count=count))
+
+    def set_cover_diameter_mm(self, diameter_mm: float) -> None:
+        """Apply the active recipe's nominal cover size as a physical-size gate
+        (needs a calibration to measure; 0 leaves covers ungated on size)."""
+        self.cover_detector = CoverDetector(
+            CoverDetectorConfig(expected_diameter_mm=diameter_mm)
+        )
 
     # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:
