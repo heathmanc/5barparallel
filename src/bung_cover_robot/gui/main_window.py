@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QMainWindow, QTabWidget, QWidget
 from ..app.robot_test_controller import RobotTestController, build_dry_run_controller
 from ..vision.camera import Camera, CameraConfig, MockCamera
 from .camera_tab import CameraTab
-from .imaging import demo_frame
+from .imaging import demo_frame, demo_transform
 from .plc_tab import PlcTab
 from .robot_test_tab import RobotTestTab
 from .settings_tab import SettingsTab
@@ -42,8 +42,12 @@ class MainWindow(QMainWindow):
         self.controller = controller or build_dry_run_controller()
         self.camera = camera or _demo_camera()
 
+        # A demo pixel->robot transform lets the Vision tab show reachability with
+        # the mock scene; a real Basler needs a real calibration (cleared on swap).
+        calibration = demo_transform() if isinstance(self.camera, MockCamera) else None
+
         self.tabs = QTabWidget()
-        self.vision_tab = VisionTab(self.controller, self.camera)
+        self.vision_tab = VisionTab(self.controller, self.camera, calibration)
         self.camera_tab = CameraTab(self.camera)
         self.robot_test_tab = RobotTestTab(self.controller)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
@@ -65,6 +69,10 @@ class MainWindow(QMainWindow):
     def _on_camera_changed(self) -> None:
         self.camera = self.camera_tab.camera
         self.vision_tab.set_camera(self.camera)
+        # The demo calibration only matches the mock scene.
+        self.vision_tab.set_calibration(
+            demo_transform() if isinstance(self.camera, MockCamera) else None
+        )
 
     def _on_tab_changed(self, index: int) -> None:
         if self.tabs.widget(index) is self.vision_tab:

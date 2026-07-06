@@ -36,11 +36,13 @@ class VisionTab(QWidget):
         self,
         controller: RobotTestController,
         camera: Camera,
+        calibration=None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.camera = camera
+        self.calibration = calibration  # HomographyTransform (pixel->robot) or None
         self.hole_detector = HoleDetector()
         self.cover_detector = CoverDetector()
         self._frame = None
@@ -133,17 +135,23 @@ class VisionTab(QWidget):
         if self._frame is None:
             return
         holes = self.hole_detector.detect(self._frame)
-        # No calibration yet, so covers are checked for geometric quality only
-        # (reachability is added once vision/calibration provides pixel->robot).
-        covers = self.cover_detector.detect(self._frame)
+        # With a calibration, covers are also filtered by real workspace
+        # reachability (pixel -> robot -> WorkspaceValidator).
+        to_robot = self.calibration.pixel_to_robot if self.calibration else None
+        validator = self.controller.validator if self.calibration else None
+        covers = self.cover_detector.detect(self._frame, to_robot, validator)
         overlay = annotate(self._frame, holes.holes, covers.covers)
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         collinear = "collinear ✓" if holes.ok else holes.reason
+        reach = " reachable" if self.calibration else " pickable"
         self._set_status(
             f"{holes.count} holes ({collinear}) · {covers.count} covers, "
-            f"{len(covers.accepted)} pickable.",
+            f"{len(covers.accepted)}{reach}.",
             theme.SUCCESS if holes.ok else theme.WARN,
         )
+
+    def set_calibration(self, calibration) -> None:
+        self.calibration = calibration
 
     # --- run (placeholder until cycle_manager exists) -----------------------
     def _on_start(self) -> None:

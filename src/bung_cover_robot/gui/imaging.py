@@ -46,6 +46,20 @@ def demo_frame(w: int = 760, h: int = 520) -> np.ndarray:
     return img
 
 
+def demo_transform():
+    """A plausible pixel->robot HomographyTransform for the demo_frame scene, so
+    the Vision tab can show cover reachability without a real calibration. Maps
+    the battery hole row into the work zone; corner covers fall outside it."""
+    from ..vision.calibration import HomographyTransform
+
+    sx, x0 = 300.0 / 406.0, 379.0     # px -> robot X (mm), holes centered
+    sy, y_at, y_ref = -0.25, 259.0, 250.0  # px -> robot Y (mm), holes at Y=250
+    H = np.array(
+        [[sx, 0.0, -sx * x0], [0.0, sy, y_ref - sy * y_at], [0.0, 0.0, 1.0]]
+    )
+    return HomographyTransform.from_matrix(H, name="demo")
+
+
 def adjust_preview(
     frame: np.ndarray, brightness: float = 0.0, contrast: float = 1.0, gamma: float = 1.0
 ) -> np.ndarray:

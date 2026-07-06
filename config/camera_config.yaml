@@ -43,3 +43,13 @@ controls:
   # --- frame rate ---
   frame_rate_enable: false
   frame_rate: null           # frames/s; only applied when frame_rate_enable is true
+
+intrinsics:
+  # Optional lens intrinsics for undistortion before the homography (Claude.md §13).
+  # Leave fx null to skip undistortion (acceptable for low-distortion lenses / first
+  # bring-up). Obtain from a one-time cv2.calibrateCamera checkerboard calibration.
+  fx: null
+  fy: null
+  cx: null
+  cy: null
+  dist: [0.0, 0.0, 0.0, 0.0, 0.0]   # k1, k2, p1, p2, k3
