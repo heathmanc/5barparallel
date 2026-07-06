@@ -102,10 +102,68 @@ UDT: VisionRobot
 
 ## 3. Axis / ClearLink interface <a id="3-axis"></a>
 
-Motion goes PLC → **Teknic ClearLink CLNK-4-13** (EtherNet/IP, add via its
-AOP/EDS) → STEP/DIR/ENABLE → **Leadshine EM806** → NEMA 23. Axis map:
-**Axis 0 = left shoulder, Axis 1 = right shoulder** (2/3 spare). Z is pneumatic,
-not a ClearLink axis.
+> **Grounded in the Teknic *ClearLink EtherNet/IP Setup and Object Data
+> Reference*, Rev. 1.15.** The member/register names below are the real ones.
+
+Motion goes CompactLogix (EtherNet/IP **scanner**) → **Teknic ClearLink
+CLNK-4-13** (EtherNet/IP **adapter/slave**) → M-0/M-1 STEP/DIR/ENABLE →
+**Leadshine EM806** → NEMA 23. Add the ClearLink to the I/O tree from its **EDS**
+(→ **Add-On Profile**, module revision 2.091) and pick the **"Step Dir"**
+connection type (the EM806 is a third-party step & direction drive; this is the
+same connection type used for ClearPath-SD). Axis map: **Motor 0 = left shoulder,
+Motor 1 = right shoulder** (M-2/M-3 spare). Z is pneumatic, not a ClearLink axis.
+
+**Teknic ships no motion AOI.** The AOP creates three implicit (cyclic) I/O
+assemblies, exposed as flat controller tags — you drive motion by writing the
+output assembly and reading the input assembly. For the "Step Dir" connection:
+
+| Assembly | Instance | Tag (typical) | Direction |
+|---|---|---|---|
+| Input (T2O), `SINT[332]` | **100** | `<module>:I1` | ClearLink → PLC (feedback) |
+| Output (O2T), `SINT[280]` | **112** | `<module>:O1` | PLC → ClearLink (commands) |
+| Configuration, `SINT[232]` | **150** | `<module>:C` | one-time, sent on connect |
+
+Each assembly carries a block **per motor** (Motor 0 = left, Motor 1 = right).
+The members that matter for this robot:
+
+**Output (`:O1`, per motor — Step & Direction Motor Output Object, class `0x66`):**
+| Member | Type | Use |
+|---|---|---|
+| `Move Distance` | DINT | target, in **steps** (absolute or incremental per bit 1) |
+| `Velocity Limit` | UDINT | positional-move speed, steps/s (max 500,000) |
+| `Acceleration Limit` | UDINT | steps/s² (min resolution 1527) |
+| `Deceleration Limit` | UDINT | steps/s² (0 ⇒ use accel) |
+| `Jog Velocity` | DINT | velocity-move speed, steps/s |
+| `Output Register` | DWORD | command bits, below |
+
+`Output Register` bits (Table 28): **0 Enable**, **1 Absolute Flag** (1 = absolute
+move), **2 Homing Move Flag**, **3 Load Position Move** (rising edge loads &
+executes a position move), **4 Load Velocity Move**, **5 SW E-Stop**, **6 Clear
+Alerts** (clears the shutdown register), **7 Clear Motor Fault**.
+
+**Input (`:I1`, per motor — Step & Direction Motor Input Object, class `0x65`):**
+| Member | Type | Use |
+|---|---|---|
+| `Commanded Position` | DINT | **the position feedback** (open-loop: commanded == actual, in steps) |
+| `Target Position` | DINT | where the loaded move ends |
+| `Commanded Velocity` | DINT | current step rate |
+| `Status Register` | DWORD | status bits, below |
+| `Motor Shutdowns` | DWORD | latched cancel reasons (Table 25) |
+
+`Status Register` bits (Table 24): **0 At Target Position** (needs HLFB — see
+below), **1 Steps Active** (`Commanded Velocity ≠ 0` — the reliable *moving*
+flag), **3 Move Direction**, **4/5 In Positive/Negative Limit**, **7 In Home
+Sensor**, **9 Motor in Fault** (HLFB), **10 Enabled** (HLFB), **13 Has Homed**
+(the reference-established bit), **16 Ready to Home**, **17 Shutdowns Present**,
+**19 Load Position Move Ack** (move-load handshake), **20 Load Velocity Move
+Ack**.
+
+**Configuration (`:C`, per motor — Step & Direction Motor Configuration Object,
+class `0x64`), set once:** `Home Sensor` connector (the ClearLink input the
+shoulder prox is wired to; −1 = hard-stop homing), `Positive/Negative Limit`
+connectors, `Soft Limit 1/2`, `Max Deceleration`, and the `Config Register`
+(Table 21): **bit 0 Homing Enable**, **bit 1 Home Sensor Active Level**, **bit 2
+Enable Inversion**, **bit 3 HLFB Inversion**, **bit 5 Soft Limit Enable**.
 
 **Degrees → steps** (Claude.md §5):
 
@@ -114,18 +172,41 @@ STEPS_PER_DEG := 26.66667          // 3200 pulses/rev * 3:1 / 360
 steps := ROUND(angle_deg * STEPS_PER_DEG)
 ```
 
-**Open-loop reality:** the EM806 are open-loop steppers — the ClearLink generates
-the step profile but gets no position feedback. So:
-- `Status.InPosition` = **commanded move profile complete** (ClearLink "move
-  done"), not a closed-loop confirmation.
-- Absolute position is only trustworthy relative to the last **home**; step
-  integrity (no missed steps) is assumed. This is why homing and the 85 % reach
-  / singularity margins (enforced in Python) matter.
-- Use the EM806 alarm/ALM output as a drive-fault input; wire it into the fault
-  chain (§9).
+**Commanding one absolute move** (this replaces the invented "CmdPosition +
+MoveTrigger + MoveDone" from earlier drafts):
+1. **Enable:** set `Output Register.Enable` (bit 0); wait `Status.Enabled`
+   (bit 10).
+2. **Load targets:** write `Move Distance := ROUND(deg*STEPS_PER_DEG)`,
+   `Velocity Limit`, `Acceleration Limit`, `Deceleration Limit`; set
+   `Absolute Flag` (bit 1).
+3. **Fire:** pulse `Load Position Move` (bit 3) — on the rising edge the
+   ClearLink loads the move and sets `Load Position Move Ack` (status bit 19);
+   drop bit 3 to clear the ack (that is the handshake — there is no CommandID at
+   the ClearLink level).
+4. **Move done** = `Steps Active` (bit 1) `== 0`. (`At Target Position`, bit 0,
+   also requires an asserted HLFB, so on the HLFB-less EM806 use **Steps
+   Active**.)
 
-Wrap the ClearLink per-axis command/status in an AOI (`AOI_AxisMove`, §5) so the
-device-specific assembly members are touched in exactly one place.
+**Open-loop / third-party-drive reality** — the EM806 is a plain step/dir drive
+with **no HLFB** (High-Level Feedback), so:
+- `Commanded Position` is the only position source; there is no missed-step
+  detection. Absolute position is trustworthy only relative to the last **home**
+  — which is why homing and the 85 % reach / singularity margins (enforced in
+  Python) matter.
+- Several status bits are HLFB-derived — **At Target Position** (0), **Motor in
+  Fault** (9), **Enabled** (10). With no HLFB wired you **must set `HLFB
+  Inversion` (Config Register bit 3)** so HLFB reads as asserted; otherwise
+  `Enabled` never comes true and `Motor in Fault` trips immediately. Set `Enable
+  Inversion` (bit 2) if the EM806 enables on the opposite electrical sense.
+- The EM806 must accept the ClearLink's **fixed 1 µs step pulse / 500 kHz max**
+  — set its pulse-width/filter accordingly.
+- The ClearLink's own "Motor Fault" is HLFB-based and will **not** see an EM806
+  alarm. Wire the **EM806 ALM** output to a spare ClearLink digital input and
+  read it via the Discrete Input Point object as the drive-fault signal (§9).
+
+Wrap the per-axis assembly access in an AOI (`AOI_AxisMove`, §5) so these
+device-specific members are touched in exactly one place — but note the AOI is
+**ours**, not Teknic's.
 
 ---
 
@@ -156,40 +237,72 @@ time.
 > §5–§7 is in [`docs/plc_ladder.md`](plc_ladder.md).** The outlines below are the
 > design intent; that sheet is what you build from.
 
-Three reusable AOIs keep the logic clean and testable.
+These AOIs are **ours** — Teknic provides only the EDS/AOP (which creates the
+assembly tags) plus a Micro800 *explicit-messaging* example. Each AOI just wraps
+the ClearLink `:O1` / `:I1` assembly members from §3 so the rest of the program
+never touches them directly.
 
 ### `AOI_AxisMove` — move one ClearLink axis to an absolute angle
 ```
 INPUT   TargetDeg   REAL
-INPUT   Execute     BOOL      // level: hold true while the move is wanted
-IN_OUT  Axis        <ClearLink axis alias / assembly>
+INPUT   Execute     BOOL      // rising edge = start one move
+IN_OUT  Ax          AxisIF    // alias onto <module>:O1/:I1 motor block (§3)
 OUTPUT  InPosition  BOOL
 OUTPUT  Fault       BOOL
+LOCAL   prevExec    BOOL
 
-// body
-steps := ROUND(TargetDeg * STEPS_PER_DEG);
-IF Execute AND NOT Fault THEN
-    Axis.CmdPosition := steps;           // load target (device-specific member)
-    Axis.MoveTrigger := TRUE;            // request absolute move
+// rising edge: load the move and pulse Load Position Move
+IF Execute AND NOT prevExec AND NOT Fault THEN
+    Ax.MoveDistance   := ROUND(TargetDeg * STEPS_PER_DEG);
+    Ax.VelocityLimit  := MOVE_VEL;          // steps/s (<= 500000)
+    Ax.AccelLimit     := MOVE_ACC;
+    Ax.DecelLimit     := MOVE_DEC;
+    Ax.OutReg.1       := TRUE;              // Absolute Flag
+    Ax.OutReg.3       := TRUE;              // Load Position Move (rising edge)
 END_IF;
-InPosition := Axis.MoveDone AND (Axis.CmdPosition = steps);
-Fault      := Axis.Alarm;               // EM806 ALM via ClearLink input
-```
+prevExec := Execute;
 
-### `AOI_HomeAxis` — reference one shoulder to its home switch
+// clear the load bit once the ClearLink acknowledges (handshake, status bit 19)
+IF Ax.StatusReg.19 THEN Ax.OutReg.3 := FALSE; END_IF;
+
+// open-loop move-done = Steps Active (bit 1) went back to 0 after a load
+InPosition := NOT Ax.StatusReg.1 AND NOT Ax.OutReg.3;
+Fault      := Ax.StatusReg.17 OR Ax.ALM;      // ClearLink shutdown OR EM806 ALM (via DIP)
 ```
-INPUT   HomeSwitch    BOOL
-INPUT   Execute       BOOL
-INPUT   HomeAngleDeg  REAL     // 135.85 (left) / 44.15 (right)
-IN_OUT  Axis
+> `Ax.OutReg.n` / `Ax.StatusReg.n` are the Output/Status **Register** bits from
+> §3. `AbsoluteFlag`=1, `LoadPositionMove`=3, `StepsActive`=1, `LoadPositionMoveAck`=19.
+
+### `AOI_HomeAxis` — reference one shoulder (ClearLink runs the homing)
+**The ClearLink executes homing internally** — you do *not* hand-roll a
+fast/back-off/slow jog. One-time config (Configuration assembly, §3): set the
+motor's `Home Sensor` connector to the shoulder prox input, `Config Register`
+`Homing Enable` (bit 0) = 1, and `Home Sensor Active Level` (bit 1) to match the
+prox. Then:
+```
+INPUT   Execute       BOOL     // rising edge = home this axis
+IN_OUT  Ax            AxisIF
 OUTPUT  Homed         BOOL
-OUTPUT  Fault         BOOL     // set on timeout
+OUTPUT  Fault         BOOL     // timeout / not ready
 
-// sequence (see §8): fast approach -> switch -> back off -> slow re-approach
-// -> set Axis reference so ActualDeg = HomeAngleDeg -> Homed := TRUE
+// 1. require Ready to Home (status bit 16: homing enabled, motor enabled,
+//    no shutdowns, valid sensor)
+// 2. rising edge -> load a slow homing move toward the switch:
+//       Ax.OutReg.0 := TRUE;        // Enable
+//       Ax.OutReg.2 := TRUE;        // Homing Move Flag
+//       Ax.JogVelocity := HOME_VEL; // slow, toward the switch
+//       Ax.OutReg.4 := TRUE;        // Load Velocity Move (pulse; ack = status 20)
+// 3. ClearLink drives to the sensor, cancels motion, and zeroes position there
+//    (Commanded Position := 0 at the switch).
+// 4. Homed := Ax.StatusReg.13 (Has Homed).  Timeout -> Fault.
 ```
-> **Full drop-in build (ladder visuals + Structured Text) for `AOI_HomeAxis`
-> and the `R30_Homing` coordinator is in [`docs/plc_homing.md`](plc_homing.md).**
+**Home-offset gotcha:** ClearLink zeroes position **at the switch trip point**,
+so `Commanded Position = 0` means "at the home prox", *not* 135.85°/44.15°. Apply
+the mechanical offset in the PLC's step↔degree mapping — define
+`HOME_OFFSET_STEPS` per axis (= switch angle × `STEPS_PER_DEG`) and report
+`ActualDeg := (Commanded Position + HOME_OFFSET_STEPS) / STEPS_PER_DEG`. (See
+`docs/homing.md` for the switch angle.)
+> **Full drop-in build (Structured Text + coordinator) for `AOI_HomeAxis` and
+> `R30_Homing` is in [`docs/plc_homing.md`](plc_homing.md).**
 
 ### `AOI_CmdHandshake` — CommandID acknowledgement
 ```
@@ -312,26 +425,40 @@ provided (`Target.Pick_*Deg` / `Target.Drop_*Deg`).
 
 See `docs/homing.md` for the mechanical placement. Home flag = tab on the
 **proximal link L1** at r≈40 mm; sensor on the base. Both shoulders home
-independently.
+independently. **The ClearLink runs the homing move itself** (§3, §5) — the PLC
+configures the home sensor + homing-enable, commands a homing move per axis, and
+waits for the `Has Homed` status bit.
 
 ```
+One-time config (per axis, Configuration assembly):
+  Home Sensor connector := <prox input pin>      // 0..12 = local ClearLink input
+  Config Register.HomingEnable (bit0) := 1
+  Config Register.HomeSensorActiveLevel (bit1)   // to match the prox
+  Config Register.HLFBInversion (bit3) := 1      // no HLFB on the EM806 (§3)
+
 Per axis (AOI_HomeAxis):
-  1. Enable drives.
-  2. Jog toward the home switch at HOMING_FAST_VEL, one consistent direction.
-  3. On HomeSwitch rising edge: stop, back off a fixed distance.
-  4. Re-approach at HOMING_SLOW_VEL; on switch, stop.
-  5. Set the axis reference so ActualDeg = HomeAngleDeg
-        (left 135.85, right 44.15  — from config homing block).
-  6. Homed := TRUE.
-  Timeout on each approach -> Fault(FC_HOME_TIMEOUT).
+  1. Enable drives; wait Status.Enabled.
+  2. Require Status.ReadyToHome (bit16).
+  3. Command a slow homing move toward the switch:
+        OutReg.Enable(0)=1, OutReg.HomingMoveFlag(2)=1,
+        JogVelocity := HOME_VEL, then pulse OutReg.LoadVelocityMove(4).
+  4. ClearLink drives to the sensor, cancels motion, and sets position 0 there.
+  5. Wait Status.HasHomed (bit13).   Timeout -> Fault(FC_HOME_TIMEOUT).
 
-After both axes Homed: enable soft limits (MIN -20, MAX +200) and set
-Status.Homed := TRUE; publish ActualLeft/RightDeg.
+After both axes homed: enable soft limits (Config Register.SoftLimitEnable +
+Soft Limit 1/2), set Status.Homed := TRUE, and publish
+  ActualDeg := (CommandedPosition + HOME_OFFSET_STEPS) / STEPS_PER_DEG.
 ```
 
-Home is **mid-travel**, so the flag passes the sensor during normal motion — read
-the home switch **only during homing**, ignore it otherwise. Hard limits at
-−20°/+200° stay wired into the drive fault chain at all times.
+**Home-offset:** the ClearLink datum is the switch trip point (position 0), not
+the home angle — apply `HOME_OFFSET_STEPS` per axis so the published angle reads
+135.85° (left) / 44.15° (right). See §5 and `docs/homing.md`.
+
+Home is **mid-travel**, so the flag passes the sensor during normal motion. The
+ClearLink only consults the home sensor during a homing move (a move with the
+Homing Move Flag set), so it is safely ignored otherwise. Hard limits at
+−20°/+200° stay wired into the drive fault chain at all times, and can also be
+given to the ClearLink as `Positive/Negative Limit` connectors (§3).
 
 Config source (read/mirror these; single source is `config/robot_config.yaml`):
 
@@ -424,12 +551,16 @@ validate the sequence logic against the GUI before touching hardware.
 
 ## 12. Commissioning checklist <a id="12-checklist"></a>
 
-1. ClearLink AOP added; Axis 0/1 map to left/right; `STEPS_PER_DEG = 26.6667`
-   verified (command 90°, measure the shoulder).
-2. Home switches on L1 (r≈40) wired; hard limits (−20/+200) in the drive fault
-   chain; EM806 ALM read as a fault.
-3. Homing: fast/slow approach directions and back-off distance tuned; after
-   homing, `ActualLeftDeg ≈ 135.85`, `ActualRightDeg ≈ 44.15`.
+1. ClearLink added from its **EDS/AOP**, **"Step Dir"** connection type; Motor
+   0/1 map to left/right; `HLFB Inversion` + (if needed) `Enable Inversion` set
+   for the EM806; EM806 configured for **1 µs / 500 kHz** step pulses;
+   `STEPS_PER_DEG = 26.6667` verified (command 90°, measure the shoulder).
+2. Home prox on L1 (r≈40) wired to a ClearLink input and set as each motor's
+   `Home Sensor` connector; hard limits (−20/+200) in the drive fault chain (and
+   optionally as `Positive/Negative Limit` connectors); EM806 ALM read as a fault.
+3. Homing: `Homing Enable` set, `HOME_VEL`/approach direction tuned, and
+   `HOME_OFFSET_STEPS` set so after homing `ActualLeftDeg ≈ 135.85`,
+   `ActualRightDeg ≈ 44.15`. Confirm `Has Homed` asserts.
 4. Soft limits enforced; a move past −20/+200 is refused with `FaultCode 7`.
 5. Manual handshake: from the app's **PLC tab → Connect PLC**, then **Robot
    Test → Enable → Home (find ref) → jog**. Confirm `CompleteCommandID` tracks

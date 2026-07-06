@@ -18,48 +18,66 @@ pasteable; the ladder is the visual to rebuild rung-by-rung.
 
 ## Shared: `AxisIF` UDT & constants
 
-One `AxisIF` per shoulder (`Ax0`, `Ax1`), wrapping the ClearLink AOP assembly
-(map each member to the real AOP member — names vary by revision). Superset of
-the homing members in `plc_homing.md`:
+One `AxisIF` per shoulder (`Ax0`, `Ax1`), aliasing the ClearLink **Step-Dir**
+`:O1`/`:I1` motor block. Member names below are the real ones from the Teknic
+*Object Data Reference* Rev. 1.15 (see `docs/plc_program.md` §3); `*.n` are
+register bits:
 
-| Member | Type | Use |
+| Member | Type | Real ClearLink member |
 |---|---|---|
-| `Enable` | BOOL | energize the drive |
-| `Ready` | BOOL | drive enabled & healthy |
-| `Stop` | BOOL | stop motion |
-| `Alarm` | BOOL | EM806 ALM (fault) |
-| `CmdPosition` | DINT | absolute move target (steps) |
-| `MoveTrigger` | BOOL | request the absolute move |
-| `MoveDone` | BOOL | move profile complete |
-| `ActualSteps` | DINT | current commanded count |
-| `JogHome`/`JogBack` | BOOL | homing jog directions |
-| `JogVel` | DINT | jog velocity (steps/s) |
-| `Redefine` | BOOL | set current position |
-| `PosRef` | DINT | value written on redefine |
+| `MoveDistance` | DINT | Output · Move Distance (steps target) |
+| `VelocityLimit` | UDINT | Output · Velocity Limit (steps/s, ≤500k) |
+| `AccelLimit`/`DecelLimit` | UDINT | Output · Acceleration/Deceleration Limit |
+| `JogVelocity` | DINT | Output · Jog Velocity (steps/s) |
+| `OutReg` | DWORD | Output · **Output Register** — `.0` Enable, `.1` Absolute, `.2` HomingMoveFlag, `.3` LoadPositionMove, `.4` LoadVelocityMove, `.5` SW-E-Stop, `.6` ClearAlerts |
+| `CmdPosition` | DINT | Input · Commanded Position (open-loop position) |
+| `StatusReg` | DWORD | Input · **Status Register** — `.1` StepsActive, `.10` Enabled, `.13` HasHomed, `.16` ReadyToHome, `.17` ShutdownsPresent, `.19` LoadPosMoveAck |
+| `ALM` | BOOL | EM806 alarm → a ClearLink digital input (DIP object) |
 
-Constants: `STEPS_PER_DEG := 26.66667`, plus `VAC_SETTLE`, `BLOWOFF_TIME` (timer
-presets, ms) and the pose angles `PickL/PickR/DropL/DropR`,
-`CAMERA_CLEAR_L/CAMERA_CLEAR_R`. Fault codes are the table in `plc_program.md` §9.
+> **No Teknic motion AOI** — the AOP only exposes these assembly tags; the AOIs
+> below are ours. `Enable` is `OutReg.0`; the "drive ready" flag is `StatusReg.10`
+> (with `HLFB Inversion` set for the HLFB-less EM806, §3); "stop" is a SW E-Stop
+> (`OutReg.5`); "move done" is `NOT StatusReg.1` (Steps Active). There is no
+> `MoveTrigger`/`MoveDone`/`Redefine` member — those were invented; use the
+> Load-Position-Move handshake and, for homing, the ClearLink's built-in homing
+> move (`plc_homing.md`).
+
+Constants: `STEPS_PER_DEG := 26.66667`, `MOVE_VEL/MOVE_ACC/MOVE_DEC` (move
+profile), plus `VAC_SETTLE`, `BLOWOFF_TIME` (timer presets, ms) and the pose
+angles `PickL/PickR/DropL/DropR`, `CAMERA_CLEAR_L/CAMERA_CLEAR_R`. Fault codes are
+the table in `plc_program.md` §9.
 
 ---
 
 ## `AOI_AxisMove` — move one shoulder to an absolute angle
 
 Params: `In` TargetDeg (REAL), Execute (BOOL), StepsPerDeg (REAL) · `InOut` Ax
-(`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` TargetSteps (DINT).
+(`AxisIF`) · `Out` InPosition (BOOL), Fault (BOOL) · `Local` TargetSteps (DINT),
+prevExec (BOOL).
 
-![AOI_AxisMove ladder](plc_axismove_ladder.svg)
+> ⚠️ **`plc_axismove_ladder.svg` shows the superseded `MoveTrigger`/`MoveDone`
+> interface.** Rebuild from the corrected ST below: load the move, pulse
+> **Load Position Move** with its ack handshake, and take *move done* from
+> **Steps Active** (there is no closed-loop `MoveDone` on an open-loop drive).
 
 ```pascal
 TargetSteps := TRUNC(TargetDeg * StepsPerDeg);
-IF Execute AND NOT Fault THEN
-    Ax.CmdPosition := TargetSteps;
-    Ax.MoveTrigger := 1;
-ELSE
-    Ax.MoveTrigger := 0;
+
+(* rising edge: load targets + pulse Load Position Move (Output Register bit 3) *)
+IF Execute AND NOT prevExec AND NOT Fault THEN
+    Ax.MoveDistance  := TargetSteps;
+    Ax.VelocityLimit := MOVE_VEL;
+    Ax.AccelLimit    := MOVE_ACC;
+    Ax.DecelLimit    := MOVE_DEC;
+    Ax.OutReg.1 := 1;              (* Absolute Flag *)
+    Ax.OutReg.3 := 1;              (* Load Position Move *)
 END_IF;
-InPosition := Ax.MoveDone AND (Ax.CmdPosition = TargetSteps);
-Fault      := Ax.Alarm;
+prevExec := Execute;
+
+IF Ax.StatusReg.19 THEN Ax.OutReg.3 := 0; END_IF;   (* clear on Load-Move Ack *)
+
+InPosition := NOT Ax.StatusReg.1 AND NOT Ax.OutReg.3; (* Steps Active == 0 *)
+Fault      := Ax.StatusReg.17 OR Ax.ALM;              (* shutdown OR drive alarm *)
 ```
 
 ---
