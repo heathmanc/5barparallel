@@ -37,8 +37,10 @@ the hole pattern at one repeatable position, not a moving target.
 | `tests/test_kinematics.py` | **Done** (encodes the design verification) |
 | `vision/camera.py` (Basler/pypylon + mock) | **Done, tested** |
 | `robot/driver.py`, `plc/{tags,compactlogix_client,plc_robot_driver}.py` | **Done, tested** (manual jog/home) |
-| `app/robot_test_controller.py`, `gui/*` (Robot Test + Settings tabs) | **Done, tested** |
-| `plc/handshake.py`, `vision/{calibration,detect_*}.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | **To build** (see §14) |
+| `app/robot_test_controller.py`, `gui/*` (Vision + Camera + Calibration + Robot Test + Settings + PLC tabs) | **Done, tested** |
+| `vision/{calibration,detect_holes,detect_covers,detection}.py` | **Done, tested** |
+| Interactive calibration (click correspondences → fit homography → save; feeds Vision reachability) | **Done, tested** |
+| `plc/handshake.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | **To build** (see §14) |
 
 Nothing hardware has been purchased yet, so geometry can still be trimmed if the
 one open input (exact hole span, §17) turns out smaller — but the current design
@@ -200,31 +202,39 @@ bung_cover_5bar_robot/
   requirements.txt
   pyproject.toml
   config/
-    robot_config.yaml             # DONE (verified geometry)
-    camera_config.yaml            # TODO
+    robot_config.yaml             # DONE (verified geometry + homing block)
+    camera_config.yaml            # DONE (controls + intrinsics block)
     recipes.yaml                  # TODO
   calibration/                    # runtime .npy homographies (git-ignored)
   src/bung_cover_robot/
     __init__.py
     main.py                       # TODO (CLI, --dry-run)
     app/
+      robot_test_controller.py    # DONE, tested (headless jog/home logic)
       cycle_manager.py            # TODO
       diagnostics.py              # TODO
     plc/
-      tags.py                     # TODO (tag-name constants, single source)
-      compactlogix_client.py      # TODO (pycomm3 wrapper + dry-run)
-      handshake.py                # TODO (send_job_and_wait + timeout recovery)
+      tags.py                     # DONE, tested (single-source tag registry)
+      compactlogix_client.py      # DONE, tested (pycomm3 wrapper + simulated)
+      plc_robot_driver.py         # DONE, tested (handshake driver)
+      handshake.py                # TODO (fold into cycle_manager job send)
     robot/
       fivebar_kinematics.py       # DONE, tested
       workspace.py                # DONE, tested
+      driver.py                   # DONE, tested (ABC + dry-run + homing)
       planner.py                  # TODO (PickPlaceJob, make_job, sort_holes)
     vision/
-      camera.py                   # TODO
-      calibration.py              # TODO (HomographyTransform, CalibrationManager)
-      detect_holes.py             # TODO (OpenCV)
-      detect_covers.py            # TODO (OpenCV)
+      camera.py                   # DONE, tested (Basler/pypylon + mock)
+      calibration.py              # DONE, tested (HomographyTransform, CalibrationManager)
+      detect_holes.py             # DONE, tested (OpenCV blob + collinearity)
+      detect_covers.py            # DONE, tested (OpenCV blob + reachability)
+      detection.py                # DONE, tested (shared blob/ROI/annotate)
+    gui/                          # DONE, tested (dark HMI: Vision, Camera,
+      main_window.py              #   Calibration, Robot Test, Settings, PLC tabs;
+      calibration_tab.py          #   click correspondences -> fit -> save)
   tests/
-    test_kinematics.py            # DONE
+    test_kinematics.py            # DONE (+ camera, driver, plc, detection,
+    ...                           #   calibration, controller, gui smoke)
 ```
 
 ---
@@ -426,31 +436,35 @@ pixel point
 Homographies live in `calibration/*.npy` (git-ignored). `CalibrationManager`
 exposes `get_cover_transform()` and `get_battery_transform(recipe_key)`.
 
+**Building one interactively:** the **Calibration tab** (`gui/calibration_tab.py`)
+is the operator workflow — capture a frame, click each known point and type its
+robot-frame XY (mm), **fit** the homography (≥4 non-collinear points; it reports
+the RMS residual in mm), then **save** it as the cover-plane transform or a
+per-recipe battery-top transform. A saved cover calibration is broadcast to the
+Vision tab immediately, so cover reachability updates live. Intrinsics for the
+pre-homography undistortion are read from `config/camera_config.yaml`.
+
 ---
 
 ## 14. What to build next (priority order)
 
-1. **`plc/tags.py`** — tag-name constants (single source of truth). Trivial,
-   unblocks the rest of the PLC layer.
-2. **`plc/compactlogix_client.py`** — thin `pycomm3` wrapper: `read(tag)`,
-   `write(tag, value)`, connection mgmt, **`--dry-run` mode** (log instead of
-   I/O so the whole pipeline runs with no PLC).
-3. **`plc/handshake.py`** — `RobotHandshake.send_job_and_wait(job, timeout_s)`
-   implementing §11, including the timeout/recovery state.
-4. **`robot/planner.py`** — `Point2D`, `PickPlaceJob`, `make_job()`,
+Done so far: `plc/{tags,compactlogix_client,plc_robot_driver}.py`,
+`robot/driver.py`, `vision/{camera,calibration,detect_holes,detect_covers,detection}.py`,
+`app/robot_test_controller.py`, and the full `gui/*` HMI (incl. interactive
+calibration). Remaining, in order:
+
+1. **`robot/planner.py`** — `Point2D`, `PickPlaceJob`, `make_job()`,
    `sort_holes_along_conveyor()`. A job must carry validated pick & drop
    `JointTarget`s.
-5. **`vision/calibration.py`** — `HomographyTransform.pixel_to_robot()`,
-   `CalibrationManager`.
-6. **`vision/camera.py`** — capture (Basler/generic), save diagnostic frames.
-7. **`vision/detect_holes.py` / `detect_covers.py`** — OpenCV per §12.
-8. **`app/cycle_manager.py`** — orchestrate the full 6-cover cycle.
-9. **`app/diagnostics.py`** — save annotated images on any detection/validation
+2. **`app/cycle_manager.py`** — orchestrate the full 6-cover cycle (detect →
+   select reachable cover → IK → validate → PLC pick/place handshake →
+   re-image), and wire the Vision tab's Start/Stop buttons to it. Folds in the
+   `plc/handshake.py` job-send + timeout/recovery logic.
+3. **`app/diagnostics.py`** — save annotated images on any detection/validation
    failure.
-10. **`main.py`** — CLI entry, `--config`, `--dry-run`.
-11. **`config/camera_config.yaml`, `config/recipes.yaml`** — see original draft
-    for the schema; recipes carry battery-top height, hole count/spacing,
-    expected cover diameter, etc.
+4. **`main.py`** — CLI entry, `--config`, `--dry-run`.
+5. **`config/recipes.yaml`** — recipes carry battery-top height, hole
+   count/spacing, expected cover diameter, etc. (`camera_config.yaml` is done.)
 
 Keep growing `tests/` alongside (planner logic, calibration round-trips, a
 dry-run cycle-manager smoke test).

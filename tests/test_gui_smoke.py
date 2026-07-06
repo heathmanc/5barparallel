@@ -32,6 +32,7 @@ def test_main_window_has_all_tabs(qapp):
     assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == [
         "Vision",
         "Camera",
+        "Calibration",
         "Robot Test",
         "Settings",
         "PLC",
@@ -188,6 +189,121 @@ def test_rejected_move_shows_reason(qapp):
     for _ in range(5):
         tab._jog_cart("y", +1)
     assert "Rejected" in tab.status_label.text()
+
+
+# --------------------------------------------------------------------------- #
+# Calibration tab
+# --------------------------------------------------------------------------- #
+def _cal_camera():
+    from bung_cover_robot.gui.imaging import demo_frame
+    from bung_cover_robot.vision.camera import CameraConfig, MockCamera
+
+    return MockCamera(
+        CameraConfig(mock_width=760, mock_height=520), frames=[demo_frame(760, 520)]
+    ).open()
+
+
+def _click_points(tab, pixel_pts, robot_pts):
+    """Simulate clicking each pixel point and typing its robot XY."""
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    for (px, py), (rx, ry) in zip(pixel_pts, robot_pts):
+        tab._on_pixel_clicked(float(px), float(py))
+        r = tab.table.rowCount() - 1
+        tab.table.setItem(r, 2, QTableWidgetItem(str(rx)))
+        tab.table.setItem(r, 3, QTableWidgetItem(str(ry)))
+
+
+def test_clickable_view_maps_widget_to_source(qapp):
+    from PySide6.QtGui import QPixmap
+    from bung_cover_robot.gui.widgets import ClickableImageView
+
+    view = ClickableImageView()
+    view.resize(400, 400)
+    view.set_pixmap(QPixmap(200, 100))  # 2:1 image letterboxed in a square widget
+    # Image is scaled x2 -> 400x200, centered vertically (offset y = 100).
+    assert view.widget_to_source(0.0, 100.0) == pytest.approx((0.0, 0.0), abs=0.5)
+    assert view.widget_to_source(200.0, 200.0) == pytest.approx((100.0, 50.0), abs=0.5)
+    # A click in the letterbox (above the image) is rejected.
+    assert view.widget_to_source(200.0, 10.0) is None
+
+
+def test_calibration_tab_fit_and_save_cover(qapp, tmp_path):
+    from bung_cover_robot.gui.calibration_tab import CalibrationTab
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    mgr = CalibrationManager(tmp_path)
+    tab = CalibrationTab(_cal_camera(), mgr)
+    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
+    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+
+    assert not tab.fit_btn.isEnabled()  # nothing entered yet
+    _click_points(tab, pix, rob)
+    assert tab.fit_btn.isEnabled()
+
+    tab._on_fit()
+    assert tab._fitted is not None
+    assert "residual" in tab.residual_label.text()
+    assert tab.save_btn.isEnabled()
+
+    saved = []
+    tab.coverCalibrationSaved.connect(saved.append)
+    tab._on_save()
+    assert mgr.has_cover_transform()
+    assert len(saved) == 1  # broadcast so the Vision tab can adopt it
+    # Round-trips through the manager and maps the rect centre correctly.
+    loaded = mgr.get_cover_transform()
+    assert loaded.pixel_to_robot(350, 250) == pytest.approx((0.0, 250.0), abs=1e-3)
+
+
+def test_calibration_tab_needs_recipe_for_battery(qapp, tmp_path):
+    from bung_cover_robot.gui.calibration_tab import CalibrationTab
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    mgr = CalibrationManager(tmp_path)
+    tab = CalibrationTab(_cal_camera(), mgr)
+    tab.plane_combo.setCurrentText("Battery top (per recipe)")
+    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
+    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+    _click_points(tab, pix, rob)
+    tab._on_fit()
+    # Fitted, but save is blocked until a recipe key is supplied.
+    assert tab._fitted is not None
+    assert not tab.save_btn.isEnabled()
+    tab.recipe_edit.setText("g31")
+    assert tab.save_btn.isEnabled()
+    tab._on_save()
+    assert mgr.has_battery_transform("g31")
+
+
+def test_calibration_tab_remove_and_clear(qapp, tmp_path):
+    from bung_cover_robot.gui.calibration_tab import CalibrationTab
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    tab = CalibrationTab(_cal_camera(), CalibrationManager(tmp_path))
+    _click_points(tab, [[10, 10], [20, 20], [30, 30]], [[0, 0], [1, 1], [2, 2]])
+    assert tab.table.rowCount() == 3 and len(tab._points) == 3
+    tab.table.selectRow(1)
+    tab._on_remove()
+    assert tab.table.rowCount() == 2 and len(tab._points) == 2
+    tab._on_clear()
+    assert tab.table.rowCount() == 0 and not tab._points
+
+
+def test_cover_calibration_flows_into_vision_tab(qapp, tmp_path):
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    win = MainWindow()
+    ct = win.calibration_tab
+    ct.manager = CalibrationManager(tmp_path)  # keep saved data out of the repo
+    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
+    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+    _click_points(ct, pix, rob)
+    ct._on_fit()
+    fitted = ct._fitted
+    ct._on_save()
+    # The saved cover transform is now the Vision tab's active calibration.
+    assert win.vision_tab.calibration is fitted
 
 
 # --------------------------------------------------------------------------- #

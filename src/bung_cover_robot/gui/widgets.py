@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
@@ -43,6 +43,43 @@ class ImageView(QLabel):
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
+
+    def widget_to_source(self, ex: float, ey: float) -> Optional[tuple]:
+        """Map a widget-space click to a pixel in the ORIGINAL (unscaled) image.
+
+        Returns None if there is no image or the click lands outside it. The
+        pixmap is drawn scaled with KeepAspectRatio and centered, so we undo
+        that letterbox offset and scale to recover source coordinates.
+        """
+        if self._pix is None or self._pix.isNull():
+            return None
+        pw, ph = self._pix.width(), self._pix.height()
+        aw, ah = self.width(), self.height()
+        if pw <= 0 or ph <= 0:
+            return None
+        scale = min(aw / pw, ah / ph)
+        if scale <= 0:
+            return None
+        ox = (aw - pw * scale) / 2.0
+        oy = (ah - ph * scale) / 2.0
+        sx = (ex - ox) / scale
+        sy = (ey - oy) / scale
+        if 0.0 <= sx < pw and 0.0 <= sy < ph:
+            return (sx, sy)
+        return None
+
+
+class ClickableImageView(ImageView):
+    """An ImageView that emits ``pixelClicked`` in original-image coordinates."""
+
+    pixelClicked = Signal(float, float)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        pos = event.position()
+        pt = self.widget_to_source(pos.x(), pos.y())
+        if pt is not None:
+            self.pixelClicked.emit(pt[0], pt[1])
+        super().mousePressEvent(event)
 
 
 class StatusPill(QLabel):
