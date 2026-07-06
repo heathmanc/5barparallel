@@ -120,6 +120,102 @@ class CycleConfig:
 
 
 # --------------------------------------------------------------------------- #
+# Target sources — where hole/cover targets come from (vision, or a bypass)
+# --------------------------------------------------------------------------- #
+class TargetSource(ABC):
+    """Supplies robot-frame hole (drop) and cover (pick) targets to the cycle.
+
+    Swapping the source is how vision is bypassed for testing: the real vision
+    path detects+calibrates; the scripted path returns fixed coordinates so the
+    plan -> validate -> PLC pick/place handshake loop can be exercised with no
+    camera, detection, or calibration at all.
+    """
+
+    label = "targets"
+
+    def preflight(self) -> Optional[str]:
+        """Source-specific blocking reason (e.g. missing calibration), or None."""
+        return None
+
+    @abstractmethod
+    def holes(self) -> List[Point]:
+        """Robot-frame hole (drop) targets. Called once at cycle start."""
+
+    @abstractmethod
+    def covers(self) -> List[Point]:
+        """Robot-frame candidate cover (pick) targets. Called before each pick
+        (a real camera re-images; scripted returns its fixed list)."""
+
+
+class VisionTargetSource(TargetSource):
+    """The real path: detect holes + covers, map pixel->robot via calibration."""
+
+    label = "vision"
+
+    def __init__(self, camera, calibration, validator, hole_detector, cover_detector):
+        self.camera = camera
+        self.calibration = calibration
+        self.validator = validator
+        self.hole_detector = hole_detector
+        self.cover_detector = cover_detector
+
+    def preflight(self) -> Optional[str]:
+        if self.calibration is None:
+            return "no pixel->robot calibration — build one in the Calibration tab"
+        return None
+
+    def holes(self) -> List[Point]:
+        res = self.hole_detector.detect(self.camera.grab())
+        return [self.calibration.pixel_to_robot(c.cx, c.cy) for c in res.holes]
+
+    def covers(self) -> List[Point]:
+        res = self.cover_detector.detect(
+            self.camera.grab(), self.calibration.pixel_to_robot, self.validator
+        )
+        return [c.robot_xy for c in res.accepted if c.robot_xy is not None]
+
+
+class ScriptedTargetSource(TargetSource):
+    """Vision bypass: fixed robot-frame targets, no camera/detection/calibration.
+
+    Covers are returned in full each call; the cycle's used-position filter
+    consumes them one per successful pick, so it terminates like the real thing.
+    """
+
+    label = "scripted (vision bypass)"
+
+    def __init__(self, holes_xy, covers_xy):
+        self._holes = [(float(x), float(y)) for x, y in holes_xy]
+        self._covers = [(float(x), float(y)) for x, y in covers_xy]
+
+    def holes(self) -> List[Point]:
+        return list(self._holes)
+
+    def covers(self) -> List[Point]:
+        return list(self._covers)
+
+
+def default_scripted_targets(controller, hole_count: int = 6) -> "tuple":
+    """A deterministic, reachable set of scripted holes + covers for bypass tests,
+    derived from the robot's own workspace (so every target is valid)."""
+    val = controller.validator
+    home_y = controller.home_xy[1]
+
+    def row(y: float, n: int, span: float = 140.0) -> List[Point]:
+        if n <= 1:
+            xs = [0.0]
+        else:
+            xs = [-span + 2 * span * i / (n - 1) for i in range(n)]
+        return [(round(x, 1), y) for x in xs if val.validate(x, y).ok]
+
+    holes = row(home_y, hole_count)
+    covers = row(home_y - 45.0, max(hole_count, 6))
+    if len(covers) < len(holes):                 # fall back to the hole row's Y
+        covers = row(home_y, max(hole_count, 6))
+    return holes, covers
+
+
+# --------------------------------------------------------------------------- #
 # Cycle manager
 # --------------------------------------------------------------------------- #
 class CycleManager:
@@ -132,6 +228,7 @@ class CycleManager:
         cover_detector: Optional[CoverDetector] = None,
         job_runner: Optional[JobRunner] = None,
         config: Optional[CycleConfig] = None,
+        target_source: Optional[TargetSource] = None,
     ) -> None:
         self.controller = controller
         self.camera = camera
@@ -141,17 +238,24 @@ class CycleManager:
         self.cover_detector = cover_detector or CoverDetector()
         self.job_runner = job_runner
         self.config = config or CycleConfig()
+        # Where targets come from. Default = the real vision path; pass a
+        # ScriptedTargetSource to bypass vision for testing.
+        self.target_source = target_source or VisionTargetSource(
+            camera, calibration, controller.validator,
+            self.hole_detector, self.cover_detector,
+        )
 
     # --- preflight ----------------------------------------------------------
-    def preflight(self) -> Optional[str]:
-        """Return a blocking reason, or None if the cycle may run."""
+    def _motion_block(self) -> Optional[str]:
         if not self.controller.is_enabled:
             return "drives are disabled — enable them in Robot Test first"
         if not self.controller.is_referenced:
             return "robot is not referenced — Home (find ref) in Robot Test first"
-        if self.calibration is None:
-            return "no pixel->robot calibration — build one in the Calibration tab"
         return None
+
+    def preflight(self) -> Optional[str]:
+        """Return a blocking reason, or None if the cycle may run."""
+        return self._motion_block() or self.target_source.preflight()
 
     # --- run ----------------------------------------------------------------
     def run_cycle(
@@ -166,17 +270,13 @@ class CycleManager:
         runner = self.job_runner or make_job_runner(self.controller.driver)
         kin, validator = self.controller.kin, self.controller.validator
 
-        # Holes -> ordered drop targets (robot frame).
+        # Holes -> ordered drop targets (robot frame), from vision or a bypass.
         try:
-            frame = self.camera.grab()
+            hole_xy = self.target_source.holes()
         except CameraError as exc:
             return CycleResult(ok=False, reason=f"capture failed: {exc}")
-        holes = self.hole_detector.detect(frame)
-        if holes.count == 0:
+        if not hole_xy:
             return CycleResult(ok=False, reason="no holes detected")
-        hole_xy = [
-            self.calibration.pixel_to_robot(h.cx, h.cy) for h in holes.holes
-        ]
         order = sort_holes_along_conveyor(hole_xy)[: self.config.max_holes]
 
         result = CycleResult()
@@ -226,25 +326,39 @@ class CycleManager:
         result.ok = placed > 0
         return result
 
+    # --- single job (vision + selection bypass) -----------------------------
+    def run_single_job(self, pick_xy: Point, drop_xy: Point) -> CycleStep:
+        """Fire ONE pick->place job through the PLC handshake, from explicit
+        robot-frame points. No vision, no cover selection — the simplest way to
+        exercise IK + validation + the §11 handshake on hardware."""
+        block = self._motion_block()
+        if block is not None:
+            return CycleStep(0, drop_xy, 0, pick_xy, False, block)
+        runner = self.job_runner or make_job_runner(self.controller.driver)
+        try:
+            job = make_job(self.controller.kin, self.controller.validator,
+                           hole_index=0, cover_id=0, pick_xy=pick_xy, drop_xy=drop_xy)
+        except PlanningError as exc:
+            return CycleStep(0, drop_xy, 0, pick_xy, False, str(exc))
+        res = runner.run(job)
+        return CycleStep(0, drop_xy, 0, pick_xy, res.ok, res.reason)
+
     # --- cover selection ----------------------------------------------------
     def _pick_candidate(self, drop_xy: Point, used: List[Point]) -> Optional[Point]:
-        """Re-image and return the reachable cover nearest the target hole that
+        """Re-source and return the reachable cover nearest the target hole that
         hasn't already been picked, or None if none remain."""
         try:
-            frame = self.camera.grab()
+            candidates = self.target_source.covers()
         except CameraError:
             return None
-        covers = self.cover_detector.detect(
-            frame, self.calibration.pixel_to_robot, self.controller.validator
-        )
-        candidates = [
-            c.robot_xy
-            for c in covers.accepted
-            if c.robot_xy is not None and not self._is_used(c.robot_xy, used)
+        val = self.controller.validator
+        reachable = [
+            xy for xy in candidates
+            if xy is not None and val.validate(*xy).ok and not self._is_used(xy, used)
         ]
-        if not candidates:
+        if not reachable:
             return None
-        return min(candidates, key=lambda xy: _dist2(xy, drop_xy))
+        return min(reachable, key=lambda xy: _dist2(xy, drop_xy))
 
     def _is_used(self, xy: Point, used: List[Point]) -> bool:
         tol2 = self.config.used_tolerance_mm ** 2

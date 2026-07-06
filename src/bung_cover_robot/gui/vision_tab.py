@@ -11,6 +11,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGridLayout,
     QGroupBox,
@@ -21,7 +22,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..app.cycle_manager import CycleManager
+from ..app.cycle_manager import (
+    CycleManager,
+    ScriptedTargetSource,
+    default_scripted_targets,
+)
 from ..app.recipes import RecipeStore
 from ..app.robot_test_controller import RobotTestController
 from ..robot.driver import DryRunRobotDriver
@@ -129,6 +134,12 @@ class VisionTab(QWidget):
         self.stop_btn.clicked.connect(self._on_stop)
         for b in (self.capture_btn, self.detect_btn, self.start_btn, self.stop_btn):
             rb.addWidget(b)
+        self.bypass_chk = QCheckBox("Bypass vision (scripted)")
+        self.bypass_chk.setToolTip(
+            "Run the cycle against fixed, reachable robot-frame targets — no "
+            "camera, detection, or calibration. Tests plan → PLC handshake."
+        )
+        rb.addWidget(self.bypass_chk)
         v.addWidget(run_box)
         v.addStretch(1)
         return panel
@@ -217,9 +228,16 @@ class VisionTab(QWidget):
         if self._running:
             return
         self.refresh()
+        # Vision bypass: run the cycle against fixed, reachable targets so the
+        # plan -> PLC handshake loop can be tested with no camera/detection.
+        source = None
+        if self.bypass_chk.isChecked():
+            holes, covers = default_scripted_targets(self.controller)
+            source = ScriptedTargetSource(holes, covers)
         manager = CycleManager(
             self.controller, self.camera, self.calibration,
             hole_detector=self.hole_detector, cover_detector=self.cover_detector,
+            target_source=source,
         )
         block = manager.preflight()
         if block is not None:
@@ -229,7 +247,8 @@ class VisionTab(QWidget):
         # Run off the GUI thread — a real PLC handshake takes seconds per hole.
         self._running = True
         self.start_btn.setEnabled(False)
-        self._set_status("Running automatic cycle…", theme.INFO)
+        mode = "scripted (vision bypass)" if source else "automatic"
+        self._set_status(f"Running {mode} cycle…", theme.INFO)
 
         self._thread = QThread(self)
         self._worker = CycleWorker(manager)

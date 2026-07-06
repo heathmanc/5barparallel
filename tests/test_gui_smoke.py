@@ -101,6 +101,20 @@ def test_vision_tab_start_runs_cycle(qapp):
     assert vt._thread is None  # worker thread torn down cleanly
 
 
+def test_vision_tab_bypass_runs_without_calibration(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    win.controller.enable()
+    win.controller.home_reference()
+    vt.set_calibration(None)          # no calibration at all
+    vt.bypass_chk.setChecked(True)    # scripted targets
+    vt._on_start()
+    assert _wait_until(qapp, lambda: not vt._running)
+    # cycle ran and placed covers despite no calibration/detection
+    assert "placed" in vt.status_label.text()
+    assert "0 cover" not in vt.status_label.text()
+
+
 def test_cycle_worker_stop_before_run(qapp):
     from bung_cover_robot.app.cycle_manager import CycleManager
     from bung_cover_robot.app.robot_test_controller import build_dry_run_controller

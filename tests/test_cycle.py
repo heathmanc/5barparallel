@@ -190,3 +190,69 @@ def test_cycle_reports_when_no_holes():
     mgr = CycleManager(_ready_controller(), cam, demo_transform())
     res = mgr.run_cycle()
     assert not res.ok and "hole" in res.reason
+
+
+# --------------------------------------------------------------------------- #
+# Vision bypass — scripted targets
+# --------------------------------------------------------------------------- #
+def test_default_scripted_targets_are_reachable():
+    from bung_cover_robot.app.cycle_manager import default_scripted_targets
+
+    ctrl = _ready_controller()
+    holes, covers = default_scripted_targets(ctrl, hole_count=6)
+    assert len(holes) == 6 and len(covers) >= 6
+    assert all(ctrl.validator.validate(x, y).ok for x, y in holes + covers)
+
+
+def test_scripted_cycle_needs_no_calibration_or_camera():
+    from bung_cover_robot.app.cycle_manager import (
+        ScriptedTargetSource, default_scripted_targets)
+
+    ctrl = _ready_controller()
+    holes, covers = default_scripted_targets(ctrl)
+    # calibration=None and the camera is never grabbed in bypass mode.
+    mgr = CycleManager(ctrl, _mock_camera(), None,
+                       target_source=ScriptedTargetSource(holes, covers))
+    assert mgr.preflight() is None           # vision preflight is skipped
+    res = mgr.run_cycle()
+    assert res.ok and len(res.placed) == len(holes)   # every hole filled
+
+
+def test_scripted_cycle_over_plc_handshake():
+    from bung_cover_robot.app.cycle_manager import (
+        ScriptedTargetSource, default_scripted_targets)
+
+    kin = FiveBarKinematics()
+    jt = kin.inverse(0.0, 250.0)
+    client = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
+    ctrl = RobotTestController(PlcRobotDriver(client), kin)
+    ctrl.enable()
+    ctrl.home_reference()
+    holes, covers = default_scripted_targets(ctrl)
+    mgr = CycleManager(ctrl, _mock_camera(), None,
+                       target_source=ScriptedTargetSource(holes, covers))
+    res = mgr.run_cycle()
+    assert res.ok and len(res.placed) == len(holes)
+    # every scripted job really ran through the §11 handshake
+    assert client.read(tags.Status.COMPLETE_COMMAND_ID) == len(holes)
+
+
+def test_scripted_cycle_still_requires_referenced():
+    from bung_cover_robot.app.cycle_manager import (
+        ScriptedTargetSource, default_scripted_targets)
+
+    ctrl = build_dry_run_controller()          # not enabled/homed
+    holes, covers = default_scripted_targets(ctrl)
+    mgr = CycleManager(ctrl, _mock_camera(), None,
+                       target_source=ScriptedTargetSource(holes, covers))
+    assert "disabled" in mgr.preflight()       # motion guard still applies
+
+
+def test_run_single_job():
+    mgr = CycleManager(_ready_controller(), _mock_camera(), None,
+                       target_source=None)     # source irrelevant for a single job
+    step = mgr.run_single_job(pick_xy=(60.0, 205.0), drop_xy=(-60.0, 250.0))
+    assert step.ok and step.pick_xy == (60.0, 205.0)
+    # an unreachable target is rejected by the workspace guard, not sent
+    bad = mgr.run_single_job(pick_xy=(0.0, 250.0), drop_xy=(0.0, 9999.0))
+    assert not bad.ok

@@ -12,6 +12,10 @@ from .cycle_manager import (
     DryRunJobRunner,
     HandshakeJobRunner,
     JobRunner,
+    ScriptedTargetSource,
+    TargetSource,
+    VisionTargetSource,
+    default_scripted_targets,
     make_job_runner,
 )
 from .recipes import Recipe, RecipeError, RecipeStore, slugify_key
@@ -32,7 +36,11 @@ __all__ = [
     "RecipeError",
     "RecipeStore",
     "RobotTestController",
+    "ScriptedTargetSource",
+    "TargetSource",
+    "VisionTargetSource",
     "build_dry_run_controller",
+    "default_scripted_targets",
     "make_job_runner",
     "slugify_key",
 ]
