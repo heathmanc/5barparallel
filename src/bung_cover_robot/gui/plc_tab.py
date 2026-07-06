@@ -41,8 +41,8 @@ from ..plc import tags as T
 from ..robot.driver import DryRunRobotDriver
 
 _COLUMNS = ["Group", "Tag", "Type", "Direction", "Description"]
-_CMD_TINT = QColor("#e8f0fe")     # PC → PLC
-_STATUS_TINT = QColor("#e9f7ec")  # PLC → PC
+_CMD_TINT = QColor("#1e2b3d")     # PC → PLC
+_STATUS_TINT = QColor("#1d2e22")  # PLC → PC
 
 
 class PlcTab(QWidget):
@@ -144,9 +144,9 @@ class PlcTab(QWidget):
     def _set_status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
-            "color: #2e7d32; font-weight: bold;"
+            "color: #3fb950; font-weight: bold;"
             if ok
-            else "color: #c62828; font-weight: bold;"
+            else "color: #f85149; font-weight: bold;"
         )
 
     # --- tag contract -------------------------------------------------------

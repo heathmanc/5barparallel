@@ -30,10 +30,56 @@ def qapp():
 def test_main_window_has_all_tabs(qapp):
     win = MainWindow()
     assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == [
+        "Vision",
+        "Camera",
         "Robot Test",
         "Settings",
         "PLC",
     ]
+
+
+def test_theme_applies(qapp):
+    from bung_cover_robot.gui.theme import apply_theme
+
+    apply_theme(qapp)
+    assert "QTabBar::tab" in qapp.styleSheet()
+
+
+def test_vision_tab_capture_and_status(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    # A frame was captured on construction -> the view has a pixmap.
+    assert vt.view.pixmap() is not None and not vt.view.pixmap().isNull()
+    # Status pills reflect the (dry-run) controller state.
+    vt.refresh()
+    assert vt.pill_drives.text() == "DISABLED"
+    assert vt.pill_home.text() == "NOT REFERENCED"
+    assert vt.pill_plc.text() == "DRY-RUN"
+    assert vt.pill_camera.text() == "ONLINE"
+    win.controller.enable()
+    win.controller.home_reference()
+    vt.refresh()
+    assert vt.pill_drives.text() == "ENABLED"
+    assert vt.pill_home.text() == "REFERENCED"
+
+
+def test_camera_tab_controls_and_grab(qapp):
+    win = MainWindow()
+    ct = win.camera_tab
+    assert ct.view.pixmap() is not None and not ct.view.pixmap().isNull()
+    # Moving a control slider pushes it to the camera and re-renders.
+    ct._sliders["brightness"].setValue(50)
+    assert win.camera.get_control("brightness") == pytest.approx(0.5)
+    # Grab refreshes info label with the frame size.
+    ct._grab()
+    assert "×" in ct.info_label.text()
+
+
+def test_camera_tab_use_mock_reconnect(qapp):
+    win = MainWindow()
+    ct = win.camera_tab
+    ct._on_use_mock()  # emits cameraChanged -> main window updates vision tab
+    assert win.vision_tab.camera is win.camera_tab.camera
 
 
 def test_plc_tab_lists_every_tag(qapp):

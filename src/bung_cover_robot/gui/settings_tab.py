@@ -132,6 +132,7 @@ class SettingsTab(QWidget):
         wrap = QWidget()
         row = QHBoxLayout(wrap)
         apply_btn = QPushButton("Validate && Apply")
+        apply_btn.setProperty("accent", "primary")
         apply_btn.clicked.connect(self._on_apply)
         save_btn = QPushButton("Save to YAML")
         save_btn.clicked.connect(self._on_save)
@@ -262,5 +263,5 @@ class SettingsTab(QWidget):
     def _status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
-            "color: #2e7d32;" if ok else "color: #c62828; font-weight: bold;"
+            "color: #3fb950;" if ok else "color: #f85149; font-weight: bold;"
         )
