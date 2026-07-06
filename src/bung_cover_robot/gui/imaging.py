@@ -60,6 +60,28 @@ def demo_transform():
     return HomographyTransform.from_matrix(H, name="demo")
 
 
+def annotate_points(frame: np.ndarray, points, labels=None) -> np.ndarray:
+    """Draw numbered crosshair markers at pixel ``points`` (list of (x,y)).
+
+    Used by the calibration tab to show which points the operator has picked.
+    Returns a copy so the captured frame is never mutated. BGR uint8.
+    """
+    import cv2
+
+    out = frame.copy()
+    for i, (px, py) in enumerate(points):
+        p = (int(round(px)), int(round(py)))
+        cv2.circle(out, p, 9, (60, 220, 90), 2)
+        cv2.line(out, (p[0] - 13, p[1]), (p[0] + 13, p[1]), (60, 220, 90), 1)
+        cv2.line(out, (p[0], p[1] - 13), (p[0], p[1] + 13), (60, 220, 90), 1)
+        text = labels[i] if labels is not None else str(i + 1)
+        cv2.putText(
+            out, text, (p[0] + 11, p[1] - 11),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 245, 150), 1, cv2.LINE_AA,
+        )
+    return out
+
+
 def adjust_preview(
     frame: np.ndarray, brightness: float = 0.0, contrast: float = 1.0, gamma: float = 1.0
 ) -> np.ndarray:

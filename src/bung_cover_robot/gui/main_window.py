@@ -11,7 +11,9 @@ from typing import Optional
 from PySide6.QtWidgets import QMainWindow, QTabWidget, QWidget
 
 from ..app.robot_test_controller import RobotTestController, build_dry_run_controller
+from ..vision.calibration import CalibrationManager, CameraIntrinsics
 from ..vision.camera import Camera, CameraConfig, MockCamera
+from .calibration_tab import CalibrationTab
 from .camera_tab import CameraTab
 from .imaging import demo_frame, demo_transform
 from .plc_tab import PlcTab
@@ -25,6 +27,15 @@ def _demo_camera() -> Camera:
         CameraConfig(mock_width=760, mock_height=520), frames=[demo_frame(760, 520)]
     )
     return cam.open()
+
+
+def _load_intrinsics() -> Optional[CameraIntrinsics]:
+    """Best-effort load of lens intrinsics from config/camera_config.yaml."""
+    path = Path(__file__).resolve().parents[3] / "config" / "camera_config.yaml"
+    try:
+        return CameraIntrinsics.from_yaml(path)
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 class MainWindow(QMainWindow):
@@ -46,14 +57,18 @@ class MainWindow(QMainWindow):
         # the mock scene; a real Basler needs a real calibration (cleared on swap).
         calibration = demo_transform() if isinstance(self.camera, MockCamera) else None
 
+        self.calibration_manager = CalibrationManager(intrinsics=_load_intrinsics())
+
         self.tabs = QTabWidget()
         self.vision_tab = VisionTab(self.controller, self.camera, calibration)
         self.camera_tab = CameraTab(self.camera)
+        self.calibration_tab = CalibrationTab(self.camera, self.calibration_manager)
         self.robot_test_tab = RobotTestTab(self.controller)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
         self.plc_tab = PlcTab(self.controller)
         self.tabs.addTab(self.vision_tab, "Vision")
         self.tabs.addTab(self.camera_tab, "Camera")
+        self.tabs.addTab(self.calibration_tab, "Calibration")
         self.tabs.addTab(self.robot_test_tab, "Robot Test")
         self.tabs.addTab(self.settings_tab, "Settings")
         self.tabs.addTab(self.plc_tab, "PLC")
@@ -64,15 +79,23 @@ class MainWindow(QMainWindow):
         self.plc_tab.connectionChanged.connect(self.robot_test_tab.refresh_all)
         self.plc_tab.connectionChanged.connect(self.vision_tab.refresh)
         self.camera_tab.cameraChanged.connect(self._on_camera_changed)
+        self.calibration_tab.coverCalibrationSaved.connect(self._on_cover_calibrated)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _on_camera_changed(self) -> None:
         self.camera = self.camera_tab.camera
         self.vision_tab.set_camera(self.camera)
-        # The demo calibration only matches the mock scene.
+        self.calibration_tab.set_camera(self.camera)
+        # Fall back to the demo calibration for the mock scene; a real cover
+        # calibration saved from the Calibration tab overrides it.
         self.vision_tab.set_calibration(
             demo_transform() if isinstance(self.camera, MockCamera) else None
         )
+
+    def _on_cover_calibrated(self, transform) -> None:
+        """A real cover calibration was saved — use it in the Vision tab now."""
+        self.vision_tab.set_calibration(transform)
+        self.vision_tab.refresh()
 
     def _on_tab_changed(self, index: int) -> None:
         if self.tabs.widget(index) is self.vision_tab:
