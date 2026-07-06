@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" TargetName="AOI_HomeAxis" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="RobotController">
+<Programs Use="Context">
+<Program Use="Context" Name="Robot">
+<Routines Use="Context">
+<Routine Use="Target" Name="AOI_HomeAxis" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment><![CDATA[Motor 0 homing. First set the Configuration assembly ClearLink:C.Motor0Config: Home_Sensor = prox input, Config Register Homing Enable (bit0)=1, HLFB Inversion (bit3)=1. Create tags: Home0_State (DINT), Home0_Req/Home0_ons/Ax0_HomeDone/Ax0_HomeFault (BOOL), Home0_Tmr (TIMER). Constants: HOME_VEL (signed, toward the prox) / HOME_ACC (DINT). Copy for Motor 1.]]></Comment>
+<Text><![CDATA[XIC(Home0_Req)ONS(Home0_ons)EQU(Home0_State,0)XIO(Ax0_HomeFault)MOV(10,Home0_State);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[State 10 ENABLING: hold the Enable output.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,10)OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment><![CDATA[State 10: advance once HLFB is asserted.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,10)XIC(ClearLink:I1.Motor0_Status_HLFB_ON)MOV(20,Home0_State);]]></Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Comment><![CDATA[State 20 CLEAR MOTOR FAULTS.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,20)OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Fault);]]></Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Comment><![CDATA[State 20: on Clear-Fault ack, drop the request and advance.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,20)XIC(ClearLink:I1.Motor0_Status_Clear_Motor_Fault_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Clear_Fault)MOV(30,Home0_State);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[State 30 CLEAR ALERTS.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,30)OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Alerts);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
+<Comment><![CDATA[State 30: when no shutdowns remain, drop the request and advance.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,30)XIO(ClearLink:I1.Motor0_Status_Shutdowns_Pres)OTU(ClearLink:O1.Motor0_Output_Reg_Clear_Alerts)MOV(40,Home0_State);]]></Text>
+</Rung>
+<Rung Number="7" Type="N">
+<Comment><![CDATA[State 40: wait for Ready To Home.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,40)XIC(ClearLink:I1.Motor0_Status_Ready_To_Home)MOV(50,Home0_State);]]></Text>
+</Rung>
+<Rung Number="8" Type="N">
+<Comment><![CDATA[State 50 BEGIN HOMING MOVE: home flag + velocity move toward the prox.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,50)OTL(ClearLink:O1.Motor0_Output_Reg_Home_Flag)MOV(HOME_VEL,ClearLink:O1.Motor0_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(55,Home0_State);]]></Text>
+</Rung>
+<Rung Number="9" Type="N">
+<Comment><![CDATA[State 55: on Load-Velocity ack, drop the load bit and homing flag.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,55)XIC(ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)OTU(ClearLink:O1.Motor0_Output_Reg_Home_Flag)MOV(60,Home0_State);]]></Text>
+</Rung>
+<Rung Number="10" Type="N">
+<Comment><![CDATA[State 60 HOMING: ClearLink zeroes at the prox -> Has Homed.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,60)XIC(ClearLink:I1.Motor0_Status_Has_Homed)OTL(Ax0_HomeDone)MOV(70,Home0_State);]]></Text>
+</Rung>
+<Rung Number="11" Type="N">
+<Comment><![CDATA[Homing timeout (timer runs while homing) -> fault.]]></Comment>
+<Text><![CDATA[TONR(Home0_Tmr)XIC(Home0_Tmr.DN)OTL(Ax0_HomeFault)MOV(900,Home0_State);]]></Text>
+</Rung>
+<Rung Number="12" Type="N">
+<Comment><![CDATA[EM806 alarm or ClearLink shutdown -> fault.]]></Comment>
+<Text><![CDATA[[XIC(EM806_0_ALM),XIC(ClearLink:I1.Motor0_Status_Shutdowns_Pres)]OTL(Ax0_HomeFault)MOV(900,Home0_State);]]></Text>
+</Rung>
+<Rung Number="13" Type="N">
+<Comment><![CDATA[State 900 FAULT: clear the move bits, hold for reset.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,900)OTU(ClearLink:O1.Motor0_Output_Reg_Home_Flag)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data);]]></Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

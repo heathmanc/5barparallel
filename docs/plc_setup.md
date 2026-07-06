@@ -114,6 +114,30 @@ Motor 0 = left / Motor 1 = right, and drive both from the coordinator/dispatcher
 in `plc_program.md`. The corrected per-axis logic and ladder visuals (matched to
 these examples) are in `plc_homing.md` and `plc_ladder.md`.
 
+### Importable routines in this repo (`docs/l5x/`)
+
+We also ship the corrected ladder as **importable Studio 5000 routine `.L5X`** —
+the same neutral rung text as Teknic's examples, so you can import instead of
+re-typing. **Right-click a Program → Import Routine…** and pick the file:
+
+| `docs/l5x/…` | Routine | Notes |
+|---|---|---|
+| `AOI_AxisMove.L5X` | absolute move, Motor 0 | copy for Motor 1 (`Motor0_`→`Motor1_`) |
+| `AOI_HomeAxis.L5X` | ClearLink homing move, Motor 0 | copy for Motor 1 |
+| `R30_Homing.L5X` | 2-axis homing coordinator | `JSR`s the two homing routines; offset-aware publish |
+
+Each routine's **rung-0 comment lists the tags/constants to create** (locals like
+`Home0_State`, aliases like `EM806_0_ALM`, constants like `STEPS_PER_DEG`,
+`HOME_VEL`, `HOME_OFFSET_L/R`). The `ClearLink:O1/:I1/:C` tags come from the
+module (§3); the `VisionRobot.*` tags from §6. Undefined tags flag on import —
+that's expected; resolve them against what you created.
+
+> ⚠️ **Import-test these first.** They were generated without Studio 5000, so
+> they're schema-conformant but not import-verified. Import one, and if Logix
+> reports a schema/format error, send it to me and I'll fix the generator
+> (`scripts/render_plc_l5x.py`). For anything safety- or motion-critical, the
+> Teknic `.L5K` examples remain the ground truth to cross-check against.
+
 ---
 
 ## 5. Set the Configuration assembly (`ClearLink:C`)
