@@ -104,10 +104,7 @@ prevReq (BOOL).
 
 ### Ladder
 
-> ⚠️ **`plc_homing_axis_ladder.svg` shows the superseded hand-rolled jog state
-> machine and must not be built as-is.** Rebuild the rungs from the corrected
-> Structured Text below (it is short — three states). The coordinator ladder in
-> §3 is still valid.
+![AOI_HomeAxis ladder](plc_homing_axis_ladder.svg)
 
 ### Structured Text (drop-in) — mirrors Teknic `SD_Homing`
 
@@ -188,11 +185,6 @@ from any startup pose (§5).
 ### Ladder
 
 ![R30_Homing ladder](plc_homing_coord_ladder.svg)
-
-> The sequencing (home Ax0 → Ax1 → publish) is still correct, but the **AOI-call
-> parameters shown in this SVG predate the ClearLink correction** — use the
-> parameter list in the Structured Text below (`HomeVel`/`HomeAccel`, no
-> `HomeSwitch`/`HomeAngleDeg`), and the offset-aware `ActualDeg` publish.
 
 ### Structured Text (equivalent)
 

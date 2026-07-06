@@ -176,11 +176,13 @@ validated geometry to `config/robot_config.yaml`.
 
 **PLC tab** — connect/disconnect the motion driver at runtime (dry-run,
 simulated PLC, or a real CompactLogix by IP/slot) and a read-only table of the
-full tag contract the PLC must implement. To build the Studio 5000 side, see
-[`docs/plc_program.md`](docs/plc_program.md) (architecture, UDT, tag contract),
-[`docs/plc_ladder.md`](docs/plc_ladder.md) and
-[`docs/plc_homing.md`](docs/plc_homing.md) (drop-in ladder + Structured Text for
-every routine), and [`docs/homing.md`](docs/homing.md) (switch placement).
+full tag contract the PLC must implement. To build the Studio 5000 side, start
+with **[`docs/plc_setup.md`](docs/plc_setup.md)** — step-by-step bring-up
+(network the Teknic ClearLink, import Teknic's CompactLogix example `.L5K`,
+create the tags, commission). Reference material: [`docs/plc_program.md`](docs/plc_program.md)
+(architecture, UDT, tag contract), [`docs/plc_ladder.md`](docs/plc_ladder.md) and
+[`docs/plc_homing.md`](docs/plc_homing.md) (ladder + Structured Text matched to
+Teknic's examples), and [`docs/homing.md`](docs/homing.md) (switch placement).
 
 The GUI is a thin view over the headless `RobotTestController`, which drives a
 swappable `RobotDriver`:

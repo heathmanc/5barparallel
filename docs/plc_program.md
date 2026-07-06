@@ -5,6 +5,10 @@ done and simulated-tested; this document tells the controls engineer what to
 build in Studio 5000 so `PlcRobotDriver` (and later the pick/place handshake)
 drives real hardware.
 
+> **New to this? Start with [`plc_setup.md`](plc_setup.md)** — the step-by-step
+> bring-up (network the ClearLink, import Teknic's example `.L5K`, create the
+> tags, commission). This document is the reference behind it.
+
 The authoritative tag list is the **PLC tab** in the app (generated from
 `plc/tags.py`) — implement every tag there. This doc adds the *behaviour* behind
 them. Structured Text (ST) is used for the outlines; implement as ladder or ST.
