@@ -1,13 +1,16 @@
 """Calibration tab — build a real pixel->robot calibration interactively.
 
 Workflow (Claude.md §13):
-  1. Place a target with known robot-frame coordinates in view and capture a frame.
+  1. Pick the recipe (battery type) you're calibrating, place a target with known
+     robot-frame coordinates in view, and capture a frame.
   2. Click each known point in the image; type its robot X/Y (mm) in the table.
   3. Fit the homography (>= 4 points) — the RMS residual reports the quality.
-  4. Save it as the cover-plane transform or a per-recipe battery-top transform.
+  4. Save it — the calibration is stored *per recipe* (calibration/<key>.npy).
 
-The math/persistence lives in vision/calibration; this tab is a thin operator view
-over it. Saved cover calibrations are broadcast so the Vision tab picks them up live.
+Each recipe owns its own calibration; a changeover loads the right one. The
+math/persistence lives in vision/calibration; this tab is a thin operator view.
+A saved calibration is broadcast (recipe key + transform) so the Vision tab picks
+it up live when it's the active recipe.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..app.recipes import Recipe, RecipeError, RecipeStore, slugify_key
 from ..vision.calibration import (
     CalibrationError,
     CalibrationManager,
@@ -40,24 +44,24 @@ from . import theme
 from .imaging import annotate_points, ndarray_to_qpixmap
 from .widgets import ClickableImageView
 
-_COVER = "Cover plane (pick surface)"
-_BATTERY = "Battery top (per recipe)"
-
 
 class CalibrationTab(QWidget):
-    """Collect pixel<->robot correspondences and save a calibration."""
+    """Collect pixel<->robot correspondences and save a per-recipe calibration."""
 
-    coverCalibrationSaved = Signal(object)  # emits the saved HomographyTransform
+    # emits (recipe_key, HomographyTransform) when a calibration is saved
+    calibrationSaved = Signal(str, object)
 
     def __init__(
         self,
         camera: Camera,
         manager: Optional[CalibrationManager] = None,
+        recipes: Optional[RecipeStore] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.camera = camera
         self.manager = manager or CalibrationManager()
+        self.recipes = recipes or RecipeStore()
         self._frame = None
         self._points: List[Tuple[float, float]] = []
         self._fitted: Optional[HomographyTransform] = None
@@ -66,6 +70,7 @@ class CalibrationTab(QWidget):
         root.addLayout(self._build_view_column(), 1)
         root.addWidget(self._build_side_panel())
 
+        self._reload_recipes()
         self._capture()
 
     # --- layout -------------------------------------------------------------
@@ -88,21 +93,23 @@ class CalibrationTab(QWidget):
         v = QVBoxLayout(panel)
         v.setContentsMargins(0, 0, 0, 0)
 
-        # Target selection
-        tgt = QGroupBox("Calibration target")
+        # Recipe selection — calibration is stored per recipe (battery type).
+        tgt = QGroupBox("Recipe (battery type)")
         tg = QVBoxLayout(tgt)
-        self.plane_combo = QComboBox()
-        self.plane_combo.addItems([_COVER, _BATTERY])
-        self.plane_combo.currentIndexChanged.connect(self._on_plane_changed)
-        tg.addWidget(self.plane_combo)
-        rrow = QHBoxLayout()
-        rrow.addWidget(QLabel("Recipe key:"))
-        self.recipe_edit = QLineEdit()
-        self.recipe_edit.setPlaceholderText("e.g. g31")
-        self.recipe_edit.setEnabled(False)
-        self.recipe_edit.textChanged.connect(self._update_buttons)
-        rrow.addWidget(self.recipe_edit)
-        tg.addLayout(rrow)
+        self.recipe_combo = QComboBox()
+        self.recipe_combo.currentIndexChanged.connect(self._on_recipe_changed)
+        tg.addWidget(self.recipe_combo)
+        self.recipe_status = QLabel()
+        self.recipe_status.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        tg.addWidget(self.recipe_status)
+        nrow = QHBoxLayout()
+        self.new_recipe_edit = QLineEdit()
+        self.new_recipe_edit.setPlaceholderText("New recipe name…")
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._on_add_recipe)
+        nrow.addWidget(self.new_recipe_edit)
+        nrow.addWidget(add_btn)
+        tg.addLayout(nrow)
         capture_btn = QPushButton("Capture frame")
         capture_btn.clicked.connect(self._on_capture)
         tg.addWidget(capture_btn)
@@ -265,17 +272,14 @@ class CalibrationTab(QWidget):
     def _on_save(self) -> None:
         if self._fitted is None:
             return
-        if self._is_battery():
-            key = self.recipe_edit.text().strip()
-            if not key:
-                self._set_status("Enter a recipe key before saving.", theme.WARN)
-                return
-            path = self.manager.save_battery_transform(key, self._fitted)
-            self._set_status(f"Saved battery '{key}' calibration -> {path}", theme.SUCCESS)
-        else:
-            path = self.manager.save_cover_transform(self._fitted)
-            self.coverCalibrationSaved.emit(self._fitted)
-            self._set_status(f"Saved cover calibration -> {path}", theme.SUCCESS)
+        key = self._selected_recipe_key()
+        if not key:
+            self._set_status("Select a recipe before saving.", theme.WARN)
+            return
+        path = self.manager.save(key, self._fitted)
+        self.calibrationSaved.emit(key, self._fitted)
+        self._update_recipe_status()
+        self._set_status(f"Saved '{key}' calibration -> {path}", theme.SUCCESS)
 
     def _invalidate_fit(self) -> None:
         self._fitted = None
@@ -283,21 +287,55 @@ class CalibrationTab(QWidget):
         self.residual_label.setStyleSheet(f"color:{theme.TEXT_DIM};")
         self._update_buttons()
 
-    # --- helpers ------------------------------------------------------------
-    def _is_battery(self) -> bool:
-        return self.plane_combo.currentText() == _BATTERY
+    # --- recipes ------------------------------------------------------------
+    def _reload_recipes(self) -> None:
+        self.recipe_combo.blockSignals(True)
+        self.recipe_combo.clear()
+        for r in self.recipes.list():
+            self.recipe_combo.addItem(r.name, r.key)
+        self.recipe_combo.blockSignals(False)
+        self._update_recipe_status()
 
-    def _on_plane_changed(self) -> None:
-        self.recipe_edit.setEnabled(self._is_battery())
+    def _selected_recipe_key(self) -> Optional[str]:
+        key = self.recipe_combo.currentData()
+        return str(key) if key is not None else None
+
+    def _on_recipe_changed(self) -> None:
+        self._update_recipe_status()
         self._update_buttons()
 
+    def _update_recipe_status(self) -> None:
+        key = self._selected_recipe_key()
+        if key and self.manager.has(key):
+            self.recipe_status.setText(f"'{key}' — calibration on file (re-fit to replace).")
+        elif key:
+            self.recipe_status.setText(f"'{key}' — not calibrated yet.")
+        else:
+            self.recipe_status.setText("")
+
+    def _on_add_recipe(self) -> None:
+        name = self.new_recipe_edit.text().strip()
+        key = slugify_key(name)
+        if not key:
+            self._set_status("Enter a recipe name to add.", theme.WARN)
+            return
+        try:
+            self.recipes.add(Recipe(key=key, name=name))
+        except RecipeError as exc:
+            self._set_status(f"Cannot add recipe: {exc}", theme.DANGER)
+            return
+        self.new_recipe_edit.clear()
+        self._reload_recipes()
+        self.recipe_combo.setCurrentIndex(self.recipe_combo.findData(key))
+        self._set_status(f"Added recipe '{key}'. Now calibrate it.", theme.SUCCESS)
+
+    # --- helpers ------------------------------------------------------------
     def _update_buttons(self) -> None:
         pix, _ = self._collect() if self.table.rowCount() else ([], [])
         self.fit_btn.setEnabled(len(pix) >= 4)
-        can_save = self._fitted is not None and (
-            not self._is_battery() or bool(self.recipe_edit.text().strip())
+        self.save_btn.setEnabled(
+            self._fitted is not None and bool(self._selected_recipe_key())
         )
-        self.save_btn.setEnabled(can_save)
 
     def _render(self) -> None:
         if self._frame is None:

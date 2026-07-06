@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -20,32 +21,43 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..app.cycle_manager import CycleManager
+from ..app.recipes import RecipeStore
 from ..app.robot_test_controller import RobotTestController
 from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
 from ..vision.detect_covers import CoverDetector
-from ..vision.detect_holes import HoleDetector
+from ..vision.detect_holes import HoleDetector, HoleDetectorConfig
 from ..vision.detection import annotate
 from . import theme
+from .cycle_worker import CycleWorker
 from .imaging import ndarray_to_qpixmap
 from .widgets import ImageView, StatusPill
 
 
 class VisionTab(QWidget):
+    # emitted when the operator changes the active recipe (changeover)
+    recipeChanged = Signal(str)
+
     def __init__(
         self,
         controller: RobotTestController,
         camera: Camera,
         calibration=None,
+        recipes: Optional[RecipeStore] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.camera = camera
         self.calibration = calibration  # HomographyTransform (pixel->robot) or None
+        self.recipes = recipes
         self.hole_detector = HoleDetector()
         self.cover_detector = CoverDetector()
         self._frame = None
+        self._running = False
+        self._thread: Optional[QThread] = None
+        self._worker: Optional[CycleWorker] = None
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -75,6 +87,17 @@ class VisionTab(QWidget):
         panel.setFixedWidth(260)
         v = QVBoxLayout(panel)
         v.setContentsMargins(0, 0, 0, 0)
+
+        recipe_box = QGroupBox("Recipe (changeover)")
+        rv = QVBoxLayout(recipe_box)
+        self.recipe_combo = QComboBox()
+        if self.recipes is not None:
+            for r in self.recipes.list():
+                self.recipe_combo.addItem(r.name, r.key)
+        self.recipe_combo.currentIndexChanged.connect(self._on_recipe_changed)
+        self.recipe_combo.setEnabled(self.recipes is not None)
+        rv.addWidget(self.recipe_combo)
+        v.addWidget(recipe_box)
 
         status_box = QGroupBox("System status")
         grid = QGridLayout(status_box)
@@ -153,16 +176,96 @@ class VisionTab(QWidget):
     def set_calibration(self, calibration) -> None:
         self.calibration = calibration
 
-    # --- run (placeholder until cycle_manager exists) -----------------------
+    # --- recipe (changeover) ------------------------------------------------
+    def active_recipe_key(self) -> Optional[str]:
+        key = self.recipe_combo.currentData()
+        return str(key) if key is not None else None
+
+    def _on_recipe_changed(self) -> None:
+        key = self.active_recipe_key()
+        if key is not None:
+            self.recipeChanged.emit(key)
+
+    def set_hole_count(self, count: int) -> None:
+        """Apply the active recipe's expected vent-hole count to the detector."""
+        self.hole_detector = HoleDetector(HoleDetectorConfig(expected_count=count))
+
+    # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:
+        if self._running:
+            return
+        self.refresh()
+        manager = CycleManager(
+            self.controller, self.camera, self.calibration,
+            hole_detector=self.hole_detector, cover_detector=self.cover_detector,
+        )
+        block = manager.preflight()
+        if block is not None:
+            self._set_status(f"Cannot start: {block}", theme.WARN)
+            return
+
+        # Run off the GUI thread — a real PLC handshake takes seconds per hole.
+        self._running = True
+        self.start_btn.setEnabled(False)
+        self._set_status("Running automatic cycle…", theme.INFO)
+
+        self._thread = QThread(self)
+        self._worker = CycleWorker(manager)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.stepDone.connect(self._on_cycle_step)
+        self._worker.finished.connect(self._on_cycle_finished)
+        self._thread.start()
+
+    def _on_cycle_step(self, step) -> None:
+        where = f"hole {step.hole_index}"
+        if step.ok:
+            self._set_status(f"Placed cover in {where}…", theme.INFO)
+        else:
+            self._set_status(f"{where}: {step.reason}", theme.WARN)
+
+    def _on_cycle_finished(self, result) -> None:
+        self._teardown_thread()
+        self._running = False
+        self.start_btn.setEnabled(True)
+        self._show_overlay()
+        self.refresh()
+        placed = len(result.placed)
+        color = theme.SUCCESS if result.ok else theme.WARN
         self._set_status(
-            "Automatic cycle not yet wired (app/cycle_manager + vision detection "
-            "are still to build).",
-            theme.WARN,
+            f"Cycle done — placed {placed} cover(s). {result.reason}", color
         )
 
     def _on_stop(self) -> None:
-        self._set_status("Stopped.", theme.TEXT_DIM)
+        if self._running and self._worker is not None:
+            self._worker.request_stop()
+            self.controller.stop()
+            self._set_status("Stopping after the current pick…", theme.WARN)
+        else:
+            self._set_status("Stopped.", theme.TEXT_DIM)
+
+    def _teardown_thread(self) -> None:
+        if self._thread is not None:
+            self._thread.quit()
+            self._thread.wait()
+            self._worker.deleteLater()
+            self._thread.deleteLater()
+            self._thread = None
+            self._worker = None
+
+    def _show_overlay(self) -> None:
+        """Redraw the current scene with detected holes + covers."""
+        try:
+            frame = self.camera.grab()
+        except CameraError:
+            return
+        self._frame = frame
+        holes = self.hole_detector.detect(frame)
+        to_robot = self.calibration.pixel_to_robot if self.calibration else None
+        validator = self.controller.validator if self.calibration else None
+        covers = self.cover_detector.detect(frame, to_robot, validator)
+        overlay = annotate(frame, holes.holes, covers.covers)
+        self.view.set_pixmap(ndarray_to_qpixmap(overlay))
 
     # --- status -------------------------------------------------------------
     def refresh(self) -> None:

@@ -39,8 +39,10 @@ the hole pattern at one repeatable position, not a moving target.
 | `robot/driver.py`, `plc/{tags,compactlogix_client,plc_robot_driver}.py` | **Done, tested** (manual jog/home) |
 | `app/robot_test_controller.py`, `gui/*` (Vision + Camera + Calibration + Robot Test + Settings + PLC tabs) | **Done, tested** |
 | `vision/{calibration,detect_holes,detect_covers,detection}.py` | **Done, tested** |
-| Interactive calibration (click correspondences → fit homography → save; feeds Vision reachability) | **Done, tested** |
-| `plc/handshake.py`, `robot/planner.py`, `app/cycle_manager.py`, `main.py` | **To build** (see §14) |
+| Interactive calibration (click correspondences → fit → save **per recipe**; feeds Vision reachability) | **Done, tested** |
+| `app/recipes.py` + `config/recipes.yaml` (per-recipe calibration + hole count; Vision changeover) | **Done, tested** |
+| `plc/handshake.py`, `robot/planner.py`, `app/cycle_manager.py` (full auto cycle, wired to Vision Start/Stop) | **Done, tested** |
+| `main.py`, `app/diagnostics.py` | **To build** (see §14) |
 
 Nothing hardware has been purchased yet, so geometry can still be trimmed if the
 one open input (exact hole span, §17) turns out smaller — but the current design
@@ -204,25 +206,26 @@ bung_cover_5bar_robot/
   config/
     robot_config.yaml             # DONE (verified geometry + homing block)
     camera_config.yaml            # DONE (controls + intrinsics block)
-    recipes.yaml                  # TODO
-  calibration/                    # runtime .npy homographies (git-ignored)
+    recipes.yaml                  # DONE (per-recipe: hole count, cover size)
+  calibration/                    # per-recipe .npy homographies (git-ignored)
   src/bung_cover_robot/
     __init__.py
     main.py                       # TODO (CLI, --dry-run)
     app/
       robot_test_controller.py    # DONE, tested (headless jog/home logic)
-      cycle_manager.py            # TODO
+      cycle_manager.py            # DONE, tested (auto cycle + job runners)
+      recipes.py                  # DONE, tested (Recipe, RecipeStore)
       diagnostics.py              # TODO
     plc/
       tags.py                     # DONE, tested (single-source tag registry)
       compactlogix_client.py      # DONE, tested (pycomm3 wrapper + simulated)
-      plc_robot_driver.py         # DONE, tested (handshake driver)
-      handshake.py                # TODO (fold into cycle_manager job send)
+      plc_robot_driver.py         # DONE, tested (manual jog/home driver)
+      handshake.py                # DONE, tested (auto pick/place + timeout/recovery)
     robot/
       fivebar_kinematics.py       # DONE, tested
       workspace.py                # DONE, tested
       driver.py                   # DONE, tested (ABC + dry-run + homing)
-      planner.py                  # TODO (PickPlaceJob, make_job, sort_holes)
+      planner.py                  # DONE, tested (PickPlaceJob, make_job, sort_holes)
     vision/
       camera.py                   # DONE, tested (Basler/pypylon + mock)
       calibration.py              # DONE, tested (HomographyTransform, CalibrationManager)
@@ -232,6 +235,7 @@ bung_cover_5bar_robot/
     gui/                          # DONE, tested (dark HMI: Vision, Camera,
       main_window.py              #   Calibration, Robot Test, Settings, PLC tabs;
       calibration_tab.py          #   click correspondences -> fit -> save)
+      cycle_worker.py             #   threaded auto-cycle runner (Start/Stop)
   tests/
     test_kinematics.py            # DONE (+ camera, driver, plc, detection,
     ...                           #   calibration, controller, gui smoke)
@@ -415,56 +419,58 @@ blowoff, and debounce.
 
 ## 13. Calibration & coordinate flow
 
-Camera sees points on two Z planes:
-- cover pickup plane (fixed tray/table height),
-- battery top plane (recipe-dependent height).
-
-**v1:** a fixed homography for the pickup plane and a per-recipe homography for
-each battery-top height. Add a one-time **lens-undistortion** step
-(`cv2.undistortPoints` with the camera intrinsics) **before** the homography —
-without it, a 2592×1944 sensor's corners can be several pixels off, which can
+**The vent holes and the loose covers sit on the same plane.** A battery-type
+**changeover** shifts that plane (and the hole pattern), so calibration is
+**one homography per battery recipe** — the *same* transform maps both the holes
+and the covers for the loaded battery type. Add a one-time **lens-undistortion**
+step (`cv2.undistortPoints` with the camera intrinsics) **before** the homography
+— without it, a 2592×1944 sensor's corners can be several pixels off, which can
 exceed the placement tolerance.
 
 ```
 pixel point
-  -> undistort -> homography (per Z plane) -> ROBOT-frame XY
-  -> WorkspaceValidator.validate()         (reject if not ok)
-  -> FiveBarKinematics.inverse()           -> left/right shoulder degrees
+  -> undistort -> homography (active recipe) -> ROBOT-frame XY
+  -> WorkspaceValidator.validate()           (reject if not ok)
+  -> FiveBarKinematics.inverse()             -> left/right shoulder degrees
   -> PLC target tags
 ```
 
-Homographies live in `calibration/*.npy` (git-ignored). `CalibrationManager`
-exposes `get_cover_transform()` and `get_battery_transform(recipe_key)`.
+Each **recipe owns its own calibration** — `calibration/<recipe_key>.npy`
+(git-ignored). `CalibrationManager` is keyed by recipe: `has(key)` / `get(key)` /
+`save(key, t)` / `keys()`. Recipes themselves live in `config/recipes.yaml`
+(`app/recipes.py`: `Recipe`, `RecipeStore`), each carrying its vent-hole count
+and nominal cover size. At **changeover** the Vision tab loads the selected
+recipe's calibration + hole count; the `CycleManager` takes that one active
+``calibration`` and applies it to both holes and covers.
 
 **Building one interactively:** the **Calibration tab** (`gui/calibration_tab.py`)
-is the operator workflow — capture a frame, click each known point and type its
-robot-frame XY (mm), **fit** the homography (≥4 non-collinear points; it reports
-the RMS residual in mm), then **save** it as the cover-plane transform or a
-per-recipe battery-top transform. A saved cover calibration is broadcast to the
-Vision tab immediately, so cover reachability updates live. Intrinsics for the
+is the operator workflow — pick the recipe (or add a new one), capture a frame,
+click each known point and type its robot-frame XY (mm), **fit** the homography
+(≥4 non-collinear points; it reports the RMS residual in mm), then **save** it to
+that recipe. A saved calibration is broadcast (recipe key + transform) to the
+Vision tab, which adopts it live when it's the active recipe. Intrinsics for the
 pre-homography undistortion are read from `config/camera_config.yaml`.
 
 ---
 
 ## 14. What to build next (priority order)
 
-Done so far: `plc/{tags,compactlogix_client,plc_robot_driver}.py`,
-`robot/driver.py`, `vision/{camera,calibration,detect_holes,detect_covers,detection}.py`,
-`app/robot_test_controller.py`, and the full `gui/*` HMI (incl. interactive
-calibration). Remaining, in order:
+Done so far: `plc/{tags,compactlogix_client,plc_robot_driver,handshake}.py`,
+`robot/{driver,planner}.py`, `vision/{camera,calibration,detect_holes,detect_covers,detection}.py`,
+`app/{robot_test_controller,cycle_manager,recipes}.py`, `config/recipes.yaml`,
+and the full `gui/*` HMI (incl. per-recipe interactive calibration + the
+Start/Stop-wired automatic cycle, which runs on a worker thread —
+`gui/cycle_worker.py` — so a multi-second PLC handshake never
+blocks the HMI; Stop halts after the current pick). The loop is closed:
+**detect → calibrate (pixel→robot) → validate → plan → PLC pick/place handshake
+→ re-image**, running in dry-run, `--sim-plc`, or on a real PLC. Remaining:
 
-1. **`robot/planner.py`** — `Point2D`, `PickPlaceJob`, `make_job()`,
-   `sort_holes_along_conveyor()`. A job must carry validated pick & drop
-   `JointTarget`s.
-2. **`app/cycle_manager.py`** — orchestrate the full 6-cover cycle (detect →
-   select reachable cover → IK → validate → PLC pick/place handshake →
-   re-image), and wire the Vision tab's Start/Stop buttons to it. Folds in the
-   `plc/handshake.py` job-send + timeout/recovery logic.
-3. **`app/diagnostics.py`** — save annotated images on any detection/validation
+1. **`app/diagnostics.py`** — save annotated images on any detection/validation
    failure.
-4. **`main.py`** — CLI entry, `--config`, `--dry-run`.
-5. **`config/recipes.yaml`** — recipes carry battery-top height, hole
-   count/spacing, expected cover diameter, etc. (`camera_config.yaml` is done.)
+2. **`main.py`** — CLI entry, `--config`, `--dry-run` / `--sim-plc`.
+
+(`config/recipes.yaml` + `app/recipes.py` are done — per-recipe calibration,
+hole count, and changeover are wired into the Calibration and Vision tabs.)
 
 Keep growing `tests/` alongside (planner logic, calibration round-trips, a
 dry-run cycle-manager smoke test).

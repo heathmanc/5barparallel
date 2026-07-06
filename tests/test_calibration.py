@@ -82,23 +82,22 @@ def test_homography_with_intrinsics_still_exact():
 # --------------------------------------------------------------------------- #
 # CalibrationManager
 # --------------------------------------------------------------------------- #
-def test_manager_cover_roundtrip(tmp_path):
+def test_manager_per_recipe_roundtrip(tmp_path):
     mgr = CalibrationManager(tmp_path)
-    assert not mgr.has_cover_transform()
+    assert not mgr.has("g31-6")
     with pytest.raises(CalibrationError):
-        mgr.get_cover_transform()
-    mgr.save_cover_transform(HomographyTransform.from_correspondences(PIX, ROB))
-    assert mgr.has_cover_transform()
-    assert mgr.get_cover_transform().pixel_to_robot(350, 250) == pytest.approx(
+        mgr.get("g31-6")
+    mgr.save("g31-6", HomographyTransform.from_correspondences(PIX, ROB))
+    assert mgr.has("g31-6")
+    assert not mgr.has("g24-6")           # each recipe is independent
+    assert mgr.get("g31-6").pixel_to_robot(350, 250) == pytest.approx(
         (0.0, 250.0), abs=1e-4
     )
 
 
-def test_manager_battery_per_recipe(tmp_path):
+def test_manager_lists_calibrated_recipes(tmp_path):
     mgr = CalibrationManager(tmp_path)
-    assert not mgr.has_battery_transform("g31")
-    with pytest.raises(CalibrationError):
-        mgr.get_battery_transform("g31")
-    mgr.save_battery_transform("g31", HomographyTransform.from_correspondences(PIX, ROB))
-    assert mgr.has_battery_transform("g31")
-    assert not mgr.has_battery_transform("other")
+    assert mgr.keys() == []
+    mgr.save("g24-6", HomographyTransform.from_correspondences(PIX, ROB))
+    mgr.save("g31-6", HomographyTransform.from_correspondences(PIX, ROB))
+    assert mgr.keys() == ["g24-6", "g31-6"]  # sorted

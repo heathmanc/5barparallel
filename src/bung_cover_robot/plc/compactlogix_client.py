@@ -118,10 +118,13 @@ class CompactLogixClient(PlcClient):
 
 
 class SimulatedPlcClient(PlcClient):
-    """In-memory PLC that emulates the manual jog/home ladder.
+    """In-memory PLC that emulates both the manual jog/home ladder and the
+    automatic pick/place handshake.
 
     ``home_angles`` is what the (simulated) homing routine reports as the
-    reference position. Moves complete instantly and echo Target -> Actual.
+    reference position. Manual moves complete instantly and echo Target ->
+    Actual; an automatic pick/place request runs the whole §11 job in one step
+    (ending at the drop pose) and echoes CommandID -> CompleteCommandID.
     """
 
     def __init__(self, home_angles: Tuple[float, float] = (0.0, 0.0)) -> None:
@@ -133,6 +136,9 @@ class SimulatedPlcClient(PlcClient):
     def _seed(self) -> None:
         for tag in T.all_tags():
             self._store.setdefault(tag, 0)
+        # Idle-state defaults for the automatic handshake.
+        self._store[T.Status.READY] = True
+        self._store[T.Status.READY_FOR_VISION] = True
 
     def connect(self) -> "SimulatedPlcClient":
         self._connected = True
@@ -187,6 +193,40 @@ class SimulatedPlcClient(PlcClient):
             )
         elif tag == T.Manual.ABORT and value:
             self._store[T.Status.MOVING] = False
+        elif tag == T.Cmd.REQUEST_PICK_PLACE and value:
+            self._run_pick_place()
+        elif tag == T.Cmd.ABORT and value:
+            self._store[T.Status.BUSY] = False
+            self._store[T.Status.FAILED_COMMAND_ID] = self._store.get(
+                T.Status.ACTIVE_COMMAND_ID, 0
+            )
+            self._store[T.Status.READY] = True
+        elif tag == T.Cmd.RESET and value:
+            self._store[T.Status.FAULTED] = False
+            self._store[T.Status.FAULT_CODE] = 0
+            self._store[T.Status.DONE] = False
+            self._store[T.Status.BUSY] = False
+            self._store[T.Status.READY] = True
+
+    def _run_pick_place(self) -> None:
+        """Emulate the §11 auto state machine end-to-end in one step."""
+        if self._store.get(T.Status.FAULTED):
+            return  # inhibited until reset
+        if not self._store.get(T.Status.ENABLED) or not self._store.get(T.Status.HOMED):
+            self._fault(3)  # auto job needs enabled + homed drives
+            return
+        cid = self._store.get(T.Cmd.COMMAND_ID, 0)
+        self._store[T.Status.ACTIVE_COMMAND_ID] = cid
+        self._store[T.Status.BUSY] = True
+        self._store[T.Status.READY] = False
+        # ... pick (vacuum on) -> place -> blow-off; ends at the drop pose.
+        self._store[T.Status.ACTUAL_LEFT_DEG] = self._store.get(T.Target.DROP_LEFT_DEG, 0.0)
+        self._store[T.Status.ACTUAL_RIGHT_DEG] = self._store.get(T.Target.DROP_RIGHT_DEG, 0.0)
+        self._store[T.Status.VACUUM_OK] = False  # released after blow-off
+        self._store[T.Status.COMPLETE_COMMAND_ID] = cid
+        self._store[T.Status.DONE] = True
+        self._store[T.Status.BUSY] = False
+        self._store[T.Status.READY] = True
 
     def _fault(self, code: int) -> None:
         self._store[T.Status.FAULTED] = True

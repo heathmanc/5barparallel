@@ -3,8 +3,9 @@
     pixel point -> (undistort) -> homography (per Z plane) -> ROBOT-frame XY
 
 A `HomographyTransform` maps undistorted image points to robot millimetres for one
-Z plane. `CalibrationManager` holds the fixed cover-pickup transform plus a
-per-recipe battery-top transform, persisted as ``calibration/*.npy`` (git-ignored).
+plane. `CalibrationManager` holds one transform *per recipe* (battery type) —
+holes and covers share a plane that a changeover shifts — persisted as
+``calibration/<recipe_key>.npy`` (git-ignored).
 
 Lens undistortion (Brown-Conrady, via the camera intrinsics) is applied *before*
 the homography — on a 2592x1944 sensor the corners can be several pixels off,
@@ -152,7 +153,11 @@ class HomographyTransform:
 
 
 class CalibrationManager:
-    """Owns the cover-plane transform and per-recipe battery-top transforms."""
+    """Owns one pixel->robot transform *per recipe* (battery type).
+
+    Holes and covers share a plane that a changeover shifts, so each recipe has a
+    single calibration keyed by its recipe key, at ``calibration/<key>.npy``.
+    """
 
     def __init__(
         self,
@@ -162,39 +167,26 @@ class CalibrationManager:
         self.dir = Path(directory)
         self.intrinsics = intrinsics
 
-    def _cover_path(self) -> Path:
-        return self.dir / "cover.npy"
+    def path(self, recipe_key: str) -> Path:
+        return self.dir / f"{recipe_key}.npy"
 
-    def _battery_path(self, recipe_key: str) -> Path:
-        return self.dir / f"battery_{recipe_key}.npy"
+    def has(self, recipe_key: str) -> bool:
+        return self.path(recipe_key).exists()
 
-    # cover plane (fixed)
-    def has_cover_transform(self) -> bool:
-        return self._cover_path().exists()
-
-    def get_cover_transform(self) -> HomographyTransform:
-        if not self.has_cover_transform():
+    def get(self, recipe_key: str) -> HomographyTransform:
+        p = self.path(recipe_key)
+        if not p.exists():
             raise CalibrationError(
-                f"no cover calibration at {self._cover_path()}; run calibration first"
+                f"no calibration for recipe '{recipe_key}' at {p}; "
+                "build one in the Calibration tab first"
             )
-        return HomographyTransform.load(self._cover_path(), self.intrinsics, "cover")
+        return HomographyTransform.load(p, self.intrinsics, recipe_key)
 
-    def save_cover_transform(self, transform: HomographyTransform) -> Path:
-        return transform.save(self._cover_path())
+    def save(self, recipe_key: str, transform: HomographyTransform) -> Path:
+        return transform.save(self.path(recipe_key))
 
-    # battery top (per recipe / Z height)
-    def has_battery_transform(self, recipe_key: str) -> bool:
-        return self._battery_path(recipe_key).exists()
-
-    def get_battery_transform(self, recipe_key: str) -> HomographyTransform:
-        path = self._battery_path(recipe_key)
-        if not path.exists():
-            raise CalibrationError(
-                f"no battery calibration for recipe '{recipe_key}' at {path}"
-            )
-        return HomographyTransform.load(path, self.intrinsics, f"battery_{recipe_key}")
-
-    def save_battery_transform(
-        self, recipe_key: str, transform: HomographyTransform
-    ) -> Path:
-        return transform.save(self._battery_path(recipe_key))
+    def keys(self) -> List[str]:
+        """Recipe keys that have a saved calibration on disk."""
+        if not self.dir.exists():
+            return []
+        return sorted(p.stem for p in self.dir.glob("*.npy"))

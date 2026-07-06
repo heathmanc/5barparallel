@@ -72,6 +72,57 @@ def test_vision_tab_detect_overlay(qapp):
     assert "6 holes" in vt.status_label.text()
 
 
+def test_vision_tab_start_requires_enable_and_home(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    vt._on_start()  # not enabled/referenced yet
+    assert "Cannot start" in vt.status_label.text()
+
+
+def _wait_until(qapp, predicate, timeout_s=5.0):
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline and not predicate():
+        qapp.processEvents()
+    return predicate()
+
+
+def test_vision_tab_start_runs_cycle(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    win.controller.enable()
+    win.controller.home_reference()
+    vt._on_start()
+    # The cycle runs on a worker thread; wait for it to finish.
+    assert _wait_until(qapp, lambda: not vt._running)
+    assert "placed" in vt.status_label.text()
+    assert vt.start_btn.isEnabled()  # re-enabled after the run
+    assert vt._thread is None  # worker thread torn down cleanly
+
+
+def test_cycle_worker_stop_before_run(qapp):
+    from bung_cover_robot.app.cycle_manager import CycleManager
+    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
+    from bung_cover_robot.gui.cycle_worker import CycleWorker
+    from bung_cover_robot.gui.imaging import demo_frame, demo_transform
+    from bung_cover_robot.vision.camera import CameraConfig, MockCamera
+
+    ctrl = build_dry_run_controller()
+    ctrl.enable()
+    ctrl.home_reference()
+    cam = MockCamera(
+        CameraConfig(mock_width=760, mock_height=520), frames=[demo_frame(760, 520)]
+    ).open()
+    worker = CycleWorker(CycleManager(ctrl, cam, demo_transform()))
+    results = []
+    worker.finished.connect(results.append)
+    worker.request_stop()
+    worker.run()  # synchronous; should_stop is honored between holes
+    assert len(results) == 1
+    assert results[0].steps == [] and "stopped" in results[0].reason.lower()
+
+
 def test_camera_tab_controls_and_grab(qapp):
     win = MainWindow()
     ct = win.camera_tab
@@ -228,14 +279,25 @@ def test_clickable_view_maps_widget_to_source(qapp):
     assert view.widget_to_source(200.0, 10.0) is None
 
 
-def test_calibration_tab_fit_and_save_cover(qapp, tmp_path):
+def _rect_correspondences():
+    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
+    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+    return pix, rob
+
+
+def _cal_tab(tmp_path):
+    from bung_cover_robot.app.recipes import RecipeStore
     from bung_cover_robot.gui.calibration_tab import CalibrationTab
     from bung_cover_robot.vision.calibration import CalibrationManager
 
     mgr = CalibrationManager(tmp_path)
-    tab = CalibrationTab(_cal_camera(), mgr)
-    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
-    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+    recipes = RecipeStore(path=tmp_path / "recipes.yaml")  # defaults g31-6/g24-6
+    return CalibrationTab(_cal_camera(), mgr, recipes), mgr, recipes
+
+
+def test_calibration_tab_fit_and_save_per_recipe(qapp, tmp_path):
+    tab, mgr, _ = _cal_tab(tmp_path)
+    pix, rob = _rect_correspondences()
 
     assert not tab.fit_btn.isEnabled()  # nothing entered yet
     _click_points(tab, pix, rob)
@@ -244,43 +306,36 @@ def test_calibration_tab_fit_and_save_cover(qapp, tmp_path):
     tab._on_fit()
     assert tab._fitted is not None
     assert "residual" in tab.residual_label.text()
-    assert tab.save_btn.isEnabled()
+    assert tab.save_btn.isEnabled()  # a recipe is always selected
 
     saved = []
-    tab.coverCalibrationSaved.connect(saved.append)
+    tab.calibrationSaved.connect(lambda k, t: saved.append((k, t)))
+    key = tab._selected_recipe_key()
     tab._on_save()
-    assert mgr.has_cover_transform()
-    assert len(saved) == 1  # broadcast so the Vision tab can adopt it
-    # Round-trips through the manager and maps the rect centre correctly.
-    loaded = mgr.get_cover_transform()
+    assert mgr.has(key)
+    assert len(saved) == 1 and saved[0][0] == key  # (recipe_key, transform)
+    loaded = mgr.get(key)
     assert loaded.pixel_to_robot(350, 250) == pytest.approx((0.0, 250.0), abs=1e-3)
 
 
-def test_calibration_tab_needs_recipe_for_battery(qapp, tmp_path):
-    from bung_cover_robot.gui.calibration_tab import CalibrationTab
-    from bung_cover_robot.vision.calibration import CalibrationManager
-
-    mgr = CalibrationManager(tmp_path)
-    tab = CalibrationTab(_cal_camera(), mgr)
-    tab.plane_combo.setCurrentText("Battery top (per recipe)")
-    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
-    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+def test_calibration_tab_add_recipe(qapp, tmp_path):
+    tab, mgr, recipes = _cal_tab(tmp_path)
+    before = tab.recipe_combo.count()
+    tab.new_recipe_edit.setText("Group 65 8-vent")
+    tab._on_add_recipe()
+    assert recipes.has("group-65-8-vent")           # slugified + persisted
+    assert tab.recipe_combo.count() == before + 1
+    assert tab._selected_recipe_key() == "group-65-8-vent"  # auto-selected
+    # Calibrate the freshly added recipe.
+    pix, rob = _rect_correspondences()
     _click_points(tab, pix, rob)
     tab._on_fit()
-    # Fitted, but save is blocked until a recipe key is supplied.
-    assert tab._fitted is not None
-    assert not tab.save_btn.isEnabled()
-    tab.recipe_edit.setText("g31")
-    assert tab.save_btn.isEnabled()
     tab._on_save()
-    assert mgr.has_battery_transform("g31")
+    assert mgr.has("group-65-8-vent")
 
 
 def test_calibration_tab_remove_and_clear(qapp, tmp_path):
-    from bung_cover_robot.gui.calibration_tab import CalibrationTab
-    from bung_cover_robot.vision.calibration import CalibrationManager
-
-    tab = CalibrationTab(_cal_camera(), CalibrationManager(tmp_path))
+    tab, _, _ = _cal_tab(tmp_path)
     _click_points(tab, [[10, 10], [20, 20], [30, 30]], [[0, 0], [1, 1], [2, 2]])
     assert tab.table.rowCount() == 3 and len(tab._points) == 3
     tab.table.selectRow(1)
@@ -290,20 +345,42 @@ def test_calibration_tab_remove_and_clear(qapp, tmp_path):
     assert tab.table.rowCount() == 0 and not tab._points
 
 
-def test_cover_calibration_flows_into_vision_tab(qapp, tmp_path):
+def test_calibration_flows_into_vision_tab_when_active(qapp, tmp_path):
     from bung_cover_robot.vision.calibration import CalibrationManager
 
     win = MainWindow()
     ct = win.calibration_tab
-    ct.manager = CalibrationManager(tmp_path)  # keep saved data out of the repo
-    pix = [[100, 100], [600, 100], [600, 400], [100, 400]]
-    rob = [[-150, 300], [150, 300], [150, 200], [-150, 200]]
+    ct.manager = win.calibration_manager = CalibrationManager(tmp_path)
+    # Calibrate the recipe the Vision tab is currently showing.
+    active = win.vision_tab.active_recipe_key()
+    ct.recipe_combo.setCurrentIndex(ct.recipe_combo.findData(active))
+    pix, rob = _rect_correspondences()
     _click_points(ct, pix, rob)
     ct._on_fit()
     fitted = ct._fitted
     ct._on_save()
-    # The saved cover transform is now the Vision tab's active calibration.
+    # The saved transform is now the Vision tab's active calibration.
     assert win.vision_tab.calibration is fitted
+
+
+def test_vision_recipe_changeover_loads_calibration(qapp, tmp_path):
+    from bung_cover_robot.vision.calibration import CalibrationManager, HomographyTransform
+
+    win = MainWindow()
+    win.calibration_manager = CalibrationManager(tmp_path)
+    pix, rob = _rect_correspondences()
+    # Give the second recipe (only) a real calibration on disk.
+    second = win.recipes.list()[1].key
+    saved = HomographyTransform.from_correspondences(pix, rob)
+    win.calibration_manager.save(second, saved)
+    # Changeover to it -> the Vision tab loads that recipe's transform.
+    win.vision_tab.recipe_combo.setCurrentIndex(
+        win.vision_tab.recipe_combo.findData(second)
+    )
+    assert win.vision_tab.active_recipe_key() == second
+    assert win.vision_tab.calibration.pixel_to_robot(350, 250) == pytest.approx(
+        (0.0, 250.0), abs=1e-3
+    )
 
 
 # --------------------------------------------------------------------------- #
