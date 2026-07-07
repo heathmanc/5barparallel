@@ -337,9 +337,12 @@ def datatype_l5x(name: str, members: List[Member]) -> str:
 # --------------------------------------------------------------------------- #
 class Tag:
     def __init__(self, name: str, dtype: str, value="0", *,
-                 constant=False, desc: str = "") -> None:
+                 constant=False, desc: str = "", unit: str = "",
+                 set_by_hand: bool = False) -> None:
         self.name, self.dtype, self.value = name, dtype, value
         self.constant, self.desc = constant, desc
+        # unit + set_by_hand drive the "values to set after import" reference doc
+        self.unit, self.set_by_hand = unit, set_by_hand
 
     def csv_row(self) -> str:
         # Format matched byte-for-byte to a real Logix v34 export:
@@ -370,32 +373,47 @@ def _glue_tags() -> List[Tag]:
     """
     tags: List[Tag] = []
 
-    def add(name, dtype, value="0", constant=False, desc=""):
-        tags.append(Tag(name, dtype, value, constant=constant, desc=desc))
+    def add(name, dtype, value="0", constant=False, desc="", unit="", hand=False):
+        tags.append(Tag(name, dtype, value, constant=constant, desc=desc,
+                        unit=unit, set_by_hand=hand))
 
     # --- constants & tuning values (CSV carries no values — set after import) ---
     add("STEPS_PER_DEG", "REAL", "26.66667", True,
-        "3200 pulses/rev * 3:1 / 360. Set value to 26.66667 after import.")
-    add("MOVE_VEL", "DINT", "20000", desc="Move speed, steps/s (max 500000). Set ~20000.")
-    add("MOVE_ACC", "DINT", "100000", desc="Move accel, steps/s^2. Set ~100000.")
-    add("MOVE_DEC", "DINT", "0", desc="Move decel, steps/s^2. 0 => use accel.")
+        "3200 pulses/rev * 3:1 / 360. Set value to 26.66667 after import.",
+        unit="steps/deg", hand=True)
+    add("MOVE_VEL", "DINT", "20000", desc="Move speed, steps/s (max 500000). Set ~20000.",
+        unit="steps/s", hand=True)
+    add("MOVE_ACC", "DINT", "100000", desc="Move accel, steps/s^2. Set ~100000.",
+        unit="steps/s^2", hand=True)
+    add("MOVE_DEC", "DINT", "0", desc="Move decel, steps/s^2. 0 => use accel.",
+        unit="steps/s^2", hand=True)
     add("HOME_VEL_0", "DINT", "-2000",
-        desc="Motor 0 homing speed, steps/s, signed toward the prox. Tune.")
+        desc="Motor 0 homing speed, steps/s, signed toward the prox. Tune.",
+        unit="steps/s", hand=True)
     add("HOME_VEL_1", "DINT", "2000",
-        desc="Motor 1 homing speed, steps/s, signed toward the prox. Tune.")
-    add("HOME_ACC", "DINT", "50000", desc="Homing accel, steps/s^2. Set ~50000.")
+        desc="Motor 1 homing speed, steps/s, signed toward the prox. Tune.",
+        unit="steps/s", hand=True)
+    add("HOME_ACC", "DINT", "50000", desc="Homing accel, steps/s^2. Set ~50000.",
+        unit="steps/s^2", hand=True)
     add("HOME_TMO_MS", "DINT", "15000",
-        desc="Homing timeout, ms (loaded into Home*_Tmr.PRE). Homing beyond this faults.")
+        desc="Homing timeout, ms (loaded into Home*_Tmr.PRE). Homing beyond this faults.",
+        unit="ms", hand=True)
     add("HOME_OFFSET_L", "DINT", "0",
-        desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning.")
+        desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning.",
+        unit="steps", hand=True)
     add("HOME_OFFSET_R", "DINT", "0",
-        desc="Right switch angle * STEPS_PER_DEG (ActualRightDeg ~44.15). Set at commissioning.")
-    add("VAC_SETTLE", "DINT", "300", desc="Vacuum settle time, ms (VacTmr preset). Tune.")
-    add("BLOWOFF_TIME", "DINT", "200", desc="Blowoff time, ms (BlowTmr preset). Tune.")
+        desc="Right switch angle * STEPS_PER_DEG (ActualRightDeg ~44.15). Set at commissioning.",
+        unit="steps", hand=True)
+    add("VAC_SETTLE", "DINT", "300", desc="Vacuum settle time, ms (VacTmr preset). Tune.",
+        unit="ms", hand=True)
+    add("BLOWOFF_TIME", "DINT", "200", desc="Blowoff time, ms (BlowTmr preset). Tune.",
+        unit="ms", hand=True)
     add("CAMERA_CLEAR_L", "REAL", "0.0",
-        desc="Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose.")
+        desc="Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose.",
+        unit="deg", hand=True)
     add("CAMERA_CLEAR_R", "REAL", "0.0",
-        desc="Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose.")
+        desc="Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose.",
+        unit="deg", hand=True)
 
     # --- per-motor move + home glue (R_MoveMotor* / R_HomeMotor*) ---
     for m in (0, 1):
@@ -489,6 +507,69 @@ def robot_tags_csv() -> str:
     return "\r\n".join(header + rows) + "\r\n"
 
 
+# groups for the values reference (name order within each group is preserved)
+_VALUE_GROUPS: List[Tuple[str, List[str]]] = [
+    ("Motion — absolute moves (R_MoveMotor0/1)",
+     ["STEPS_PER_DEG", "MOVE_VEL", "MOVE_ACC", "MOVE_DEC"]),
+    ("Homing (R_HomeMotor0/1)",
+     ["HOME_VEL_0", "HOME_VEL_1", "HOME_ACC", "HOME_TMO_MS"]),
+    ("Home offsets — measure at commissioning (R30_Homing)",
+     ["HOME_OFFSET_L", "HOME_OFFSET_R"]),
+    ("Auto pick/place process timers (R50_Auto)",
+     ["VAC_SETTLE", "BLOWOFF_TIME"]),
+    ("Poses — set to safe positions (R50_Auto)",
+     ["CAMERA_CLEAR_L", "CAMERA_CLEAR_R"]),
+]
+
+
+def values_reference_md() -> str:
+    """Human list of the values the CSV/L5X import can't carry — every tag that
+    must be given a value by hand after import (CSV creates definitions only)."""
+    by_name = {t.name: t for t in _glue_tags()}
+    lines = [
+        "# PLC values to set after import",
+        "",
+        "Studio 5000's tag CSV/L5X import creates tag **definitions only** — every",
+        "tag comes in at `0`/`0.0`. After importing `docs/l5x/RobotTags.csv`, set",
+        "these values by hand (Controller Tags → Monitor/Edit). Most are starting",
+        "points you refine at commissioning; `STEPS_PER_DEG` is fixed and",
+        "`HOME_OFFSET_L/R` you measure. Source of truth: `scripts/render_plc_l5x.py`.",
+        "",
+    ]
+    for title, names in _VALUE_GROUPS:
+        lines += [f"## {title}", "",
+                  "| Tag | Type | Value to set | Unit | Notes |",
+                  "|---|---|---|---|---|"]
+        for n in names:
+            t = by_name[n]
+            fixed = " (fixed)" if t.constant else ""
+            lines.append(f"| `{t.name}` | {t.dtype} | `{t.value}`{fixed} | "
+                         f"{t.unit} | {t.desc} |")
+        lines.append("")
+    # timer presets are members, loaded from the constants above
+    lines += [
+        "## Timer presets (`.PRE`)",
+        "",
+        "Timers import with `.PRE = 0`, which would make `.DN` true immediately.",
+        "The homing timer is loaded by ladder each scan; the auto timers are loaded",
+        "by `R50_Auto` when you build it. Set the **source constant** above and the",
+        "preset follows.",
+        "",
+        "| Timer | `.PRE` loaded from | Value | Loaded by |",
+        "|---|---|---|---|",
+        f"| `Home0_Tmr` / `Home1_Tmr` | `HOME_TMO_MS` | `{by_name['HOME_TMO_MS'].value}` ms | `R_HomeMotor0/1` (MOV each scan) |",
+        f"| `VacTmr` | `VAC_SETTLE` | `{by_name['VAC_SETTLE'].value}` ms | `R50_Auto` |",
+        f"| `BlowTmr` | `BLOWOFF_TIME` | `{by_name['BLOWOFF_TIME'].value}` ms | `R50_Auto` |",
+        "",
+        "> Physical-I/O tags (E-stop, guards, limits, Z reed switches, and the",
+        "> `CylinderDown`/`VacuumOn`/`Blowoff` outputs and `EM806_*_ALM`) take no",
+        "> value — alias/map each to its real module point instead (see",
+        "> `plc_setup.md` §6).",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 # --------------------------------------------------------------------------- #
 def main() -> None:
     global CONTROLLER
@@ -524,6 +605,11 @@ def main() -> None:
     # write_bytes so the CRLF line endings survive verbatim on any platform
     (out / "RobotTags.csv").write_bytes(csv_text.encode("ascii"))
     print(f"wrote {out / 'RobotTags.csv'}")
+
+    # the "values to set after import" reference (docs/, next to the other guides)
+    docs = out.parent
+    (docs / "plc_tag_values.md").write_text(values_reference_md())
+    print(f"wrote {docs / 'plc_tag_values.md'}")
 
 
 if __name__ == "__main__":

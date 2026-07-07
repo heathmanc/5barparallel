@@ -152,10 +152,10 @@ the UDT exists — the file is a Rockwell tag CSV, not L5X). These are all
 
 > ⚠️ **Two things the CSV can't do for you:**
 > 1. **Values.** CSV import creates *definitions* only — every tag comes in at
->    0/false. Set the tuning values by hand (most you tune at commissioning):
->    `STEPS_PER_DEG := 26.66667`, `MOVE_VEL/ACC`, `HOME_VEL_0/1` (signed),
->    `HOME_ACC`, `VAC_SETTLE`/`BLOWOFF_TIME`, `CAMERA_CLEAR_L/R`, `HOME_OFFSET_L/R`.
->    Each tag's CSV description repeats its starting value.
+>    0/false. The full list of values to set by hand (velocities, accels, homing
+>    timeout, offsets, timer presets, poses) is in
+>    [`plc_tag_values.md`](plc_tag_values.md); each tag's CSV description also
+>    repeats its starting value.
 > 2. **Physical I/O mapping.** The E-stop/guard/limit/Z-sensor inputs and the
 >    solenoid outputs (`CylinderDown`, `VacuumOn`, `Blowoff`) and `EM806_*_ALM`
 >    import as **base BOOLs** — after import, alias/map each to its real module
