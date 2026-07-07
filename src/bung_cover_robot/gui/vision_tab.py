@@ -37,7 +37,7 @@ from ..vision.detection import annotate
 from . import theme
 from .cycle_worker import CycleWorker
 from .imaging import ndarray_to_qpixmap
-from .widgets import ImageView, StatusPill
+from .widgets import RoiImageView, StatusPill
 
 
 class VisionTab(QWidget):
@@ -50,6 +50,7 @@ class VisionTab(QWidget):
         camera: Camera,
         calibration=None,
         recipes: Optional[RecipeStore] = None,
+        calibration_manager=None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -57,8 +58,10 @@ class VisionTab(QWidget):
         self.camera = camera
         self.calibration = calibration  # HomographyTransform (pixel->robot) or None
         self.recipes = recipes
+        self.calibration_manager = calibration_manager  # for per-recipe pick ROI
         self.hole_detector = HoleDetector()
         self.cover_detector = CoverDetector()
+        self._pick_roi = None           # (x, y, w, h) px — covers must be inside
         self._frame = None
         self._running = False
         self._thread: Optional[QThread] = None
@@ -82,7 +85,9 @@ class VisionTab(QWidget):
         col = QVBoxLayout()
         header = QLabel("Overhead camera")
         header.setStyleSheet("font-size:15px; font-weight:600;")
-        self.view = ImageView()
+        self.view = RoiImageView()
+        self.view.roiChanged.connect(self._on_roi_changed)
+        self.view.roiCleared.connect(self._on_roi_cleared)
         col.addWidget(header)
         col.addWidget(self.view, 1)
         return col
@@ -141,6 +146,23 @@ class VisionTab(QWidget):
         )
         rb.addWidget(self.bypass_chk)
         v.addWidget(run_box)
+
+        # Pick region — only covers inside the drawn box are picked. Enabled once
+        # the recipe is calibrated (the scene is fixed after calibration).
+        roi_box = QGroupBox("Pick region")
+        rob = QVBoxLayout(roi_box)
+        self.draw_roi_btn = QPushButton("Draw pick region")
+        self.draw_roi_btn.setToolTip(
+            "Drag a rectangle on the image around where the covers are. Covers "
+            "outside it are ignored. Calibrate the recipe first."
+        )
+        self.draw_roi_btn.clicked.connect(self._on_draw_roi)
+        self.clear_roi_btn = QPushButton("Clear pick region")
+        self.clear_roi_btn.clicked.connect(self._on_clear_roi)
+        rob.addWidget(self.draw_roi_btn)
+        rob.addWidget(self.clear_roi_btn)
+        v.addWidget(roi_box)
+
         v.addStretch(1)
         return panel
 
@@ -186,6 +208,72 @@ class VisionTab(QWidget):
 
     def set_calibration(self, calibration) -> None:
         self.calibration = calibration
+        self._load_pick_roi()          # each recipe owns its pick region
+        self._update_roi_buttons()
+
+    # --- pick region --------------------------------------------------------
+    def _apply_pick_roi(self, roi) -> None:
+        self._pick_roi = roi
+        self.cover_detector.config.pick_roi = roi
+
+    def _load_pick_roi(self) -> None:
+        """Load the active recipe's saved pick region (if any) into the detector
+        and the view — silently, without re-persisting."""
+        key = self.active_recipe_key()
+        roi = None
+        if self.calibration_manager is not None and key:
+            roi = self.calibration_manager.get_roi(key)
+        self._apply_pick_roi(roi)
+        self.view.set_roi(roi)
+
+    def _on_draw_roi(self) -> None:
+        if self.calibration is None:
+            self._set_status(
+                "Calibrate this recipe before drawing a pick region.", theme.WARN
+            )
+            return
+        if self._frame is None:
+            self._capture()
+        self.view.set_draw_enabled(True)
+        self._set_status("Drag a rectangle around the covers to pick.", theme.INFO)
+
+    def _on_clear_roi(self) -> None:
+        self.view.clear_roi()          # emits roiCleared -> _on_roi_cleared
+
+    def _on_roi_changed(self, x: float, y: float, w: float, h: float) -> None:
+        roi = (int(round(x)), int(round(y)), int(round(w)), int(round(h)))
+        self._apply_pick_roi(roi)
+        key = self.active_recipe_key()
+        if self.calibration_manager is not None and key:
+            self.calibration_manager.save_roi(key, roi)
+        self._update_roi_buttons()
+        self._on_detect()              # re-classify covers against the new region
+        self._set_status(
+            f"Pick region set ({roi[2]}×{roi[3]} px) — covers outside it are skipped.",
+            theme.SUCCESS,
+        )
+
+    def _on_roi_cleared(self) -> None:
+        self._apply_pick_roi(None)
+        key = self.active_recipe_key()
+        if self.calibration_manager is not None and key:
+            self.calibration_manager.clear_roi(key)
+        self._update_roi_buttons()
+        if self._frame is not None:
+            self._on_detect()
+        self._set_status(
+            "Pick region cleared — covers pickable anywhere reachable.", theme.TEXT_DIM
+        )
+
+    def _update_roi_buttons(self) -> None:
+        calibrated = self.calibration is not None
+        self.draw_roi_btn.setEnabled(calibrated)
+        self.draw_roi_btn.setToolTip(
+            "Drag a rectangle around where the covers are; covers outside it are "
+            "ignored." if calibrated
+            else "Calibrate this recipe first (Calibration tab)."
+        )
+        self.clear_roi_btn.setEnabled(self._pick_roi is not None)
 
     # --- recipe (changeover) ------------------------------------------------
     def active_recipe_key(self) -> Optional[str]:
@@ -218,9 +306,12 @@ class VisionTab(QWidget):
 
     def set_cover_diameter_mm(self, diameter_mm: float) -> None:
         """Apply the active recipe's nominal cover size as a physical-size gate
-        (needs a calibration to measure; 0 leaves covers ungated on size)."""
+        (needs a calibration to measure; 0 leaves covers ungated on size).
+        Preserves the current pick region."""
         self.cover_detector = CoverDetector(
-            CoverDetectorConfig(expected_diameter_mm=diameter_mm)
+            CoverDetectorConfig(
+                expected_diameter_mm=diameter_mm, pick_roi=self._pick_roi
+            )
         )
 
     # --- automatic cycle ----------------------------------------------------
@@ -328,6 +419,7 @@ class VisionTab(QWidget):
             "ONLINE" if self.camera.is_open else "OFFLINE",
             "ok" if self.camera.is_open else "bad",
         )
+        self._update_roi_buttons()
 
     def _set_status(self, text: str, color: str) -> None:
         self.status_label.setText(text)

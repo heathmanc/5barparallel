@@ -85,6 +85,18 @@ def test_cover_near_edge_rejected():
     assert any("edge" in r for cx, r in reasons.items() if cx < 40)
 
 
+def test_cover_outside_pick_roi_rejected():
+    img = np.full((300, 300, 3), 20, np.uint8)
+    cv2.circle(img, (100, 150), 18, (180, 180, 180), -1)   # inside the region
+    cv2.circle(img, (240, 150), 18, (180, 180, 180), -1)   # outside the region
+    cfg = CoverDetectorConfig(pick_roi=(60, 100, 100, 100))  # x 60..160, y 100..200
+    res = CoverDetector(cfg).detect(img)
+    by_x = {round(c.circle.cx): c for c in res.covers}
+    assert by_x[100].accepted
+    assert not by_x[240].accepted
+    assert by_x[240].reason == "outside pick region"
+
+
 def test_cover_reachability_filter():
     img = np.full((300, 300, 3), 20, np.uint8)
     cv2.circle(img, (150, 150), 20, (180, 180, 180), -1)

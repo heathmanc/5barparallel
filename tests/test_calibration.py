@@ -101,3 +101,16 @@ def test_manager_lists_calibrated_recipes(tmp_path):
     mgr.save("g24-6", HomographyTransform.from_correspondences(PIX, ROB))
     mgr.save("g31-6", HomographyTransform.from_correspondences(PIX, ROB))
     assert mgr.keys() == ["g24-6", "g31-6"]  # sorted
+
+
+def test_manager_roi_roundtrip(tmp_path):
+    mgr = CalibrationManager(tmp_path)
+    assert not mgr.has_roi("g31-6")
+    assert mgr.get_roi("g31-6") is None
+    mgr.save_roi("g31-6", (10, 20, 100, 80))
+    assert mgr.has_roi("g31-6")
+    assert mgr.get_roi("g31-6") == (10, 20, 100, 80)
+    assert mgr.get_roi("g24-6") is None            # independent per recipe
+    mgr.clear_roi("g31-6")
+    assert not mgr.has_roi("g31-6")
+    assert mgr.get_roi("g31-6") is None

@@ -29,6 +29,9 @@ class CoverDetectorConfig:
     edge_margin_px: float = 8.0           # reject covers this close to the frame border
     min_gap_px: float = 6.0               # min clear gap to a neighbour (else "crowded")
     roi: Optional[ROI] = None
+    # Operator-drawn pick region (x, y, w, h in pixels): covers centred outside it
+    # are rejected ("outside pick region"). None => pick anywhere reachable.
+    pick_roi: Optional[ROI] = None
     # Physical-size gate (per recipe): reject blobs whose real diameter is off the
     # expected cover size. Needs a calibration (to_robot); 0 disables the check.
     expected_diameter_mm: float = 0.0
@@ -114,6 +117,10 @@ class CoverDetector:
         validator: Optional[WorkspaceValidator],
     ) -> str:
         cfg = self.config
+        if cfg.pick_roi is not None:
+            rx, ry, rw, rh = cfg.pick_roi
+            if not (rx <= c.cx <= rx + rw and ry <= c.cy <= ry + rh):
+                return "outside pick region"
         m = cfg.edge_margin_px
         if c.cx - c.radius < m or c.cy - c.radius < m or c.cx + c.radius > w - m or c.cy + c.radius > h - m:
             return "near edge"

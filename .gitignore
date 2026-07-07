@@ -12,6 +12,7 @@ venv/
 
 # Calibration data is generated at runtime, never committed (Claude.md §13, §15).
 calibration/*.npy
+calibration/*.roi.json
 
 # Diagnostic images
 diagnostics/

@@ -471,3 +471,65 @@ def test_settings_save_preserves_homing_block(qapp, tmp_path):
     assert data["geometry"]["l1_mm"] == pytest.approx(221.0)
     assert "homing" in data  # not clobbered
     assert data["homing"]["flag_radius_mm"] == 40.0
+
+
+def test_vision_pick_roi_gates_and_persists(qapp, tmp_path):
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    win = MainWindow()
+    vt = win.vision_tab
+    vt.calibration_manager = CalibrationManager(tmp_path)
+    # the demo scene has a calibration, so drawing is enabled and clear is not
+    vt.refresh()
+    assert vt.draw_roi_btn.isEnabled()
+    assert not vt.clear_roi_btn.isEnabled()
+
+    key = vt.active_recipe_key()
+    roi = (50, 40, 300, 260)
+    vt._on_roi_changed(*roi)             # as RoiImageView.roiChanged would fire
+    assert vt._pick_roi == roi
+    assert vt.cover_detector.config.pick_roi == roi
+    assert vt.clear_roi_btn.isEnabled()
+    assert vt.calibration_manager.get_roi(key) == roi   # persisted per recipe
+
+    # a fresh load re-applies the saved region to detector + view
+    vt._apply_pick_roi(None)
+    vt.view.set_roi(None)
+    vt._load_pick_roi()
+    assert vt.cover_detector.config.pick_roi == roi
+    assert vt.view.roi() == roi
+
+    # clearing removes it from the detector, the view, and disk
+    vt._on_clear_roi()
+    assert vt._pick_roi is None
+    assert vt.cover_detector.config.pick_roi is None
+    assert vt.calibration_manager.get_roi(key) is None
+    assert not vt.clear_roi_btn.isEnabled()
+
+
+def test_vision_pick_roi_draw_gated_on_calibration(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    vt.set_calibration(None)             # no calibration -> can't draw
+    assert not vt.draw_roi_btn.isEnabled()
+    vt._on_draw_roi()
+    assert not vt.view.is_drawing()
+    assert "Calibrate" in vt.status_label.text()
+
+
+def test_roi_image_view_set_and_clear(qapp):
+    from bung_cover_robot.gui.imaging import demo_frame, ndarray_to_qpixmap
+    from bung_cover_robot.gui.widgets import RoiImageView
+
+    v = RoiImageView()
+    v.resize(400, 300)
+    v.set_pixmap(ndarray_to_qpixmap(demo_frame(760, 520)))
+    v.set_roi((10, 20, 100, 80))
+    assert v.roi() == (10.0, 20.0, 100.0, 80.0)
+    # source<->widget mapping round-trips
+    wpt = v.source_to_widget(10.0, 20.0)
+    assert wpt is not None
+    back = v.widget_to_source(*wpt)
+    assert back == pytest.approx((10.0, 20.0), abs=1.0)
+    v.clear_roi()
+    assert v.roi() is None
