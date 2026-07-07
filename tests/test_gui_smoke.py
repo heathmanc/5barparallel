@@ -36,6 +36,7 @@ def test_main_window_has_all_tabs(qapp):
         "Robot Test",
         "Settings",
         "PLC",
+        "Bypass",
     ]
 
 
@@ -587,3 +588,39 @@ def test_robot_test_home_fault_shows_message(qapp):
     tab._on_home_reference()                  # must not raise; shows a message
     assert "code 4" in tab.status_label.text()
     assert not tab.controller.is_referenced
+
+
+def test_bypass_tab_writes_bench_overrides_to_plc(qapp):
+    from bung_cover_robot.app.robot_test_controller import RobotTestController
+    from bung_cover_robot.gui.bypass_tab import BypassTab, SAFE_INPUTS
+    from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient
+    from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
+
+    kin = FiveBarKinematics()
+    jt = kin.inverse(0.0, 250.0)
+    sim = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
+    tab = BypassTab(RobotTestController(PlcRobotDriver(sim), kin))
+    tab.refresh()
+    assert tab.force_safe_btn.isEnabled()          # a client is connected
+
+    tab._on_force_safe()
+    for tag, val in SAFE_INPUTS:                    # every safety input forced safe
+        assert bool(sim.read(tag)) == val
+
+    tab.homing_chk.setChecked(True)                 # toggled -> writes the tag
+    assert bool(sim.read("Bypass_Homing"))
+    tab.vision_chk.setChecked(True)
+    assert bool(sim.read("Bypass_Vision"))
+    tab.homing_chk.setChecked(False)
+    assert not bool(sim.read("Bypass_Homing"))
+
+
+def test_bypass_tab_disabled_without_plc(qapp):
+    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
+    from bung_cover_robot.gui.bypass_tab import BypassTab
+
+    tab = BypassTab(build_dry_run_controller())   # dry-run driver has no client
+    tab.refresh()
+    assert not tab.force_safe_btn.isEnabled()
+    assert not tab.homing_chk.isEnabled()
+    assert "No PLC" in tab.status_label.text()

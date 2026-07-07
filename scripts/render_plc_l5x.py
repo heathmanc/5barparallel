@@ -216,22 +216,30 @@ COORD: List[Rung] = [
      "HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import the "
      "VisionRobot UDT .L5X files + RobotTags.csv first.",
      "XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)"
-     "XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)"
+     "XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)XIO(Bypass_Homing)"
      "MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)"
      "OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)"
      "MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req);"),
+    ("BENCH BYPASS: with Bypass_Homing set, HomeRequest marks referenced instantly "
+     "(publishes the nominal home angles, enables soft limits) without running the "
+     "ClearLink prox homing move. Lets you jog motors on the bench with no prox.",
+     "XIC(VisionRobot.Manual.HomeRequest)ONS(HRB_ons)XIC(Bypass_Homing)"
+     "XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)"
+     "MOV(HOME_ANGLE_L,VisionRobot.Status.ActualLeftDeg)"
+     "MOV(HOME_ANGLE_R,VisionRobot.Status.ActualRightDeg)"
+     "OTL(VisionRobot.Status.Homed)OTL(SoftLimitsEnable)MOV(0,HomeStep);"),
     ("Axis 0 (left) homed -> start Axis 1 (right).",
      "EQU(HomeStep,10)XIC(Ax0_HomeDone)OTU(Home0_Req)OTL(Home1_Req)"
      "MOV(20,HomeStep);"),
     ("Axis 1 (right) homed.",
      "EQU(HomeStep,20)XIC(Ax1_HomeDone)OTU(Home1_Req)MOV(30,HomeStep);"),
-    ("Publish angles with the home offset, enable soft limits, return to idle.",
+    ("Publish angles with the home offset, latch soft limits on, return to idle.",
      "EQU(HomeStep,30)"
      "CPT(VisionRobot.Status.ActualLeftDeg,"
      "(ClearLink:I1.Motor0_CommandedPosn + HOME_OFFSET_L) / STEPS_PER_DEG)"
      "CPT(VisionRobot.Status.ActualRightDeg,"
      "(ClearLink:I1.Motor1_CommandedPosn + HOME_OFFSET_R) / STEPS_PER_DEG)"
-     "OTE(SoftLimitsEnable)OTL(VisionRobot.Status.Homed)MOV(0,HomeStep);"),
+     "OTL(SoftLimitsEnable)OTL(VisionRobot.Status.Homed)MOV(0,HomeStep);"),
     ("Run the per-axis homing routines every scan (they self-idle at rest).",
      "JSR(R_HomeMotor0,0)JSR(R_HomeMotor1,0);"),
     ("Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: "
@@ -376,21 +384,21 @@ AUTO: List[Rung] = [
      "EQU(State,60)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(70,State);"),
     ("State 70 CYLINDER_DOWN_PICK.",
      "EQU(State,70)OTL(CylinderDown)MOV(80,State);"),
-    ("State 80: Z down at pick confirmed.",
-     "EQU(State,80)XIC(PickDown)MOV(90,State);"),
+    ("State 80: Z down at pick confirmed (or Bypass_Vision on the bench).",
+     "EQU(State,80)[XIC(PickDown),XIC(Bypass_Vision)]MOV(90,State);"),
     ("State 90 VACUUM_ON.",
      "EQU(State,90)OTL(VacuumOn);"),
     ("State 90: vacuum settle timer done -> verify.",
      "EQU(State,90)XIC(VacTmr.DN)MOV(100,State);"),
-    ("State 100 VERIFY_VACUUM: confirmed -> continue.",
-     "EQU(State,100)XIC(VisionRobot.Status.VacuumOK)MOV(110,State);"),
+    ("State 100 VERIFY_VACUUM: confirmed (or Bypass_Vision) -> continue.",
+     "EQU(State,100)[XIC(VisionRobot.Status.VacuumOK),XIC(Bypass_Vision)]MOV(110,State);"),
     ("State 100: vacuum not confirmed by the settle timeout -> fault (code 9).",
      "EQU(State,100)XIC(VacTmr.DN)XIO(VisionRobot.Status.VacuumOK)"
      "OTL(VisionRobot.Status.Faulted)MOV(9,VisionRobot.Status.FaultCode)MOV(900,State);"),
     ("State 110 CYLINDER_UP_PICK.",
      "EQU(State,110)OTU(CylinderDown)MOV(120,State);"),
-    ("State 120: Z up at pick confirmed.",
-     "EQU(State,120)XIC(PickUp)MOV(130,State);"),
+    ("State 120: Z up at pick confirmed (or Bypass_Vision).",
+     "EQU(State,120)[XIC(PickUp),XIC(Bypass_Vision)]MOV(130,State);"),
     ("State 130 MOVE_ABOVE_DROP.",
      "EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)"
      "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);"),
@@ -398,16 +406,16 @@ AUTO: List[Rung] = [
      "EQU(State,140)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(150,State);"),
     ("State 150 CYLINDER_DOWN_DROP.",
      "EQU(State,150)OTL(CylinderDown)MOV(160,State);"),
-    ("State 160: Z down at drop confirmed.",
-     "EQU(State,160)XIC(DropDown)MOV(170,State);"),
+    ("State 160: Z down at drop confirmed (or Bypass_Vision).",
+     "EQU(State,160)[XIC(DropDown),XIC(Bypass_Vision)]MOV(170,State);"),
     ("State 170 VACUUM_OFF_BLOWOFF: release vacuum, start blowoff.",
      "EQU(State,170)OTU(VacuumOn)OTL(Blowoff);"),
     ("State 170: blowoff timer done -> stop blowoff, advance.",
      "EQU(State,170)XIC(BlowTmr.DN)OTU(Blowoff)MOV(180,State);"),
     ("State 180 CYLINDER_UP_DROP.",
      "EQU(State,180)OTU(CylinderDown)MOV(190,State);"),
-    ("State 190: Z up at drop confirmed.",
-     "EQU(State,190)XIC(DropUp)MOV(200,State);"),
+    ("State 190: Z up at drop confirmed (or Bypass_Vision).",
+     "EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(200,State);"),
     ("State 200 COMPLETE_JOB: publish CompleteCommandID + Done, back to idle.",
      "EQU(State,200)MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.CompleteCommandID)"
      "OTL(VisionRobot.Status.Done)OTU(VisionRobot.Status.CameraClear)MOV(0,State);"),
@@ -695,6 +703,19 @@ def _glue_tags() -> List[Tag]:
     add("DropDown", "BOOL", desc="Z-down-at-drop reed switch input. Map to input.")
     add("DropUp", "BOOL", desc="Z-up-at-drop reed switch input. Map to input.")
     add("VacuumSensor", "BOOL", desc="Vacuum-confirm sensor input. Map to input.")
+
+    # --- bench-test bypass (NOT for production; see the GUI Bypass tab) ---
+    add("Bypass_Homing", "BOOL",
+        desc="BENCH: R30 marks referenced instantly on HomeRequest (skips the "
+             "ClearLink prox homing move). Leave 0 in production.")
+    add("Bypass_Vision", "BOOL",
+        desc="BENCH: R50 auto-satisfies the Z reed switches + vacuum sensor so the "
+             "pick/place motion runs open-loop. Leave 0 in production.")
+    add("HRB_ons", "BOOL", desc="ONS storage for the R30 bypass-home rung.")
+    add("HOME_ANGLE_L", "REAL", "135.8504", desc="Left home angle published on a "
+        "bypass home, deg (nominal reference).", unit="deg", hand=True)
+    add("HOME_ANGLE_R", "REAL", "44.1496", desc="Right home angle published on a "
+        "bypass home, deg (nominal reference).", unit="deg", hand=True)
 
     # --- the vision handshake surface (import the UDT files first) ---
     add("VisionRobot", "VisionRobot",
