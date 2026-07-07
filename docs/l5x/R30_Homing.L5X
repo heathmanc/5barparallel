@@ -8,7 +8,7 @@
 <RLLContent>
 <Rung Number="0" Type="N">
 <Comment><![CDATA[R30_Homing: sequential 2-axis homing coordinator. JSRs R_HomeMotor0 / R_HomeMotor1 and publishes VisionRobot.Status. Tags from RobotTags.csv (HomeStep, HR_ons, SoftLimitsEnable, Home0_Req/Home1_Req, Ax0/Ax1_HomeDone/HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import the VisionRobot UDT .L5X files + RobotTags.csv first.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)OTL(Home0_Req);]]></Text>
+<Text><![CDATA[XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
 <Comment><![CDATA[Axis 0 (left) homed -> start Axis 1 (right).]]></Comment>

@@ -19,9 +19,10 @@ sheet in [`plc_homing.md`](plc_homing.md), the ladder visuals in
 2. **Configure the EM806** for 1 µs / 500 kHz step pulses (§1).
 3. **Give the ClearLink a static IP** with a Rockwell/Molex tool (§2).
 4. **Import the ClearLink EDS**, add the module as **"Step Dir"** (§3).
-5. **Import Teknic's example `.L5K`** (reference) and **this repo's `.L5X`** in
-   order: the five `#_VisionRobot*.L5X` UDT files → `RobotTags.csv` → the
-   `R_*`/`R30_*` routines (§4).
+5. **Import Teknic's example `.L5K`** (reference) and **this repo's complete
+   program** in order: the five `#_VisionRobot*.L5X` UDT files → `RobotTags.csv` →
+   all the routines (`R00_Main` … `R60_Status`, `R_Move/Home*`), then set
+   `R00_Main` as the Program's Main (§4).
 6. **Set the Configuration assembly** (home sensor, homing enable, HLFB/Enable
    inversion, soft limits) (§5).
 7. **Finish the `VisionRobot` glue** — alias `EM806_*_ALM` to the drive-alarm
@@ -161,34 +162,38 @@ the UDT exists — the file is a Rockwell tag CSV, not L5X). These are all
 >    import as **base BOOLs** — after import, alias/map each to its real module
 >    point.
 
-> **These back the full program** (`R10_Safety`, `R20_Drives`, `R40_Manual`,
-> `R50_Auto`, `R60_Status`), whose logic is in
-> [`plc_ladder.md`](plc_ladder.md). Only the motion routines below are shipped as
-> importable `.L5X`; build the rest from that sheet — the tags are already here.
+**3 — the routines — the complete program** (`right-click a Program → Import
+Routine…`, after the tags exist). Import all of them into one Program (e.g.
+`Robot`), then **set `R00_Main` as the Program's Main Routine** — it `JSR`s the
+rest each scan:
 
-**3 — the routines** (`right-click a Program → Import Routine…`, after the tags exist):
-
-| `docs/l5x/…` | Routine | Notes |
+| `docs/l5x/…` | Routine | Role |
 |---|---|---|
-| `R_MoveMotor0.L5X` / `R_MoveMotor1.L5X` | absolute move, per axis | mirrors `SD_Position_Move`, `Abs_Flag` set |
-| `R_HomeMotor0.L5X` / `R_HomeMotor1.L5X` | ClearLink homing move, per axis | mirrors `SD_Homing`; called by the coordinator |
-| `R30_Homing.L5X` | 2-axis homing coordinator | `JSR`s `R_HomeMotor0/1`; offset-aware angle publish |
+| `R00_Main.L5X` | scan dispatcher | `JSR`s everything in order; picks Manual vs Auto on the `AutoMode` tag. **Set as Main.** |
+| `R10_Safety.L5X` | safety | E-stop / guard / limits / drive alarm → `Status.Faulted` + `FaultCode`; `SafetyOK`; reset |
+| `R20_Drives.L5X` | drives | **owns the axis Enable outputs**; publishes `Status.Enabled` |
+| `R30_Homing.L5X` | homing coordinator | `JSR`s `R_HomeMotor0/1`; offset-aware angle publish |
+| `R40_Manual.L5X` | manual jog/home | absolute jog on `Manual.MoveToTarget`, gated by enabled/homed/limits |
+| `R50_Auto.L5X` | **automatic pick/place** | the §11 state machine — camera-clear → pick → vacuum → drop → blowoff |
+| `R60_Status.L5X` | status | publishes `Ready`/`Busy`/`VacuumOK` |
+| `R_MoveMotor0.L5X` / `R_MoveMotor1.L5X` | move engine, per axis | mirrors `SD_Position_Move`, `Abs_Flag` set |
+| `R_HomeMotor0.L5X` / `R_HomeMotor1.L5X` | ClearLink homing, per axis | mirrors `SD_Homing`; `JSR`'d by `R30` |
 
-> **These routines are plain Routines, not Add-On Instructions.** Teknic ships no
-> motion AOI, and a real AOI can only touch its own parameters/locals — not the
-> `ClearLink:O1/:I1` module tags directly. So they implement the design's
-> `AOI_AxisMove`/`AOI_HomeAxis` (`plc_program.md` §5) as **one routine per motor**.
-> That's why the file names are `R_MoveMotor*`/`R_HomeMotor*`, not `AOI_*`.
+Manual vs Auto: with `AutoMode = 0` the operator jogs/homes via `R40`; set
+`AutoMode = 1` (after enabling + homing) to hand the machine to `R50_Auto`, which
+runs the pick/place cycle against the `VisionRobot.Cmd`/`Target` handshake.
 
-If you imported the tags/UDT first, nothing flags as undefined. The
-`ClearLink:O1/:I1/:C` tags come from the module (§3). Each routine's **rung-0
-comment** still names exactly what it references.
+> ⚠️ **`R50_Auto`, `R10_Safety` and `R20_Drives` command real motion, the Z
+> cylinder and vacuum — REVIEW every rung before running.** The hardware E-stop
+> safety relay is primary; these PLC bits only mirror it. These were generated
+> without Studio 5000, so they're schema-conformant but not import-verified — if
+> Logix flags anything, send me the message and I'll fix the generator.
 
-> ⚠️ **Import-test the UDT first.** These were generated without Studio 5000, so
-> they're schema-conformant but not import-verified. If Logix reports a
-> schema/format error, send it to me and I'll fix the generator
-> (`scripts/render_plc_l5x.py`). For anything safety- or motion-critical, the
-> Teknic `.L5K` examples remain the ground truth to cross-check against.
+> **These are plain Routines, not Add-On Instructions.** Teknic ships no motion
+> AOI, and a real AOI can't touch the `ClearLink:O1/:I1` module tags directly — so
+> the per-axis engines implement the design's `AOI_AxisMove`/`AOI_HomeAxis`
+> (`plc_program.md` §5) as one routine per motor. `R20_Drives` is the sole owner of
+> the axis Enable output (the move/home engines don't set it) so E-stop can drop it.
 
 ---
 

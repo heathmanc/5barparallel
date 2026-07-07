@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="R10_Safety" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="RobotController">
+<Programs Use="Context">
+<Program Use="Context" Name="Robot">
+<Routines Use="Context">
+<Routine Use="Target" Name="R10_Safety" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment><![CDATA[R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags (RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/EM806_*_ALM/SafetyOK/Reset_prev. The hardware safety relay is primary; these bits only mirror it. E-stop or guard open -> fault (code 2).]]></Comment>
+<Text><![CDATA[[XIC(EStop_Pressed),XIO(Guard_Closed)]OTL(VisionRobot.Status.Faulted)MOV(2,VisionRobot.Status.FaultCode);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[Any hard limit tripped -> fault (code 3).]]></Comment>
+<Text><![CDATA[[XIC(Ax0_LimitMin),XIC(Ax0_LimitMax),XIC(Ax1_LimitMin),XIC(Ax1_LimitMax)]OTL(VisionRobot.Status.Faulted)MOV(3,VisionRobot.Status.FaultCode);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment><![CDATA[Either EM806 drive alarm -> fault (code 1).]]></Comment>
+<Text><![CDATA[[XIC(EM806_0_ALM),XIC(EM806_1_ALM)]OTL(VisionRobot.Status.Faulted)MOV(1,VisionRobot.Status.FaultCode);]]></Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Comment><![CDATA[SafetyOK = no active fault, E-stop healthy, guard closed.]]></Comment>
+<Text><![CDATA[XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);]]></Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Comment><![CDATA[Cmd.Reset (rising edge) while physically safe clears the latched fault.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)ONS(Reset_prev)XIC(EStop_OK)XIC(Guard_Closed)OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);]]></Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

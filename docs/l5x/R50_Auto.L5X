@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="R50_Auto" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="RobotController">
+<Programs Use="Context">
+<Program Use="Context" Name="Robot">
+<Routines Use="Context">
+<Routine Use="Target" Name="R50_Auto" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment><![CDATA[R50_Auto: automatic pick/place state machine (Claude.md §11). Drives Move0/Move1 to the camera-clear/pick/drop poses, the Z cylinder, vacuum and blowoff; advances on status bits (timers only for vacuum settle + blowoff). Tags (RobotTags.csv): State/RPP_prev/AR_prev/VacTmr/BlowTmr/Arrived/poses/pneumatics/sensors. Keep the timer presets loaded from the constants.]]></Comment>
+<Text><![CDATA[MOV(VAC_SETTLE,VacTmr.PRE)MOV(BLOWOFF_TIME,BlowTmr.PRE);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[Arrived (status/HMI only) = both axes in position. Transitions check the two InPosition bits directly so a stale value can't fall through.]]></Comment>
+<Text><![CDATA[XIC(Move0_InPosition)XIC(Move1_InPosition)OTE(Arrived);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment><![CDATA[Vacuum settle timer runs in the vacuum states.]]></Comment>
+<Text><![CDATA[[EQU(State,90),EQU(State,100)]TON(VacTmr,?,?);]]></Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Comment><![CDATA[Blowoff timer runs in the blowoff state.]]></Comment>
+<Text><![CDATA[EQU(State,170)TON(BlowTmr,?,?);]]></Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Comment><![CDATA[State 0 IDLE: on Cmd.RequestPickPlace (edge) while enabled, homed and safe, latch the CommandID and start.]]></Comment>
+<Text><![CDATA[EQU(State,0)XIC(VisionRobot.Cmd.RequestPickPlace)ONS(RPP_prev)XIC(VisionRobot.Status.Enabled)XIC(VisionRobot.Status.Homed)XIC(SafetyOK)MOV(VisionRobot.Cmd.CommandID,VisionRobot.Status.ActiveCommandID)OTU(VisionRobot.Status.Done)MOV(10,State);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[State 10 MOVE_CAMERA_CLEAR: command both axes to the camera-clear pose (clear stale InPosition so the wait state can't fall through).]]></Comment>
+<Text><![CDATA[EQU(State,10)MOV(CAMERA_CLEAR_L,Move0_Target_Deg)MOV(CAMERA_CLEAR_R,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(20,State);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
+<Comment><![CDATA[State 20: both axes in position at camera-clear -> drop execute, mark CameraClear.]]></Comment>
+<Text><![CDATA[EQU(State,20)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)OTL(VisionRobot.Status.CameraClear)MOV(30,State);]]></Text>
+</Rung>
+<Rung Number="7" Type="N">
+<Comment><![CDATA[State 30 READY_FOR_VISION: signal the PC (targets already written by it).]]></Comment>
+<Text><![CDATA[EQU(State,30)OTL(VisionRobot.Status.ReadyForVision)MOV(40,State);]]></Text>
+</Rung>
+<Rung Number="8" Type="N">
+<Comment><![CDATA[State 40 LATCH_TARGETS: copy the PC's pick/drop angles into working tags.]]></Comment>
+<Text><![CDATA[EQU(State,40)MOV(VisionRobot.Target.Pick_LeftDeg,PickL)MOV(VisionRobot.Target.Pick_RightDeg,PickR)MOV(VisionRobot.Target.Drop_LeftDeg,DropL)MOV(VisionRobot.Target.Drop_RightDeg,DropR)OTU(VisionRobot.Status.ReadyForVision)MOV(50,State);]]></Text>
+</Rung>
+<Rung Number="9" Type="N">
+<Comment><![CDATA[State 50 MOVE_ABOVE_PICK.]]></Comment>
+<Text><![CDATA[EQU(State,50)MOV(PickL,Move0_Target_Deg)MOV(PickR,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(60,State);]]></Text>
+</Rung>
+<Rung Number="10" Type="N">
+<Comment><![CDATA[State 60: at pick -> drop execute.]]></Comment>
+<Text><![CDATA[EQU(State,60)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(70,State);]]></Text>
+</Rung>
+<Rung Number="11" Type="N">
+<Comment><![CDATA[State 70 CYLINDER_DOWN_PICK.]]></Comment>
+<Text><![CDATA[EQU(State,70)OTL(CylinderDown)MOV(80,State);]]></Text>
+</Rung>
+<Rung Number="12" Type="N">
+<Comment><![CDATA[State 80: Z down at pick confirmed.]]></Comment>
+<Text><![CDATA[EQU(State,80)XIC(PickDown)MOV(90,State);]]></Text>
+</Rung>
+<Rung Number="13" Type="N">
+<Comment><![CDATA[State 90 VACUUM_ON.]]></Comment>
+<Text><![CDATA[EQU(State,90)OTL(VacuumOn);]]></Text>
+</Rung>
+<Rung Number="14" Type="N">
+<Comment><![CDATA[State 90: vacuum settle timer done -> verify.]]></Comment>
+<Text><![CDATA[EQU(State,90)XIC(VacTmr.DN)MOV(100,State);]]></Text>
+</Rung>
+<Rung Number="15" Type="N">
+<Comment><![CDATA[State 100 VERIFY_VACUUM: confirmed -> continue.]]></Comment>
+<Text><![CDATA[EQU(State,100)XIC(VisionRobot.Status.VacuumOK)MOV(110,State);]]></Text>
+</Rung>
+<Rung Number="16" Type="N">
+<Comment><![CDATA[State 100: vacuum not confirmed by the settle timeout -> fault (code 9).]]></Comment>
+<Text><![CDATA[EQU(State,100)XIC(VacTmr.DN)XIO(VisionRobot.Status.VacuumOK)OTL(VisionRobot.Status.Faulted)MOV(9,VisionRobot.Status.FaultCode)MOV(900,State);]]></Text>
+</Rung>
+<Rung Number="17" Type="N">
+<Comment><![CDATA[State 110 CYLINDER_UP_PICK.]]></Comment>
+<Text><![CDATA[EQU(State,110)OTU(CylinderDown)MOV(120,State);]]></Text>
+</Rung>
+<Rung Number="18" Type="N">
+<Comment><![CDATA[State 120: Z up at pick confirmed.]]></Comment>
+<Text><![CDATA[EQU(State,120)XIC(PickUp)MOV(130,State);]]></Text>
+</Rung>
+<Rung Number="19" Type="N">
+<Comment><![CDATA[State 130 MOVE_ABOVE_DROP.]]></Comment>
+<Text><![CDATA[EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);]]></Text>
+</Rung>
+<Rung Number="20" Type="N">
+<Comment><![CDATA[State 140: at drop -> drop execute.]]></Comment>
+<Text><![CDATA[EQU(State,140)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(150,State);]]></Text>
+</Rung>
+<Rung Number="21" Type="N">
+<Comment><![CDATA[State 150 CYLINDER_DOWN_DROP.]]></Comment>
+<Text><![CDATA[EQU(State,150)OTL(CylinderDown)MOV(160,State);]]></Text>
+</Rung>
+<Rung Number="22" Type="N">
+<Comment><![CDATA[State 160: Z down at drop confirmed.]]></Comment>
+<Text><![CDATA[EQU(State,160)XIC(DropDown)MOV(170,State);]]></Text>
+</Rung>
+<Rung Number="23" Type="N">
+<Comment><![CDATA[State 170 VACUUM_OFF_BLOWOFF: release vacuum, start blowoff.]]></Comment>
+<Text><![CDATA[EQU(State,170)OTU(VacuumOn)OTL(Blowoff);]]></Text>
+</Rung>
+<Rung Number="24" Type="N">
+<Comment><![CDATA[State 170: blowoff timer done -> stop blowoff, advance.]]></Comment>
+<Text><![CDATA[EQU(State,170)XIC(BlowTmr.DN)OTU(Blowoff)MOV(180,State);]]></Text>
+</Rung>
+<Rung Number="25" Type="N">
+<Comment><![CDATA[State 180 CYLINDER_UP_DROP.]]></Comment>
+<Text><![CDATA[EQU(State,180)OTU(CylinderDown)MOV(190,State);]]></Text>
+</Rung>
+<Rung Number="26" Type="N">
+<Comment><![CDATA[State 190: Z up at drop confirmed.]]></Comment>
+<Text><![CDATA[EQU(State,190)XIC(DropUp)MOV(200,State);]]></Text>
+</Rung>
+<Rung Number="27" Type="N">
+<Comment><![CDATA[State 200 COMPLETE_JOB: publish CompleteCommandID + Done, back to idle.]]></Comment>
+<Text><![CDATA[EQU(State,200)MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.CompleteCommandID)OTL(VisionRobot.Status.Done)OTU(VisionRobot.Status.CameraClear)MOV(0,State);]]></Text>
+</Rung>
+<Rung Number="28" Type="N">
+<Comment><![CDATA[State 900 FAULT: on Cmd.Reset (edge) while safe, publish FailedCommandID and return to idle.]]></Comment>
+<Text><![CDATA[EQU(State,900)XIC(VisionRobot.Cmd.Reset)ONS(AR_prev)XIC(SafetyOK)MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.FailedCommandID)OTU(VisionRobot.Status.Faulted)MOV(0,State);]]></Text>
+</Rung>
+<Rung Number="29" Type="N">
+<Comment><![CDATA[Any state: Cmd.Abort or unsafe -> stop outputs and go to FAULT.]]></Comment>
+<Text><![CDATA[[XIC(VisionRobot.Cmd.Abort),XIO(SafetyOK)]OTU(Move0_Execute)OTU(Move1_Execute)OTU(VacuumOn)OTU(Blowoff)MOV(900,State);]]></Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>
