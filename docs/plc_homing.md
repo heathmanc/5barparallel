@@ -74,6 +74,8 @@ Motor 1 is `Motor1_*`):
 | `ClearAlerts` | `ClearLink:O1.Motor0_Output_Reg_Clear_Alerts` |
 | `CmdPosition` | `ClearLink:I1.Motor0_CommandedPosn` (open-loop position) |
 | `HLFB_ON` | `ClearLink:I1.Motor0_Status_HLFB_ON` |
+| `StepsActive` | `ClearLink:I1.Motor0_Status_Steps_Active` (axis moving, bit 1) |
+| `InHomeSensor` | `ClearLink:I1.Motor0_Status_In_Home_Sensor` (prox state, bit 7 — diagnostic) |
 | `ReadyToHome` | `ClearLink:I1.Motor0_Status_Ready_To_Home` |
 | `LoadVelMoveAck` | `ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack` |
 | `HasHomed` | `ClearLink:I1.Motor0_Status_Has_Homed` |
@@ -100,7 +102,7 @@ EtherNet/IP connection is established.
 
 **Parameters:** `In` HomeReq, HomeVel, HomeAccel, TimeoutPreset · `InOut` Ax
 (`AxisIF`) · `Out` Done, Fault · `Local` Step (DINT), HomeTmr (TIMER),
-prevReq (BOOL).
+prevReq (BOOL), Moved (BOOL — real motion seen this attempt).
 
 ### Ladder
 
@@ -117,9 +119,14 @@ HomeTmr.PRE := TimeoutPreset;
 HomeTmr.TimerEnable := (Step >= 10) AND (Step < 60);
 TONR(HomeTmr);
 
+(* Proof of real motion this attempt: latch while the homing move runs. A stale
+   or power-up Has_Homed (bit 13 latches once a reference exists and persists
+   across a PLC-only restart) must NOT complete a home with no motion. *)
+IF (Step >= 50) AND (Step < 70) AND Ax.StepsActive THEN Moved := 1; END_IF;
+
 CASE Step OF
     0:  (* idle *)
-        Done := 0;
+        Done := 0;  Moved := 0;
         IF HomeReq AND NOT prevReq AND NOT Fault THEN Step := 10; END_IF;
 
     10: (* ENABLING — wait for HLFB (EM806: needs HLFB Inversion, §3/plc_program) *)
@@ -151,8 +158,11 @@ CASE Step OF
             Step := 60;
         END_IF;
 
-    60: (* HOMING — ClearLink drives to the sensor and zeroes position there *)
-        IF Ax.HasHomed THEN Done := 1;  Step := 70;
+    60: (* HOMING — ClearLink drives to the sensor and zeroes position there.
+           Require Moved: if the axis never stepped (e.g. HOME_VEL still 0, Homing
+           Enable not configured, drive not wired) Has_Homed cannot false-complete
+           the home — it times out to FaultCode 4 instead. *)
+        IF Ax.HasHomed AND Moved THEN Done := 1;  Step := 70;
         ELSIF HomeTmr.DN THEN Fault := 1;  Step := 900; END_IF;
 
     70: (* homed / idle — hold *)
@@ -285,3 +295,29 @@ runs both axes, and sets `Status.Homed` + `ActualLeft/RightDeg` on success
 7. Confirm the soft limits (−20/+200, `Config Register.SoftLimitEnable` + `Soft
    Limit 1/2`) go active only after `Status.Homed`.
 ```
+
+---
+
+## 6. Troubleshooting — "motor never moves, but I get HomeDone / Has Homed"
+
+Two facts explain this pair of symptoms:
+
+- **`Has_Homed` (bit 13) is a latched level, not an event.** Once the ClearLink
+  has a reference it stays 1 and survives a PLC-only restart. It can also read 1
+  at power-up before you ever run a homing move. Trusting it as a level means the
+  state machine can walk `0 → 60`, see a stale `1`, and latch `Ax_HomeDone` with
+  **no motion and no prox trip** — exactly what you saw.
+- **The motor not moving is a commissioning gap, not the ladder.** The handshake
+  (`Home_Flag` + a `Load_Vel_Data` velocity move → `Load_Vel_Move_Ack`) matches
+  Teknic's `SD_Homing`. If it acks but nothing turns, the usual causes are:
+  `HOME_VEL_0/1` still `0` (never set after the CSV import — it imports as 0),
+  `Config Register.Homing Enable` (bit 0) not set in `:C`, the EM806 step/dir/enable
+  not wired, or `Enable Inversion` (bit 2) wrong.
+
+**What changed in the ladder:** State 60 now requires `Home{m}_Moved` alongside
+`Has_Homed`. `Home{m}_Moved` latches from `Status_Steps_Active` (bit 1) only while
+the homing move is running, and is cleared at the start of every attempt. So a
+stale `Has_Homed` with no motion can no longer complete a home — it times out to
+`FaultCode 4`, which points you straight at the commissioning gap above instead of
+silently reporting a false datum. Watch `Status_In_Home_Sensor` (bit 7) live to
+confirm the prox actually toggles as the flag passes it.
