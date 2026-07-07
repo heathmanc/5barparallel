@@ -12,7 +12,7 @@
 </Rung>
 <Rung Number="1" Type="N">
 <Comment><![CDATA[Accept a move on the rising edge when enabled, homed and within limits: latch targets + CommandID and start both axes.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Manual.MoveToTarget)ONS(MTT_prev)XIC(VisionRobot.Status.Enabled)XIC(VisionRobot.Status.Homed)XIC(WithinLimits)MOV(VisionRobot.Manual.TargetLeftDeg,Move0_Target_Deg)MOV(VisionRobot.Manual.TargetRightDeg,Move1_Target_Deg)MOV(VisionRobot.Manual.CommandID,VisionRobot.Status.ActiveCommandID)OTU(VisionRobot.Status.InPosition)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)OTL(MoveActive);]]></Text>
+<Text><![CDATA[XIC(VisionRobot.Manual.MoveToTarget)ONS(MTT_prev)XIC(VisionRobot.Status.Enabled)XIC(VisionRobot.Status.Homed)XIC(WithinLimits)MOV(VisionRobot.Manual.TargetLeftDeg,Move0_Target_Deg)MOV(VisionRobot.Manual.TargetRightDeg,Move1_Target_Deg)MOV(VisionRobot.Manual.CommandID,VisionRobot.Status.ActiveCommandID)OTU(VisionRobot.Status.InPosition)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)OTL(MoveActive);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
 <Comment><![CDATA[Move requested while not enabled -> fault (code 5).]]></Comment>
