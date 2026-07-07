@@ -131,8 +131,11 @@ def move_rungs(m: int) -> List[Rung]:
          f"MOVE_ACC) and the ClearLink module. Convert the target angle to steps.",
          f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG));"),
         ("Rising edge of Execute: load Move Distance / limits, set Absolute, latch "
-         "Load Position Data, mark Loaded, and drop any stale InPosition.",
+         "Load Position Data, mark Loaded, and drop any stale InPosition. Gated by "
+         "the motor-local fault AND the latched controller fault (Status.Faulted) so a "
+         "code-4 homing failure inhibits the move until Reset clears it.",
          f"XIC(Move{m}_Execute)ONS(Move{m}_ons)XIO(Move{m}_Fault)"
+         f"XIO(VisionRobot.Status.Faulted)"
          f"MOV(Move{m}_Steps,{o}Move_Dist)MOV(MOVE_VEL,{o}Vel_Limit)"
          f"MOV(MOVE_ACC,{o}Accel_Lim)OTL({o}Output_Reg_Abs_Flag)"
          f"OTL({o}Output_Reg_Load_Posn_Data)OTL(Move{m}_Loaded)OTU(Move{m}_InPosition);"),
@@ -146,6 +149,11 @@ def move_rungs(m: int) -> List[Rung]:
         ("Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.",
          f"[XIC({i}Status_Motor_In_Fault),XIC({i}Status_Shutdowns_Pres),"
          f"XIC(EM806_{m}_ALM)]OTE(Move{m}_Fault);"),
+        ("Abort: on a motor-local fault or the latched controller fault, drop any "
+         "in-flight load so a faulted axis cannot keep or re-issue a move. Reset "
+         "(R10) clears Status.Faulted; the operator re-Executes to resume.",
+         f"[XIC(Move{m}_Fault),XIC(VisionRobot.Status.Faulted)]"
+         f"OTU({o}Output_Reg_Load_Posn_Data)OTU(Move{m}_Loaded);"),
     ]
 
 
