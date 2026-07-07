@@ -104,6 +104,20 @@ class RobotDriver(ABC):
     def stop(self) -> None:
         """Abort any in-progress motion. Does not disable the drives."""
 
+    @abstractmethod
+    def reset(self) -> None:
+        """Clear a latched fault so the drives can be enabled/homed again."""
+
+    @property
+    def is_faulted(self) -> bool:
+        """True if a fault is latched. Default False for drivers with no fault
+        concept (overridden by the PLC driver)."""
+        return False
+
+    def fault_code(self) -> Optional[int]:
+        """The active fault code, or None when not faulted / not applicable."""
+        return None
+
 
 class DryRunRobotDriver(RobotDriver):
     """Simulated driver: moves are instantaneous and just recorded. Lets the
@@ -145,3 +159,6 @@ class DryRunRobotDriver(RobotDriver):
 
     def stop(self) -> None:
         logger.info("[dry-run] STOP")
+
+    def reset(self) -> None:
+        logger.info("[dry-run] reset (no fault to clear)")

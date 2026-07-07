@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -23,6 +23,20 @@ from PySide6.QtWidgets import (
 )
 
 from ..app.robot_test_controller import MoveResult, RobotTestController
+
+# FaultCode -> operator text (matches docs/plc_program.md §9).
+FAULT_TEXT = {
+    1: "Drive alarm (EM806 ALM)",
+    2: "E-stop / guard open",
+    3: "Hard limit tripped",
+    4: "Homing failed / timed out",
+    5: "Move commanded while not enabled",
+    6: "Move commanded while not homed",
+    7: "Target outside soft limits",
+    8: "Move timed out",
+    9: "Vacuum not confirmed",
+    10: "Command watchdog / comms loss",
+}
 
 
 class RobotTestTab(QWidget):
@@ -44,10 +58,20 @@ class RobotTestTab(QWidget):
         self._refresh()
         self._update_enable_state()
 
+        # Live poll so async faults (e-stop, drive alarm, hard limit, a homing
+        # fault that latches seconds later) surface without the operator clicking.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._poll)
+        self._poll_timer.start(300)
+
     # --- groups -------------------------------------------------------------
     def _build_enable_group(self) -> QGroupBox:
         box = QGroupBox("Drives")
-        row = QHBoxLayout(box)
+        v = QVBoxLayout(box)
+        row = QHBoxLayout()
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.setToolTip("Clear a latched fault so the drives can be enabled.")
+        self.reset_btn.clicked.connect(self._on_reset)
         self.enable_btn = QPushButton("Enable")
         self.enable_btn.setCheckable(True)
         self.enable_btn.clicked.connect(self._on_enable_toggled)
@@ -55,10 +79,24 @@ class RobotTestTab(QWidget):
         self.stop_btn.setProperty("accent", "danger")
         self.stop_btn.clicked.connect(self._on_stop)
         self.referenced_label = QLabel()
+        row.addWidget(self.reset_btn)
         row.addWidget(self.enable_btn)
         row.addWidget(self.stop_btn)
         row.addStretch(1)
         row.addWidget(self.referenced_label)
+        v.addLayout(row)
+
+        # Persistent fault banner (shown only while a fault is latched) and a
+        # next-step hint that sequences the operator: Reset -> Enable -> Home.
+        self.fault_banner = QLabel("")
+        self.fault_banner.setStyleSheet(
+            "color: #f85149; font-weight: bold; padding: 2px 0;"
+        )
+        self.fault_banner.setVisible(False)
+        self.hint_label = QLabel("")
+        self.hint_label.setStyleSheet("color: #8b949e;")
+        v.addWidget(self.fault_banner)
+        v.addWidget(self.hint_label)
         return box
 
     def _build_home_group(self) -> QGroupBox:
@@ -157,38 +195,84 @@ class RobotTestTab(QWidget):
         return btn
 
     # --- handlers -----------------------------------------------------------
-    def _on_enable_toggled(self, checked: bool) -> None:
-        if checked:
-            self.controller.enable()
-            self._set_status("Drives enabled.", ok=True)
+    def _on_reset(self) -> None:
+        try:
+            res = self.controller.reset()
+        except Exception as exc:  # belt-and-suspenders; controller catches already
+            self._set_status(f"Reset error: {exc}", ok=False)
         else:
-            self.controller.disable()
-            self._set_status("Drives disabled.", ok=True)
+            if res.ok and not self.controller.is_faulted:
+                self._set_status("Fault cleared — reset OK.", ok=True)
+            elif res.ok:
+                self._set_status("Reset sent (fault still active).", ok=False)
+            else:
+                self._set_status(f"Reset failed: {res.reason}", ok=False)
+        self._refresh()
         self._update_enable_state()
+
+    def _on_enable_toggled(self, checked: bool) -> None:
+        try:
+            res = self.controller.enable() if checked else self.controller.disable()
+            if res.ok:
+                # message reflects the ACTUAL drive state, not the request
+                self._set_status(
+                    "Drives enabled." if self.controller.is_enabled else "Drives disabled.",
+                    ok=True,
+                )
+            else:
+                self._set_status(
+                    f"{'Enable' if checked else 'Disable'} failed: {res.reason}",
+                    ok=False,
+                )
+        except Exception as exc:
+            self._set_status(f"{'Enable' if checked else 'Disable'} error: {exc}", ok=False)
+        finally:
+            # Always re-sync from reality so a failed enable un-highlights the button.
+            self._refresh()
+            self._update_enable_state()
 
     def _on_stop(self) -> None:
-        self.controller.stop()
-        self.controller.disable()
-        self.enable_btn.setChecked(False)
-        self._set_status("STOP — drives disabled.", ok=False)
-        self._update_enable_state()
+        try:
+            self.controller.stop()
+            self.controller.disable()
+            self._set_status("STOP — drives disabled.", ok=False)
+        except Exception as exc:
+            self._set_status(f"STOP error: {exc}", ok=False)
+        finally:
+            self.enable_btn.setChecked(False)
+            self._refresh()
+            self._update_enable_state()
 
     def _on_home_reference(self) -> None:
-        self._apply(self.controller.home_reference())
+        self._guarded(lambda: self.controller.home_reference())
 
     def _on_set_home(self) -> None:
-        x, y = self.controller.set_home()
-        self._set_status(f"Home taught at TCP ({x:.1f}, {y:.1f}).", ok=True)
+        try:
+            x, y = self.controller.set_home()
+            self._set_status(f"Home taught at TCP ({x:.1f}, {y:.1f}).", ok=True)
+        except Exception as exc:
+            self._set_status(f"Set-home error: {exc}", ok=False)
         self._refresh()
+        self._update_enable_state()
 
     def _on_go_home(self) -> None:
-        self._apply(self.controller.go_home())
+        self._guarded(lambda: self.controller.go_home())
 
     def _jog_joint(self, joint: str, sign: int) -> None:
-        self._apply(self.controller.jog_joint(joint, sign * self.joint_step.value()))
+        self._guarded(lambda: self.controller.jog_joint(joint, sign * self.joint_step.value()))
 
     def _jog_cart(self, axis: str, sign: int) -> None:
-        self._apply(self.controller.jog_cartesian(axis, sign * self.cart_step.value()))
+        self._guarded(lambda: self.controller.jog_cartesian(axis, sign * self.cart_step.value()))
+
+    def _guarded(self, call) -> None:
+        """Run a controller call that returns a MoveResult, rendering the outcome
+        and never letting an exception escape the Qt slot."""
+        try:
+            self._apply(call())
+        except Exception as exc:
+            self._set_status(f"Error: {exc}", ok=False)
+            self._refresh()
+            self._update_enable_state()
 
     # --- view update --------------------------------------------------------
     def refresh_all(self) -> None:
@@ -232,14 +316,42 @@ class RobotTestTab(QWidget):
         )
 
     def _update_enable_state(self) -> None:
+        faulted = self.controller.is_faulted
         enabled = self.controller.is_enabled
         referenced = self.controller.is_referenced
         self.enable_btn.setText("Enabled" if enabled else "Enable")
-        self.enable_btn.setChecked(enabled)  # keep the toggle in sync after a swap
-        self.ref_btn.setEnabled(enabled)
-        # Jogging needs both enabled drives and a found home reference.
+        self.enable_btn.setChecked(enabled)  # keep the toggle in sync with reality
+        # While faulted, only Reset is live — the fault must be cleared first.
+        self.reset_btn.setEnabled(faulted)
+        self.enable_btn.setEnabled(not faulted)
+        self.ref_btn.setEnabled(enabled and not faulted)
+        # Jogging needs enabled drives, a found home reference, and no fault.
         for btn in getattr(self, "_jog_buttons", []):
-            btn.setEnabled(enabled and referenced)
+            btn.setEnabled(enabled and referenced and not faulted)
+
+        # Fault banner + next-step sequencing hint.
+        if faulted:
+            code = self.controller.fault_code()
+            text = FAULT_TEXT.get(code or 0, "unknown fault")
+            self.fault_banner.setText(f"FAULT {code} — {text}. Press Reset.")
+            self.fault_banner.setVisible(True)
+            self.hint_label.setText("Fault active — press Reset.")
+        else:
+            self.fault_banner.setVisible(False)
+            if not enabled:
+                self.hint_label.setText("Next: Enable the drives.")
+            elif not referenced:
+                self.hint_label.setText("Next: Home (find ref).")
+            else:
+                self.hint_label.setText("Ready — jog or run.")
+
+    def _poll(self) -> None:
+        """Live status tick — surfaces async faults (e-stop, drive alarm, hard
+        limit) and keeps the button/banner state in sync with the PLC."""
+        try:
+            self._update_enable_state()
+        except Exception:  # a status read hiccup must never kill the timer
+            pass
 
     def _set_status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)

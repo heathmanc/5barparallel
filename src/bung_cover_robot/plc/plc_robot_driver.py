@@ -62,10 +62,35 @@ class PlcRobotDriver(RobotDriver):
         except PlcError:
             return False
 
+    @property
+    def is_faulted(self) -> bool:
+        return bool(self._read_safe(T.Status.FAULTED))
+
+    def fault_code(self) -> Optional[int]:
+        if not self.is_faulted:
+            return None
+        try:
+            return int(self._read_safe(T.Status.FAULT_CODE))
+        except (TypeError, ValueError):
+            return None
+
+    def reset(self) -> None:
+        """Pulse Cmd.Reset and wait for the latched fault to clear."""
+        try:
+            self._pulse(T.Cmd.RESET)
+            self._wait(
+                lambda: not bool(self._read(T.Status.FAULTED)), "clear fault"
+            )
+        except PlcError as exc:
+            raise RobotDriverError(f"reset: PLC comms error: {exc}") from exc
+
     def enable(self) -> None:
         self._clear_fault_guard()
-        self._write(T.Manual.ENABLE, True)
-        self._wait(lambda: bool(self._read(T.Status.ENABLED)), "enable drives")
+        try:
+            self._write(T.Manual.ENABLE, True)
+            self._wait(lambda: bool(self._read(T.Status.ENABLED)), "enable drives")
+        except PlcError as exc:
+            raise RobotDriverError(f"enable: PLC comms error: {exc}") from exc
 
     def disable(self) -> None:
         try:
@@ -77,15 +102,18 @@ class PlcRobotDriver(RobotDriver):
         if not self.is_enabled:
             raise RobotDriverError("cannot move: drives are disabled")
         cid = self._next_command_id()
-        self._write(T.Manual.TARGET_LEFT_DEG, float(left_deg))
-        self._write(T.Manual.TARGET_RIGHT_DEG, float(right_deg))
-        self._write(T.Manual.COMMAND_ID, cid)
-        self._pulse(T.Manual.MOVE_TO_TARGET)
-        self._wait(
-            lambda: int(self._read(T.Status.COMPLETE_COMMAND_ID)) == cid
-            and bool(self._read(T.Status.IN_POSITION)),
-            f"move to L={left_deg:.2f} R={right_deg:.2f}",
-        )
+        try:
+            self._write(T.Manual.TARGET_LEFT_DEG, float(left_deg))
+            self._write(T.Manual.TARGET_RIGHT_DEG, float(right_deg))
+            self._write(T.Manual.COMMAND_ID, cid)
+            self._pulse(T.Manual.MOVE_TO_TARGET)
+            self._wait(
+                lambda: int(self._read(T.Status.COMPLETE_COMMAND_ID)) == cid
+                and bool(self._read(T.Status.IN_POSITION)),
+                f"move to L={left_deg:.2f} R={right_deg:.2f}",
+            )
+        except PlcError as exc:
+            raise RobotDriverError(f"move: PLC comms error: {exc}") from exc
         logger.info("moved -> L=%.3f R=%.3f (cmd %d)", left_deg, right_deg, cid)
 
     def read_angles(self) -> Optional[Angles]:
@@ -102,12 +130,20 @@ class PlcRobotDriver(RobotDriver):
     def home(self) -> None:
         if not self.is_enabled:
             raise RobotDriverError("cannot home: drives are disabled")
-        self._pulse(T.Manual.HOME_REQUEST)
-        self._wait(lambda: bool(self._read(T.Status.HOMED)), "home / find reference")
+        try:
+            self._pulse(T.Manual.HOME_REQUEST)
+            self._wait(
+                lambda: bool(self._read(T.Status.HOMED)), "home / find reference"
+            )
+        except PlcError as exc:
+            raise RobotDriverError(f"home: PLC comms error: {exc}") from exc
         logger.info("homed -> %s", self.read_angles())
 
     def stop(self) -> None:
-        self._pulse(T.Manual.ABORT)
+        try:
+            self._pulse(T.Manual.ABORT)
+        except PlcError as exc:
+            raise RobotDriverError(f"stop: PLC comms error: {exc}") from exc
 
     # --- helpers ------------------------------------------------------------
     def _next_command_id(self) -> int:

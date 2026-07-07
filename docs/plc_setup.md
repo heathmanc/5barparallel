@@ -277,6 +277,20 @@ values — so all of these start at 0/false):
 
 ## 7. Commission (in this order)
 
+> **Operator sequence (Robot Test tab): Reset → Enable → Home (find ref) → jog.**
+> The tab shows a **fault banner** with the code + text and a next-step hint. If a
+> fault is latched, only **Reset** is live; it pulses `Cmd.Reset` (which needs
+> `EStop_OK` + `Guard_Closed` true — force/wire them during bring-up) and clears
+> the latched fault *and* returns `R30_Homing` to a re-homeable state. A failed
+> Enable no longer sticks the button — it reverts to the real drive state.
+
+> **Fault 4 = homing didn't complete.** If Home (find ref) keeps faulting with
+> code 4, the ClearLink homing move never finished within `HOME_TMO_MS`. Check, in
+> order: `Config Register` **Homing Enable** (bit 0) is set (else `Ready_To_Home`
+> never asserts); the shoulder prox is wired to the motor's `Home Sensor`
+> connector and toggles (read its DIP); `HOME_VEL_0/1` sign drives *toward* the
+> prox; and `HLFB Inversion` (bit 3) is set for the EM806 (§5). Reset, fix, retry.
+
 1. **Comms:** from the app's **PLC tab → Connect PLC** at `IP/slot`. Confirm the
    `VisionRobot` tags read/write.
 2. **Jog (SD_Jog):** enable one axis, jog slowly; confirm direction and that

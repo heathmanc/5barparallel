@@ -533,3 +533,57 @@ def test_roi_image_view_set_and_clear(qapp):
     assert back == pytest.approx((10.0, 20.0), abs=1.0)
     v.clear_roi()
     assert v.roi() is None
+
+
+def test_robot_test_reset_button_and_fault_banner(qapp):
+    from bung_cover_robot.app.robot_test_controller import RobotTestController
+    from bung_cover_robot.gui.robot_test_tab import RobotTestTab
+    from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient
+    from bung_cover_robot.plc import tags as T
+    from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
+
+    kin = FiveBarKinematics()
+    jt = kin.inverse(0.0, 250.0)
+    sim = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
+    drv = PlcRobotDriver(sim, command_timeout_s=1.0, pulse_hold_s=0.0)
+    tab = RobotTestTab(RobotTestController(drv, kin))
+
+    # latch a homing fault as the PLC would
+    sim.write(T.Status.FAULTED, True)
+    sim.write(T.Status.FAULT_CODE, 4)
+    tab._update_enable_state()
+    # isHidden() reflects the explicit show/hide flag (isVisible() is False for an
+    # unmapped widget in a headless test).
+    assert not tab.fault_banner.isHidden()
+    assert "FAULT 4" in tab.fault_banner.text()
+    assert tab.reset_btn.isEnabled()          # reset offered
+    assert not tab.enable_btn.isEnabled()     # enable blocked until reset
+
+    # forcing an enable while faulted must not leave the button stuck highlighted
+    tab.enable_btn.setChecked(True)
+    tab._on_enable_toggled(True)
+    assert not tab.enable_btn.isChecked()     # reverted to reality (still disabled)
+    assert not tab.controller.is_enabled
+
+    # reset clears the fault and re-arms enable
+    tab._on_reset()
+    assert not tab.controller.is_faulted
+    assert tab.fault_banner.isHidden()
+    assert tab.enable_btn.isEnabled()
+    assert "reset ok" in tab.status_label.text().lower()
+
+
+def test_robot_test_home_fault_shows_message(qapp):
+    from bung_cover_robot.app.robot_test_controller import RobotTestController
+    from bung_cover_robot.gui.robot_test_tab import RobotTestTab
+    from bung_cover_robot.robot.driver import DryRunRobotDriver, RobotDriverError
+
+    class FaultingHome(DryRunRobotDriver):
+        def home(self):
+            raise RobotDriverError("home / find reference: PLC faulted (code 4)")
+
+    tab = RobotTestTab(RobotTestController(FaultingHome()))
+    tab._on_enable_toggled(True)
+    tab._on_home_reference()                  # must not raise; shows a message
+    assert "code 4" in tab.status_label.text()
+    assert not tab.controller.is_referenced

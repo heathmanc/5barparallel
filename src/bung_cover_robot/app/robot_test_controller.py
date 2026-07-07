@@ -18,7 +18,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from ..robot.driver import DryRunRobotDriver, HomingConfig, RobotDriver
+from ..robot.driver import (
+    DryRunRobotDriver,
+    HomingConfig,
+    RobotDriver,
+    RobotDriverError,
+)
 from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
 from ..robot.workspace import WorkspaceValidator
 
@@ -93,6 +98,15 @@ class RobotTestController:
         """True once the hardware home reference has been found (driver.home)."""
         return self._referenced
 
+    @property
+    def is_faulted(self) -> bool:
+        """True if the PLC/drive has a latched fault (needs reset)."""
+        return self.driver.is_faulted
+
+    def fault_code(self) -> Optional[int]:
+        """The active PLC fault code, or None when not faulted."""
+        return self.driver.fault_code()
+
     # --- driver ------------------------------------------------------------
     def set_driver(self, driver: RobotDriver) -> None:
         """Hot-swap the motion driver (e.g. connect/disconnect a real PLC).
@@ -115,15 +129,35 @@ class RobotTestController:
         self.driver = driver
         self._referenced = False
 
-    # --- enable -------------------------------------------------------------
-    def enable(self) -> None:
-        self.driver.enable()
+    # --- enable / reset -----------------------------------------------------
+    def enable(self) -> MoveResult:
+        try:
+            self.driver.enable()
+        except RobotDriverError as exc:
+            return self._reject(str(exc))
+        return MoveResult(True, "ok", self._state)
 
-    def disable(self) -> None:
-        self.driver.disable()
+    def disable(self) -> MoveResult:
+        try:
+            self.driver.disable()
+        except RobotDriverError as exc:
+            return self._reject(str(exc))
+        return MoveResult(True, "ok", self._state)
 
-    def stop(self) -> None:
-        self.driver.stop()
+    def stop(self) -> MoveResult:
+        try:
+            self.driver.stop()
+        except RobotDriverError as exc:
+            return self._reject(str(exc))
+        return MoveResult(True, "ok", self._state)
+
+    def reset(self) -> MoveResult:
+        """Clear a latched PLC fault so the drives can be enabled/homed again."""
+        try:
+            self.driver.reset()
+        except RobotDriverError as exc:
+            return self._reject(str(exc))
+        return MoveResult(True, "ok", self._state)
 
     # --- home ---------------------------------------------------------------
     def home_reference(self) -> MoveResult:
@@ -131,8 +165,12 @@ class RobotTestController:
         reference pose the driver reports. Required before jogging."""
         if not self.is_enabled:
             return self._reject("drives are disabled — enable first")
-        self.driver.home()
-        angles = self.driver.read_angles()
+        try:
+            self.driver.home()
+            angles = self.driver.read_angles()
+        except RobotDriverError as exc:
+            self._referenced = False
+            return self._reject(str(exc))
         if angles is not None:
             state, reason = self._state_from_angles(*angles)
             if state is None:
@@ -212,7 +250,10 @@ class RobotTestController:
         return self._command(state)
 
     def _command(self, state: RobotState) -> MoveResult:
-        self.driver.move_to_angles(state.left_deg, state.right_deg)
+        try:
+            self.driver.move_to_angles(state.left_deg, state.right_deg)
+        except RobotDriverError as exc:
+            return self._reject(str(exc))
         self._state = state
         return MoveResult(True, "ok", state)
 
