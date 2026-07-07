@@ -169,7 +169,7 @@ def home_rungs(m: int) -> List[Rung]:
          f"HOME_VEL_{m} signed toward the prox, HOME_ACC, HOME_TMO_MS). R30_Homing JSRs "
          f"R_HomeMotor0/R_HomeMotor1.",
          f"XIC(Home{m}_Req)ONS(Home{m}_ons)EQU(Home{m}_State,0)XIO(Ax{m}_HomeFault)"
-         f"MOV(10,Home{m}_State);"),
+         f"OTU(Home{m}_Moved)MOV(10,Home{m}_State);"),
         ("State 10 ENABLING: R20_Drives holds the axis Enable; advance once HLFB is "
          "asserted (enable-complete).",
          f"EQU(Home{m}_State,10)XIC({i}Status_HLFB_ON)MOV(20,Home{m}_State);"),
@@ -193,9 +193,15 @@ def home_rungs(m: int) -> List[Rung]:
          f"EQU(Home{m}_State,55)XIC({i}Status_Load_Vel_Move_Ack)"
          f"OTU({o}Output_Reg_Load_Vel_Data)OTU({o}Output_Reg_Home_Flag)"
          f"MOV(60,Home{m}_State);"),
-        ("State 60 HOMING: ClearLink zeroes at the prox -> Has Homed.",
-         f"EQU(Home{m}_State,60)XIC({i}Status_Has_Homed)OTL(Ax{m}_HomeDone)"
-         f"MOV(70,Home{m}_State);"),
+        ("Latch real motion: while the homing move runs (States 50-60), any "
+         "Steps_Active sets Moved. Proof the axis actually stepped this attempt.",
+         f"GEQ(Home{m}_State,50)LES(Home{m}_State,70)XIC({i}Status_Steps_Active)"
+         f"OTL(Home{m}_Moved);"),
+        ("State 60 HOMING: ClearLink zeroes at the prox -> Has Homed. Requires "
+         "Moved so a stale/power-up Has_Homed can't complete a home with no motion; "
+         "if the motor never steps, homing times out to FaultCode 4 instead.",
+         f"EQU(Home{m}_State,60)XIC({i}Status_Has_Homed)XIC(Home{m}_Moved)"
+         f"OTL(Ax{m}_HomeDone)MOV(70,Home{m}_State);"),
         ("Keep the timeout preset loaded (CSV imports Home_Tmr.PRE as 0, which "
          "would fault instantly). Set HOME_TMO_MS to the allowed homing time, ms.",
          f"MOV(HOME_TMO_MS,Home{m}_Tmr.PRE);"),
@@ -654,6 +660,10 @@ def _glue_tags() -> List[Tag]:
         add(f"Home{m}_Tmr", "TIMER", desc=f"Motor {m} homing timeout timer.")
         add(f"Ax{m}_HomeDone", "BOOL", desc=f"Motor {m} homed.")
         add(f"Ax{m}_HomeFault", "BOOL", desc=f"Motor {m} homing fault.")
+        add(f"Home{m}_Moved", "BOOL",
+            desc=f"Motor {m} actually stepped during this homing attempt (latched from "
+                 f"Status_Steps_Active). Gates Has_Homed so a stale/power-up reference "
+                 f"can't false-complete a home with no motion.")
         add(f"Ax{m}_Ready", "BOOL",
             desc=f"Motor {m} drive ready (map to ClearLink:I1.Motor{m}_Status_Enabled).")
         add(f"EM806_{m}_ALM", "BOOL",
