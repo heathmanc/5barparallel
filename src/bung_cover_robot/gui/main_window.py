@@ -14,6 +14,7 @@ from ..app.recipes import RecipeStore
 from ..app.robot_test_controller import RobotTestController, build_dry_run_controller
 from ..vision.calibration import CalibrationManager, CameraIntrinsics
 from ..vision.camera import Camera, CameraConfig, MockCamera
+from .bypass_tab import BypassTab
 from .calibration_tab import CalibrationTab
 from .camera_tab import CameraTab
 from .imaging import demo_frame, demo_transform
@@ -84,18 +85,21 @@ class MainWindow(QMainWindow):
         self.robot_test_tab = RobotTestTab(self.controller)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
         self.plc_tab = PlcTab(self.controller)
+        self.bypass_tab = BypassTab(self.controller)
         self.tabs.addTab(self.vision_tab, "Vision")
         self.tabs.addTab(self.camera_tab, "Camera")
         self.tabs.addTab(self.calibration_tab, "Calibration")
         self.tabs.addTab(self.robot_test_tab, "Robot Test")
         self.tabs.addTab(self.settings_tab, "Settings")
         self.tabs.addTab(self.plc_tab, "PLC")
+        self.tabs.addTab(self.bypass_tab, "Bypass")
         self.setCentralWidget(self.tabs)
 
         # Cross-tab refresh.
         self.settings_tab.geometryChanged.connect(self.robot_test_tab.refresh_all)
         self.plc_tab.connectionChanged.connect(self.robot_test_tab.refresh_all)
         self.plc_tab.connectionChanged.connect(self.vision_tab.refresh)
+        self.plc_tab.connectionChanged.connect(self.bypass_tab.refresh)
         self.camera_tab.cameraChanged.connect(self._on_camera_changed)
         self.calibration_tab.calibrationSaved.connect(self._on_calibration_saved)
         self.calibration_tab.recipesChanged.connect(self.vision_tab.reload_recipes)

@@ -55,8 +55,8 @@
 <Text><![CDATA[EQU(State,70)OTL(CylinderDown)MOV(80,State);]]></Text>
 </Rung>
 <Rung Number="12" Type="N">
-<Comment><![CDATA[State 80: Z down at pick confirmed.]]></Comment>
-<Text><![CDATA[EQU(State,80)XIC(PickDown)MOV(90,State);]]></Text>
+<Comment><![CDATA[State 80: Z down at pick confirmed (or Bypass_Vision on the bench).]]></Comment>
+<Text><![CDATA[EQU(State,80)[XIC(PickDown),XIC(Bypass_Vision)]MOV(90,State);]]></Text>
 </Rung>
 <Rung Number="13" Type="N">
 <Comment><![CDATA[State 90 VACUUM_ON.]]></Comment>
@@ -67,8 +67,8 @@
 <Text><![CDATA[EQU(State,90)XIC(VacTmr.DN)MOV(100,State);]]></Text>
 </Rung>
 <Rung Number="15" Type="N">
-<Comment><![CDATA[State 100 VERIFY_VACUUM: confirmed -> continue.]]></Comment>
-<Text><![CDATA[EQU(State,100)XIC(VisionRobot.Status.VacuumOK)MOV(110,State);]]></Text>
+<Comment><![CDATA[State 100 VERIFY_VACUUM: confirmed (or Bypass_Vision) -> continue.]]></Comment>
+<Text><![CDATA[EQU(State,100)[XIC(VisionRobot.Status.VacuumOK),XIC(Bypass_Vision)]MOV(110,State);]]></Text>
 </Rung>
 <Rung Number="16" Type="N">
 <Comment><![CDATA[State 100: vacuum not confirmed by the settle timeout -> fault (code 9).]]></Comment>
@@ -79,8 +79,8 @@
 <Text><![CDATA[EQU(State,110)OTU(CylinderDown)MOV(120,State);]]></Text>
 </Rung>
 <Rung Number="18" Type="N">
-<Comment><![CDATA[State 120: Z up at pick confirmed.]]></Comment>
-<Text><![CDATA[EQU(State,120)XIC(PickUp)MOV(130,State);]]></Text>
+<Comment><![CDATA[State 120: Z up at pick confirmed (or Bypass_Vision).]]></Comment>
+<Text><![CDATA[EQU(State,120)[XIC(PickUp),XIC(Bypass_Vision)]MOV(130,State);]]></Text>
 </Rung>
 <Rung Number="19" Type="N">
 <Comment><![CDATA[State 130 MOVE_ABOVE_DROP.]]></Comment>
@@ -95,8 +95,8 @@
 <Text><![CDATA[EQU(State,150)OTL(CylinderDown)MOV(160,State);]]></Text>
 </Rung>
 <Rung Number="22" Type="N">
-<Comment><![CDATA[State 160: Z down at drop confirmed.]]></Comment>
-<Text><![CDATA[EQU(State,160)XIC(DropDown)MOV(170,State);]]></Text>
+<Comment><![CDATA[State 160: Z down at drop confirmed (or Bypass_Vision).]]></Comment>
+<Text><![CDATA[EQU(State,160)[XIC(DropDown),XIC(Bypass_Vision)]MOV(170,State);]]></Text>
 </Rung>
 <Rung Number="23" Type="N">
 <Comment><![CDATA[State 170 VACUUM_OFF_BLOWOFF: release vacuum, start blowoff.]]></Comment>
@@ -111,8 +111,8 @@
 <Text><![CDATA[EQU(State,180)OTU(CylinderDown)MOV(190,State);]]></Text>
 </Rung>
 <Rung Number="26" Type="N">
-<Comment><![CDATA[State 190: Z up at drop confirmed.]]></Comment>
-<Text><![CDATA[EQU(State,190)XIC(DropUp)MOV(200,State);]]></Text>
+<Comment><![CDATA[State 190: Z up at drop confirmed (or Bypass_Vision).]]></Comment>
+<Text><![CDATA[EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(200,State);]]></Text>
 </Rung>
 <Rung Number="27" Type="N">
 <Comment><![CDATA[State 200 COMPLETE_JOB: publish CompleteCommandID + Done, back to idle.]]></Comment>

@@ -310,3 +310,23 @@ values — so all of these start at 0/false):
 
 Everything above can be dry-run first against the app's simulated PLC
 (`--sim-plc`) so the handshake logic is proven before hardware.
+
+### Bench testing without the full machine (the **Bypass** tab)
+
+To spin motors on the table before the safety/prox/sensor wiring exists, use the
+app's **Bypass** tab (writes to the connected PLC — real or simulated):
+
+- **Force safeties SAFE** — writes `EStop_OK=1`, `Guard_Closed=1` and all
+  limit/alarm inputs `=0`, so `SafetyOK` is true and the drives enable with no
+  safety I/O. The safety *logic* is untouched: once you alias those tags to real
+  inputs, the physical hardware overrides the bench values.
+- **Bypass_Homing** — `R30` marks the robot referenced instantly on Home (find
+  ref) and publishes `HOME_ANGLE_L/R`, so you can jog with no home prox.
+- **Bypass_Vision** — `R50` auto-satisfies the Z reed switches and vacuum sensor,
+  so the automatic pick/place *motion* runs open-loop.
+
+> ⚠ **Bench only.** These defeat missing safety/sensor hardware — never run them
+> with anyone near the machine, and clear all three (`Bypass_Homing`,
+> `Bypass_Vision`, and the forced safety inputs) before commissioning the real
+> cell. The bypass tags import with `RobotTags.csv`; the ladder support is in the
+> regenerated `R30_Homing.L5X` / `R50_Auto.L5X`.
