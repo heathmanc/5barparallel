@@ -11,8 +11,8 @@
 <Text><![CDATA[CPT(Move1_Steps,TRN(Move1_Target_Deg * STEPS_PER_DEG));]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
-<Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, latch Load Position Data, mark Loaded, and drop any stale InPosition. Gated by the motor-local fault AND the latched controller fault (Status.Faulted) so a code-4 homing failure inhibits the move until Reset clears it.]]></Comment>
-<Text><![CDATA[XIC(Move1_Execute)ONS(Move1_ons)XIO(Move1_Fault)XIO(VisionRobot.Status.Faulted)MOV(Move1_Steps,ClearLink:O1.Motor1_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor1_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor1_Accel_Lim)OTL(ClearLink:O1.Motor1_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor1_Output_Reg_Load_Posn_Data)OTL(Move1_Loaded)OTU(Move1_InPosition);]]></Text>
+<Comment><![CDATA[Load the move whenever Execute is commanded but not yet loaded or done (level-triggered, NOT an Execute edge): a new command clears Loaded + InPosition in R40/R50, so this loads once, then XIO(Loaded)/XIO(InPosition) hold it off. Level-triggering avoids the deadlock where a sticky Execute latch (move never completed) leaves a one-shot that can never re-fire. Gated by the motor-local fault AND the latched controller fault so a code-4 homing failure inhibits the move until Reset clears it. Loads Move Distance / limits, sets Absolute, latches Load Position Data + Loaded.]]></Comment>
+<Text><![CDATA[XIC(Move1_Execute)XIO(Move1_Loaded)XIO(Move1_InPosition)XIO(Move1_Fault)XIO(VisionRobot.Status.Faulted)MOV(Move1_Steps,ClearLink:O1.Motor1_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor1_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor1_Accel_Lim)OTL(ClearLink:O1.Motor1_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor1_Output_Reg_Load_Posn_Data)OTL(Move1_Loaded);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
 <Comment><![CDATA[ClearLink acknowledges the load -> drop Load Position Data.]]></Comment>

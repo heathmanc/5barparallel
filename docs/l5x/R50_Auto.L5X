@@ -28,7 +28,7 @@
 </Rung>
 <Rung Number="5" Type="N">
 <Comment><![CDATA[State 10 MOVE_CAMERA_CLEAR: command both axes to the camera-clear pose (clear stale InPosition so the wait state can't fall through).]]></Comment>
-<Text><![CDATA[EQU(State,10)MOV(CAMERA_CLEAR_L,Move0_Target_Deg)MOV(CAMERA_CLEAR_R,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(20,State);]]></Text>
+<Text><![CDATA[EQU(State,10)MOV(CAMERA_CLEAR_L,Move0_Target_Deg)MOV(CAMERA_CLEAR_R,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(20,State);]]></Text>
 </Rung>
 <Rung Number="6" Type="N">
 <Comment><![CDATA[State 20: both axes in position at camera-clear -> drop execute, mark CameraClear.]]></Comment>
@@ -44,7 +44,7 @@
 </Rung>
 <Rung Number="9" Type="N">
 <Comment><![CDATA[State 50 MOVE_ABOVE_PICK.]]></Comment>
-<Text><![CDATA[EQU(State,50)MOV(PickL,Move0_Target_Deg)MOV(PickR,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(60,State);]]></Text>
+<Text><![CDATA[EQU(State,50)MOV(PickL,Move0_Target_Deg)MOV(PickR,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(60,State);]]></Text>
 </Rung>
 <Rung Number="10" Type="N">
 <Comment><![CDATA[State 60: at pick -> drop execute.]]></Comment>
@@ -84,7 +84,7 @@
 </Rung>
 <Rung Number="19" Type="N">
 <Comment><![CDATA[State 130 MOVE_ABOVE_DROP.]]></Comment>
-<Text><![CDATA[EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);]]></Text>
+<Text><![CDATA[EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);]]></Text>
 </Rung>
 <Rung Number="20" Type="N">
 <Comment><![CDATA[State 140: at drop -> drop execute.]]></Comment>

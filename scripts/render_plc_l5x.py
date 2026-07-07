@@ -130,15 +130,19 @@ def move_rungs(m: int) -> List[Rung]:
          f"Move{m}_Steps, Move{m}_Target_Deg, EM806_{m}_ALM, STEPS_PER_DEG, MOVE_VEL, "
          f"MOVE_ACC) and the ClearLink module. Convert the target angle to steps.",
          f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG));"),
-        ("Rising edge of Execute: load Move Distance / limits, set Absolute, latch "
-         "Load Position Data, mark Loaded, and drop any stale InPosition. Gated by "
-         "the motor-local fault AND the latched controller fault (Status.Faulted) so a "
-         "code-4 homing failure inhibits the move until Reset clears it.",
-         f"XIC(Move{m}_Execute)ONS(Move{m}_ons)XIO(Move{m}_Fault)"
-         f"XIO(VisionRobot.Status.Faulted)"
+        ("Load the move whenever Execute is commanded but not yet loaded or done "
+         "(level-triggered, NOT an Execute edge): a new command clears Loaded + "
+         "InPosition in R40/R50, so this loads once, then XIO(Loaded)/XIO(InPosition) "
+         "hold it off. Level-triggering avoids the deadlock where a sticky Execute "
+         "latch (move never completed) leaves a one-shot that can never re-fire. "
+         "Gated by the motor-local fault AND the latched controller fault so a "
+         "code-4 homing failure inhibits the move until Reset clears it. Loads Move "
+         "Distance / limits, sets Absolute, latches Load Position Data + Loaded.",
+         f"XIC(Move{m}_Execute)XIO(Move{m}_Loaded)XIO(Move{m}_InPosition)"
+         f"XIO(Move{m}_Fault)XIO(VisionRobot.Status.Faulted)"
          f"MOV(Move{m}_Steps,{o}Move_Dist)MOV(MOVE_VEL,{o}Vel_Limit)"
          f"MOV(MOVE_ACC,{o}Accel_Lim)OTL({o}Output_Reg_Abs_Flag)"
-         f"OTL({o}Output_Reg_Load_Posn_Data)OTL(Move{m}_Loaded)OTU(Move{m}_InPosition);"),
+         f"OTL({o}Output_Reg_Load_Posn_Data)OTL(Move{m}_Loaded);"),
         ("ClearLink acknowledges the load -> drop Load Position Data.",
          f"XIC({i}Status_Load_Posn_Move_Ack)OTU({o}Output_Reg_Load_Posn_Data);"),
         ("Move done = a loaded move reached At Target Position (Loaded gate stops a "
@@ -340,6 +344,7 @@ MANUAL: List[Rung] = [
      "MOV(VisionRobot.Manual.TargetRightDeg,Move1_Target_Deg)"
      "MOV(VisionRobot.Manual.CommandID,VisionRobot.Status.ActiveCommandID)"
      "OTU(VisionRobot.Status.InPosition)OTU(Move0_InPosition)OTU(Move1_InPosition)"
+     "OTU(Move0_Loaded)OTU(Move1_Loaded)"
      "OTL(Move0_Execute)OTL(Move1_Execute)OTL(MoveActive);"),
     ("Move requested while not enabled -> fault (code 5).",
      "XIC(VisionRobot.Manual.MoveToTarget)XIO(VisionRobot.Status.Enabled)"
@@ -380,7 +385,7 @@ AUTO: List[Rung] = [
     ("State 10 MOVE_CAMERA_CLEAR: command both axes to the camera-clear pose "
      "(clear stale InPosition so the wait state can't fall through).",
      "EQU(State,10)MOV(CAMERA_CLEAR_L,Move0_Target_Deg)MOV(CAMERA_CLEAR_R,Move1_Target_Deg)"
-     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(20,State);"),
+     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(20,State);"),
     ("State 20: both axes in position at camera-clear -> drop execute, mark CameraClear.",
      "EQU(State,20)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)"
      "OTL(VisionRobot.Status.CameraClear)MOV(30,State);"),
@@ -393,7 +398,7 @@ AUTO: List[Rung] = [
      "MOV(50,State);"),
     ("State 50 MOVE_ABOVE_PICK.",
      "EQU(State,50)MOV(PickL,Move0_Target_Deg)MOV(PickR,Move1_Target_Deg)"
-     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(60,State);"),
+     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(60,State);"),
     ("State 60: at pick -> drop execute.",
      "EQU(State,60)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(70,State);"),
     ("State 70 CYLINDER_DOWN_PICK.",
@@ -415,7 +420,7 @@ AUTO: List[Rung] = [
      "EQU(State,120)[XIC(PickUp),XIC(Bypass_Vision)]MOV(130,State);"),
     ("State 130 MOVE_ABOVE_DROP.",
      "EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)"
-     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);"),
+     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);"),
     ("State 140: at drop -> drop execute.",
      "EQU(State,140)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(150,State);"),
     ("State 150 CYLINDER_DOWN_DROP.",
@@ -647,8 +652,7 @@ def _glue_tags() -> List[Tag]:
 
     # --- per-motor move + home glue (R_MoveMotor* / R_HomeMotor*) ---
     for m in (0, 1):
-        add(f"Move{m}_Execute", "BOOL", desc=f"Rising edge starts a Motor {m} absolute move.")
-        add(f"Move{m}_ons", "BOOL", desc=f"ONS storage for Move{m}_Execute.")
+        add(f"Move{m}_Execute", "BOOL", desc=f"Commanded (level): a Motor {m} absolute move is requested until it completes.")
         add(f"Move{m}_Fault", "BOOL", desc=f"Motor {m} move fault (drive fault / shutdown / ALM).")
         add(f"Move{m}_InPosition", "BOOL", desc=f"Motor {m} at target (only after a loaded move).")
         add(f"Move{m}_Loaded", "BOOL", desc=f"Motor {m} has a move loaded - gates InPosition off a stale At_Target_Posn.")

@@ -282,11 +282,17 @@ INPUT   Execute     BOOL      // rising edge = start one move
 IN_OUT  Ax          AxisIF    // alias onto ClearLink:O1/:I1 motor block (§3)
 OUTPUT  InPosition  BOOL
 OUTPUT  Fault       BOOL
-LOCAL   prevExec, Loaded : BOOL
+LOCAL   Loaded : BOOL
 
 Ax.Enable := TRUE;                              // Motor0_Output_Reg_Enable
 
-IF Execute AND NOT prevExec AND NOT Fault THEN  // rising edge: load the move
+// Level-triggered, NOT an Execute edge. Execute is a sticky latch (R40/R50 hold
+// it until the move completes); edge-triggering it deadlocks if the first load is
+// ever missed (e.g. a transient Shutdowns_Pres at the edge) — the latch never
+// returns to 0, so a one-shot can never re-fire and every later command is
+// ignored. A new command clears Loaded + InPosition in R40/R50, so this loads
+// exactly once, then Loaded/InPosition hold it off.
+IF Execute AND NOT Loaded AND NOT InPosition AND NOT Fault THEN
     Ax.MoveDist  := ROUND(TargetDeg * STEPS_PER_DEG);
     Ax.VelLimit  := MOVE_VEL;                   // steps/s (<= 500000)
     Ax.AccelLim  := MOVE_ACC;
@@ -294,7 +300,6 @@ IF Execute AND NOT prevExec AND NOT Fault THEN  // rising edge: load the move
     Ax.LoadPosnData := TRUE;                     // Motor0_Output_Reg_Load_Posn_Data
     Loaded := TRUE;
 END_IF;
-prevExec := Execute;
 
 IF Ax.LoadPosnMoveAck THEN Ax.LoadPosnData := FALSE; END_IF;   // handshake ack
 
