@@ -59,8 +59,8 @@
 <Text><![CDATA[XIC(Home1_Tmr.DN)OTL(Ax1_HomeFault)MOV(900,Home1_State);]]></Text>
 </Rung>
 <Rung Number="13" Type="N">
-<Comment><![CDATA[EM806 alarm or ClearLink shutdown -> fault.]]></Comment>
-<Text><![CDATA[[XIC(EM806_1_ALM),XIC(ClearLink:I1.Motor1_Status_Shutdowns_Pres)]OTL(Ax1_HomeFault)MOV(900,Home1_State);]]></Text>
+<Comment><![CDATA[EM806 alarm or ClearLink shutdown DURING the homing move (States 40-60, i.e. after clear-alerts) -> fault. Gated by state so a normal power-up Shutdowns_Pres doesn't latch a homing fault at idle.]]></Comment>
+<Text><![CDATA[GEQ(Home1_State,40)LES(Home1_State,70)[XIC(EM806_1_ALM),XIC(ClearLink:I1.Motor1_Status_Shutdowns_Pres)]OTL(Ax1_HomeFault)MOV(900,Home1_State);]]></Text>
 </Rung>
 <Rung Number="14" Type="N">
 <Comment><![CDATA[State 900 FAULT: clear the move bits, hold for reset.]]></Comment>

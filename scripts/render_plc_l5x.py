@@ -197,7 +197,10 @@ def home_rungs(m: int) -> List[Rung]:
          f"NEQ(Home{m}_State,0)LES(Home{m}_State,70)TON(Home{m}_Tmr,?,?);"),
         ("Homing timed out -> fault.",
          f"XIC(Home{m}_Tmr.DN)OTL(Ax{m}_HomeFault)MOV(900,Home{m}_State);"),
-        ("EM806 alarm or ClearLink shutdown -> fault.",
+        ("EM806 alarm or ClearLink shutdown DURING the homing move (States 40-60, "
+         "i.e. after clear-alerts) -> fault. Gated by state so a normal power-up "
+         "Shutdowns_Pres doesn't latch a homing fault at idle.",
+         f"GEQ(Home{m}_State,40)LES(Home{m}_State,70)"
          f"[XIC(EM806_{m}_ALM),XIC({i}Status_Shutdowns_Pres)]"
          f"OTL(Ax{m}_HomeFault)MOV(900,Home{m}_State);"),
         ("State 900 FAULT: clear the move bits, hold for reset.",
