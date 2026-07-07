@@ -11,8 +11,8 @@
 <Text><![CDATA[CPT(Move0_Steps,TRN(Move0_Target_Deg * STEPS_PER_DEG));]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
-<Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, latch Load Position Data, mark Loaded, and drop any stale InPosition.]]></Comment>
-<Text><![CDATA[XIC(Move0_Execute)ONS(Move0_ons)XIO(Move0_Fault)MOV(Move0_Steps,ClearLink:O1.Motor0_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor0_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTL(Move0_Loaded)OTU(Move0_InPosition);]]></Text>
+<Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, latch Load Position Data, mark Loaded, and drop any stale InPosition. Gated by the motor-local fault AND the latched controller fault (Status.Faulted) so a code-4 homing failure inhibits the move until Reset clears it.]]></Comment>
+<Text><![CDATA[XIC(Move0_Execute)ONS(Move0_ons)XIO(Move0_Fault)XIO(VisionRobot.Status.Faulted)MOV(Move0_Steps,ClearLink:O1.Motor0_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor0_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTL(Move0_Loaded)OTU(Move0_InPosition);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
 <Comment><![CDATA[ClearLink acknowledges the load -> drop Load Position Data.]]></Comment>
@@ -25,6 +25,10 @@
 <Rung Number="4" Type="N">
 <Comment><![CDATA[Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.]]></Comment>
 <Text><![CDATA[[XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),XIC(ClearLink:I1.Motor0_Status_Shutdowns_Pres),XIC(EM806_0_ALM)]OTE(Move0_Fault);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[Abort: on a motor-local fault or the latched controller fault, drop any in-flight load so a faulted axis cannot keep or re-issue a move. Reset (R10) clears Status.Faulted; the operator re-Executes to resume.]]></Comment>
+<Text><![CDATA[[XIC(Move0_Fault),XIC(VisionRobot.Status.Faulted)]OTU(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTU(Move0_Loaded);]]></Text>
 </Rung>
 </RLLContent>
 </Routine>
