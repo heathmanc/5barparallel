@@ -96,8 +96,9 @@ Motor 1 is `Motor1_*`):
 **Prerequisite — one-time Configuration assembly (`<module>:C`, per motor):**
 set `Home Sensor` connector = the ClearLink input the shoulder prox is wired to,
 `Config Register.HomingEnable` (bit 0) = 1, `Config Register.HomeSensorActiveLevel`
-(bit 1) to match the prox, and `Config Register.HLFBInversion` (bit 3) = 1 (the
-EM806 has no HLFB — `docs/plc_program.md` §3). These are sent once when the
+(bit 1) to match the prox, and `Config Register.HLFBInversion` (bit 3) = **0 (OFF)**
+for the no-HLFB EM806 — setting it to 1 latches a Motor-Faulted shutdown that
+cancels all motion (`docs/plc_program.md` §3). These are sent once when the
 EtherNet/IP connection is established.
 
 **Parameters:** `In` HomeReq, HomeVel, HomeAccel, TimeoutPreset · `InOut` Ax

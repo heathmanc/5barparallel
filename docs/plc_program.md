@@ -208,14 +208,18 @@ the handshake is Load-Data → Ack:
    Motor_In_Fault` → clear with `..._Clear_Fault`; `Motor0_Status_Shutdowns_Pres`
    → clear with `..._Clear_Alerts` (read `Motor0_Shutdowns` for the reason).
 
-> **HLFB caveat for the EM806.** Teknic's examples gate enable on `HLFB_ON` and
-> move-done on `At_Target_Posn`, both of which need HLFB asserted. The EM806 has
-> no HLFB, so set **`HLFB Inversion`** (Config Register bit 3) so the ClearLink
-> reads HLFB as asserted — then those bits behave for the stepper exactly as they
-> do for a ClearPath-SD. (Without it, `HLFB_ON`/`Enabled` never assert and
-> `Motor_In_Fault` latches immediately.) `Steps_Active == 0` is the
-> HLFB-independent move-done fallback, as used by the `SD_Jog`/`SD_Velocity_Move`
-> examples.
+> **HLFB caveat for the EM806 — this bites hard.** Teknic's examples gate enable
+> on `HLFB_ON` and move-done on `At_Target_Posn`, both of which need HLFB asserted.
+> The EM806 has **no HLFB**, so `HLFB Inversion` (Config Register bit 3) must be set
+> to whatever makes the ClearLink read HLFB as **asserted**. Per the manual's
+> third-party-drive troubleshooting (p.72) that is **OFF (0)** — the *opposite* of
+> the ClearPath default of 1. If you leave it at **1**, the ClearLink reads HLFB
+> de-asserted → **`Motor_In_Fault` (Status bit 9) latches → it cancels every move →
+> a "Motor Faulted" shutdown (Shutdowns bit 10) latches** and blocks all motion
+> (the axis just holds; no step pulses come out). Set bit 3 = **0**, confirm
+> `Motor_In_Fault` (bit 9) reads 0 and `Enabled` (bit 10) reads 1, then clear the
+> shutdown (Clear Alerts). `Steps_Active == 0` is the HLFB-independent move-done
+> fallback used by the `SD_Jog`/`SD_Velocity_Move` examples.
 
 **Open-loop / third-party-drive reality** — the EM806 is a plain step/dir drive
 with **no HLFB** (High-Level Feedback), so:
@@ -224,10 +228,11 @@ with **no HLFB** (High-Level Feedback), so:
   — which is why homing and the 85 % reach / singularity margins (enforced in
   Python) matter.
 - Several status bits are HLFB-derived — **At Target Position** (0), **Motor in
-  Fault** (9), **Enabled** (10). With no HLFB wired you **must set `HLFB
-  Inversion` (Config Register bit 3)** so HLFB reads as asserted; otherwise
-  `Enabled` never comes true and `Motor in Fault` trips immediately. Set `Enable
-  Inversion` (bit 2) if the EM806 enables on the opposite electrical sense.
+  Fault** (9), **Enabled** (10). With no HLFB wired, set `HLFB Inversion` (Config
+  Register bit 3) to **0 (OFF)** — the opposite of the ClearPath default — so HLFB
+  reads as asserted; leaving it at 1 makes `Motor in Fault` trip and latch a
+  "Motor Faulted" shutdown that cancels all motion. Set `Enable Inversion` (bit 2)
+  if the EM806 enables on the opposite electrical sense.
 - The EM806 must accept the ClearLink's **fixed 1 µs step pulse / 500 kHz max**
   — set its pulse-width/filter accordingly.
 - The ClearLink's own "Motor Fault" is HLFB-based and will **not** see an EM806
@@ -318,7 +323,8 @@ Fault := Ax.MotorInFault OR Ax.ShutdownsPres OR Ax.ALM;
 fast/back-off/slow jog. Mirrors `SD_Homing`. One-time config
 (`ClearLink:C.Motor0Config`, §3): `Home Sensor` connector = the shoulder prox
 input, `Config Register.Homing Enable` (bit 0) = 1, `Home Sensor Active Level`
-(bit 1) to match, `HLFB Inversion` (bit 3) = 1 for the EM806. Then:
+(bit 1) to match, `HLFB Inversion` (bit 3) = **0 (OFF)** for the no-HLFB EM806
+(=1 latches Motor-Faulted — see §3 HLFB caveat). Then:
 ```
 INPUT   Execute       BOOL     // rising edge = home this axis
 IN_OUT  Ax            AxisIF
@@ -474,7 +480,7 @@ One-time config (per axis, Configuration assembly):
   Home Sensor connector := <prox input pin>      // 0..12 = local ClearLink input
   Config Register.HomingEnable (bit0) := 1
   Config Register.HomeSensorActiveLevel (bit1)   // to match the prox
-  Config Register.HLFBInversion (bit3) := 1      // no HLFB on the EM806 (§3)
+  Config Register.HLFBInversion (bit3) := 0      // OFF for the no-HLFB EM806; =1 latches Motor-Faulted (§3)
 
 Per axis (AOI_HomeAxis, mirrors SD_Homing):
   1. Motor0_Output_Reg_Enable := 1; wait Motor0_Status_HLFB_ON.

@@ -207,7 +207,7 @@ Sent once when the connection is established. Per motor (`Motor0Config`,
 | `Home Sensor` connector | the prox input pin (0–12) from §1 | ClearLink reads the prox during a homing move; −1 = hard-stop homing |
 | `Config Register` **Homing Enable** (bit 0) | 1 | enables the homing move + `Has Homed`/`Ready To Home` |
 | `Config Register` **Home Sensor Active Level** (bit 1) | match the prox | which prox state means "at home" |
-| `Config Register` **HLFB Inversion** (bit 3) | **1** | the EM806 has no HLFB — without this, `Enabled`/`At Target Position` never assert and `Motor In Fault` latches |
+| `Config Register` **HLFB Inversion** (bit 3) | **0** (OFF) — verify on the bench | The EM806 has **no HLFB**. Set this so `Motor In Fault` (Status bit 9) stays **0** while enabled. Per the ClearLink manual's third-party-drive troubleshooting (p.72), that is **OFF (0)** — the *opposite* of the ClearPath default of 1. Setting it to **1** makes the ClearLink read HLFB de-asserted → **Motor In Fault → cancels all motion → latches a "Motor Faulted" shutdown** (Shutdowns bit 10). Watch `Motor0_Status_Motor_In_Fault` (bit 9), `_HLFB_ON` (bit 14) and `_Enabled` (bit 10) while toggling this. |
 | `Config Register` **Enable Inversion** (bit 2) | as needed | if the EM806 enables on the opposite electrical sense |
 | `Config Register` **Soft Limit Enable** (bit 5) + `Soft Limit 1/2` | after homing | −20° / +200° soft limits (steps = deg × `STEPS_PER_DEG`) |
 
@@ -289,7 +289,8 @@ values — so all of these start at 0/false):
 > order: `Config Register` **Homing Enable** (bit 0) is set (else `Ready_To_Home`
 > never asserts); the shoulder prox is wired to the motor's `Home Sensor`
 > connector and toggles (read its DIP); `HOME_VEL_0/1` sign drives *toward* the
-> prox; and `HLFB Inversion` (bit 3) is set for the EM806 (§5). Reset, fix, retry.
+> prox; and `HLFB Inversion` (bit 3) is **0/OFF** for the EM806 (§5 — =1 latches
+Motor-Faulted and cancels motion). Reset, fix, retry.
 
 1. **Comms:** from the app's **PLC tab → Connect PLC** at `IP/slot`. Confirm the
    `VisionRobot` tags read/write.
