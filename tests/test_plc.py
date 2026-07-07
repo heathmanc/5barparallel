@@ -86,7 +86,31 @@ def test_sim_move_while_disabled_faults():
 # --------------------------------------------------------------------------- #
 def make_driver(home=(135.0, 45.0)) -> PlcRobotDriver:
     client = SimulatedPlcClient(home_angles=home).connect()
-    return PlcRobotDriver(client, command_timeout_s=2.0)
+    # sim reacts synchronously, so no pulse dwell is needed (keeps tests fast)
+    return PlcRobotDriver(client, command_timeout_s=2.0, pulse_hold_s=0.0)
+
+
+def test_pulse_holds_command_bit_true_for_the_plc(monkeypatch):
+    """A real PLC (10-20 ms scan) must see the rising edge, so a pulsed command
+    bit is held true for pulse_hold_s between the True and False writes — not
+    written true-then-immediately-false (which can slip between scans)."""
+    from bung_cover_robot.plc import plc_robot_driver as mod
+    from bung_cover_robot.plc import tags as T
+
+    sim = SimulatedPlcClient(home_angles=(135.0, 45.0)).connect()
+    seq = []
+    real_write = sim.write
+    sim.write = lambda t, v: (seq.append((t, v)), real_write(t, v))[1]
+    monkeypatch.setattr(mod.time, "sleep", lambda s: seq.append(("HOLD", s)))
+
+    d = mod.PlcRobotDriver(sim, command_timeout_s=2.0, pulse_hold_s=0.05)
+    d.enable()
+    d.home()
+
+    hr = T.Manual.HOME_REQUEST
+    i_true, i_false = seq.index((hr, True)), seq.index((hr, False))
+    assert i_true < i_false                       # rising edge, then clear
+    assert ("HOLD", 0.05) in seq[i_true + 1:i_false]  # held across scans between
 
 
 def test_driver_enable_home_move_readback():

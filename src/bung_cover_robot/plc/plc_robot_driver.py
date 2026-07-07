@@ -32,10 +32,15 @@ class PlcRobotDriver(RobotDriver):
         client: PlcClient,
         command_timeout_s: float = 10.0,
         poll_interval_s: float = 0.02,
+        pulse_hold_s: float = 0.1,
     ) -> None:
         self.client = client
         self.command_timeout_s = command_timeout_s
         self.poll_interval_s = poll_interval_s
+        # A command bit must stay true long enough for the PLC (10-20 ms scan) to
+        # catch the rising edge; a true-then-immediately-false write can slip
+        # between scans and never be seen. 0 = no dwell (e.g. against the sim).
+        self.pulse_hold_s = pulse_hold_s
         self._command_id = 0
 
     # --- lifecycle ----------------------------------------------------------
@@ -116,8 +121,13 @@ class PlcRobotDriver(RobotDriver):
         self.client.write(tag, value)
 
     def _pulse(self, tag: str) -> None:
-        """Rising edge then clear — the PLC latches on the rising edge."""
+        """Rising edge, hold, then clear — the PLC latches on the rising edge but
+        only if the bit stays true across at least one scan. Holding for
+        ``pulse_hold_s`` (several scans) makes the edge reliably visible; the PLC's
+        ONS ensures it still triggers exactly once."""
         self._write(tag, True)
+        if self.pulse_hold_s > 0:
+            time.sleep(self.pulse_hold_s)
         self._write(tag, False)
 
     def _clear_fault_guard(self) -> None:
