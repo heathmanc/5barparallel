@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="30.00" TargetName="R60_Status" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="RobotController">
+<Programs Use="Context">
+<Program Use="Context" Name="Robot">
+<Routines Use="Context">
+<Routine Use="Target" Name="R60_Status" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment><![CDATA[R60_Status: publish the derived status bits (the rest are set where they occur). VacuumOK from the vacuum sensor.]]></Comment>
+<Text><![CDATA[XIC(VacuumSensor)OTE(VisionRobot.Status.VacuumOK);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[Ready = idle, homed, not homing.]]></Comment>
+<Text><![CDATA[EQU(State,0)EQU(HomeStep,0)XIC(VisionRobot.Status.Homed)OTE(VisionRobot.Status.Ready);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment><![CDATA[Busy = a job is running.]]></Comment>
+<Text><![CDATA[NEQ(State,0)OTE(VisionRobot.Status.Busy);]]></Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

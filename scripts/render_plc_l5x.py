@@ -13,11 +13,22 @@ Three kinds of file, imported **in this order**:
                                        VisionRobot tag.  Controller Tags ->
                                        Import (SECOND — needs the UDT to exist)
 
-    docs/l5x/R_MoveMotor0.L5X   absolute move, Motor 0  \\  right-click a Program
-    docs/l5x/R_MoveMotor1.L5X   absolute move, Motor 1   |  -> Import Routine…
-    docs/l5x/R_HomeMotor0.L5X   ClearLink homing, Motor 0|  (LAST, after the
-    docs/l5x/R_HomeMotor1.L5X   ClearLink homing, Motor 1|  UDT + tags exist)
-    docs/l5x/R30_Homing.L5X     2-axis homing coordinator/
+    docs/l5x/R00_Main.L5X       scan dispatcher (set as the Program's Main) \\
+    docs/l5x/R10_Safety.L5X     E-stop / limits / drive-alarm -> faults      |
+    docs/l5x/R20_Drives.L5X     owns the axis Enable outputs                 |  right-
+    docs/l5x/R30_Homing.L5X     2-axis homing coordinator                    |  click a
+    docs/l5x/R40_Manual.L5X     manual jog/home surface                      |  Program
+    docs/l5x/R50_Auto.L5X       automatic pick/place state machine           |  -> Import
+    docs/l5x/R60_Status.L5X     publishes the derived status bits            |  Routine…
+    docs/l5x/R_MoveMotor0.L5X   absolute move engine, Motor 0                |  (LAST,
+    docs/l5x/R_MoveMotor1.L5X   absolute move engine, Motor 1                |  after the
+    docs/l5x/R_HomeMotor0.L5X   ClearLink homing, Motor 0 (JSR by R30)       |  UDT +
+    docs/l5x/R_HomeMotor1.L5X   ClearLink homing, Motor 1 (JSR by R30)       /  tags)
+
+R00_Main JSRs the others each scan (Manual vs Auto by the AutoMode tag), so this
+is a complete program, not just the motion pieces. These command real motion, the
+Z cylinder and vacuum — REVIEW before running; the hardware E-stop safety relay
+is primary and the PLC bits only mirror it.
 
 Why one UDT per file: Studio 5000 does not reliably *create* the nested
 (dependency) types from a single combined export — the parent then references
@@ -113,25 +124,25 @@ def move_rungs(m: int) -> List[Rung]:
     i = f"ClearLink:I1.Motor{m}_"
     other = 1 - m
     return [
-        (f"R_MoveMotor{m}: Motor {m} absolute move. Tags/constants come from "
-         f"RobotTags.csv (Move{m}_Execute/ons/Fault/InPosition, Move{m}_Steps, "
-         f"Move{m}_Target_Deg, EM806_{m}_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) "
-         f"and the ClearLink module (ClearLink:O1/:I1). Import the VisionRobot UDT "
-         f".L5X files + RobotTags.csv first. Twin routine: R_MoveMotor{other}.",
-         f"OTE({o}Output_Reg_Enable);"),
-        ("Convert the target angle to steps.",
+        (f"R_MoveMotor{m}: Motor {m} absolute move. R20_Drives owns the axis Enable "
+         f"output (this routine no longer sets it). Called each scan by R00_Main. "
+         f"Tags/constants from RobotTags.csv (Move{m}_Execute/ons/Fault/InPosition, "
+         f"Move{m}_Steps, Move{m}_Target_Deg, EM806_{m}_ALM, STEPS_PER_DEG, MOVE_VEL, "
+         f"MOVE_ACC) and the ClearLink module. Convert the target angle to steps.",
          f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG));"),
-        ("Rising edge of Execute: load Move Distance / limits, set Absolute, and "
-         "latch Load Position Data.",
+        ("Rising edge of Execute: load Move Distance / limits, set Absolute, latch "
+         "Load Position Data, mark Loaded, and drop any stale InPosition.",
          f"XIC(Move{m}_Execute)ONS(Move{m}_ons)XIO(Move{m}_Fault)"
          f"MOV(Move{m}_Steps,{o}Move_Dist)MOV(MOVE_VEL,{o}Vel_Limit)"
          f"MOV(MOVE_ACC,{o}Accel_Lim)OTL({o}Output_Reg_Abs_Flag)"
-         f"OTL({o}Output_Reg_Load_Posn_Data);"),
+         f"OTL({o}Output_Reg_Load_Posn_Data)OTL(Move{m}_Loaded)OTU(Move{m}_InPosition);"),
         ("ClearLink acknowledges the load -> drop Load Position Data.",
          f"XIC({i}Status_Load_Posn_Move_Ack)OTU({o}Output_Reg_Load_Posn_Data);"),
-        ("Move done = At Target Position (needs HLFB Inversion for the EM806).",
-         f"XIC({i}Status_At_Target_Posn)XIO({o}Output_Reg_Load_Posn_Data)"
-         f"OTE(Move{m}_InPosition);"),
+        ("Move done = a loaded move reached At Target Position (Loaded gate stops a "
+         "stale/at-rest At_Target_Posn from reading as done). Latch InPosition, clear "
+         "Loaded. Needs HLFB Inversion for the EM806.",
+         f"XIC(Move{m}_Loaded)XIC({i}Status_At_Target_Posn)XIO({o}Output_Reg_Load_Posn_Data)"
+         f"OTL(Move{m}_InPosition)OTU(Move{m}_Loaded);"),
         ("Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.",
          f"[XIC({i}Status_Motor_In_Fault),XIC({i}Status_Shutdowns_Pres),"
          f"XIC(EM806_{m}_ALM)]OTE(Move{m}_Fault);"),
@@ -151,9 +162,8 @@ def home_rungs(m: int) -> List[Rung]:
          f"R_HomeMotor0/R_HomeMotor1.",
          f"XIC(Home{m}_Req)ONS(Home{m}_ons)EQU(Home{m}_State,0)XIO(Ax{m}_HomeFault)"
          f"MOV(10,Home{m}_State);"),
-        ("State 10 ENABLING: hold the Enable output.",
-         f"EQU(Home{m}_State,10)OTE({o}Output_Reg_Enable);"),
-        ("State 10: advance once HLFB is asserted.",
+        ("State 10 ENABLING: R20_Drives holds the axis Enable; advance once HLFB is "
+         "asserted (enable-complete).",
          f"EQU(Home{m}_State,10)XIC({i}Status_HLFB_ON)MOV(20,Home{m}_State);"),
         ("State 20 CLEAR MOTOR FAULTS.",
          f"EQU(Home{m}_State,20)OTE({o}Output_Reg_Clear_Fault);"),
@@ -204,7 +214,9 @@ COORD: List[Rung] = [
      "VisionRobot UDT .L5X files + RobotTags.csv first.",
      "XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)"
      "XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)"
-     "MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)OTL(Home0_Req);"),
+     "MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)"
+     "OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)"
+     "MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req);"),
     ("Axis 0 (left) homed -> start Axis 1 (right).",
      "EQU(HomeStep,10)XIC(Ax0_HomeDone)OTU(Home0_Req)OTL(Home1_Req)"
      "MOV(20,HomeStep);"),
@@ -222,6 +234,192 @@ COORD: List[Rung] = [
     ("Either axis homing fault -> homing fault (FaultCode 4).",
      "[XIC(Ax0_HomeFault),XIC(Ax1_HomeFault)]OTL(VisionRobot.Status.Faulted)"
      "MOV(4,VisionRobot.Status.FaultCode)MOV(900,HomeStep);"),
+]
+
+# --------------------------------------------------------------------------- #
+# The program that ties it together — R00_Main dispatcher + R10/R20/R40/R50/R60.
+# Flat neutral text using the RobotTags.csv glue tags. These command real motion,
+# the Z cylinder, and vacuum — REVIEW before running; the hardware E-stop safety
+# relay is primary and these PLC bits only mirror it.
+# --------------------------------------------------------------------------- #
+MAIN: List[Rung] = [
+    ("R00_Main: scan dispatcher — calls every routine in order each scan. Manual "
+     "and Auto are mutually exclusive on AutoMode (RobotTags.csv). Put this routine "
+     "as the Program's Main; import all the other routines first.",
+     "JSR(R10_Safety,0)JSR(R20_Drives,0)JSR(R30_Homing,0);"),
+    ("Auto mode runs the pick/place sequence; manual mode runs the jog/home surface.",
+     "XIC(AutoMode)JSR(R50_Auto,0);"),
+    ("(Manual when not in auto.)",
+     "XIO(AutoMode)JSR(R40_Manual,0);"),
+    ("Service the per-axis move engines after the commanding routine, then publish "
+     "status.",
+     "JSR(R_MoveMotor0,0)JSR(R_MoveMotor1,0)JSR(R60_Status,0);"),
+]
+
+SAFETY: List[Rung] = [
+    ("R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + "
+     "FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags "
+     "(RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/"
+     "EM806_*_ALM/SafetyOK/Reset_prev. The hardware safety relay is primary; these "
+     "bits only mirror it. E-stop or guard open -> fault (code 2).",
+     "[XIC(EStop_Pressed),XIO(Guard_Closed)]OTL(VisionRobot.Status.Faulted)"
+     "MOV(2,VisionRobot.Status.FaultCode);"),
+    ("Any hard limit tripped -> fault (code 3).",
+     "[XIC(Ax0_LimitMin),XIC(Ax0_LimitMax),XIC(Ax1_LimitMin),XIC(Ax1_LimitMax)]"
+     "OTL(VisionRobot.Status.Faulted)MOV(3,VisionRobot.Status.FaultCode);"),
+    ("Either EM806 drive alarm -> fault (code 1).",
+     "[XIC(EM806_0_ALM),XIC(EM806_1_ALM)]OTL(VisionRobot.Status.Faulted)"
+     "MOV(1,VisionRobot.Status.FaultCode);"),
+    ("SafetyOK = no active fault, E-stop healthy, guard closed.",
+     "XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);"),
+    ("Cmd.Reset (rising edge) while physically safe clears the latched fault.",
+     "XIC(VisionRobot.Cmd.Reset)ONS(Reset_prev)XIC(EStop_OK)XIC(Guard_Closed)"
+     "OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);"),
+]
+
+DRIVES: List[Rung] = [
+    ("R20_Drives: owns the axis Enable outputs. EnableReq mirrors Manual.Enable "
+     "gated by SafetyOK and no fault; drives both ClearLink Enable outputs and "
+     "publishes Status.Enabled. Tag: EnableReq (RobotTags.csv).",
+     "XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)"
+     "OTE(EnableReq);"),
+    ("Drive Motor 0 enable.",
+     "XIC(EnableReq)OTE(ClearLink:O1.Motor0_Output_Reg_Enable);"),
+    ("Drive Motor 1 enable.",
+     "XIC(EnableReq)OTE(ClearLink:O1.Motor1_Output_Reg_Enable);"),
+    ("Enabled when requested and both drives report Enabled.",
+     "XIC(EnableReq)XIC(ClearLink:I1.Motor0_Status_Enabled)"
+     "XIC(ClearLink:I1.Motor1_Status_Enabled)OTE(VisionRobot.Status.Enabled);"),
+]
+
+MANUAL: List[Rung] = [
+    ("R40_Manual: absolute jog on Manual.MoveToTarget (rising edge), gated by "
+     "Enabled + Homed + soft limits; drives Move0/Move1; publishes InPosition + "
+     "CompleteCommandID. (Homing is Manual.HomeRequest -> R30_Homing.) Tags "
+     "(RobotTags.csv): WithinLimits/MoveActive/MTT_prev. Soft-limit check first.",
+     "GEQ(VisionRobot.Manual.TargetLeftDeg,-20.0)LEQ(VisionRobot.Manual.TargetLeftDeg,200.0)"
+     "GEQ(VisionRobot.Manual.TargetRightDeg,-20.0)LEQ(VisionRobot.Manual.TargetRightDeg,200.0)"
+     "OTE(WithinLimits);"),
+    ("Accept a move on the rising edge when enabled, homed and within limits: latch "
+     "targets + CommandID and start both axes.",
+     "XIC(VisionRobot.Manual.MoveToTarget)ONS(MTT_prev)XIC(VisionRobot.Status.Enabled)"
+     "XIC(VisionRobot.Status.Homed)XIC(WithinLimits)"
+     "MOV(VisionRobot.Manual.TargetLeftDeg,Move0_Target_Deg)"
+     "MOV(VisionRobot.Manual.TargetRightDeg,Move1_Target_Deg)"
+     "MOV(VisionRobot.Manual.CommandID,VisionRobot.Status.ActiveCommandID)"
+     "OTU(VisionRobot.Status.InPosition)OTU(Move0_InPosition)OTU(Move1_InPosition)"
+     "OTL(Move0_Execute)OTL(Move1_Execute)OTL(MoveActive);"),
+    ("Move requested while not enabled -> fault (code 5).",
+     "XIC(VisionRobot.Manual.MoveToTarget)XIO(VisionRobot.Status.Enabled)"
+     "OTL(VisionRobot.Status.Faulted)MOV(5,VisionRobot.Status.FaultCode);"),
+    ("Move requested while not homed -> fault (code 6).",
+     "XIC(VisionRobot.Manual.MoveToTarget)XIC(VisionRobot.Status.Enabled)"
+     "XIO(VisionRobot.Status.Homed)OTL(VisionRobot.Status.Faulted)"
+     "MOV(6,VisionRobot.Status.FaultCode);"),
+    ("Both axes in position -> publish InPosition + CompleteCommandID, drop execute.",
+     "XIC(MoveActive)XIC(Move0_InPosition)XIC(Move1_InPosition)"
+     "MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.CompleteCommandID)"
+     "OTL(VisionRobot.Status.InPosition)OTU(Move0_Execute)OTU(Move1_Execute)OTU(MoveActive);"),
+    ("Manual.Abort or a fault stops the move.",
+     "[XIC(VisionRobot.Manual.Abort),XIC(VisionRobot.Status.Faulted)]"
+     "OTU(Move0_Execute)OTU(Move1_Execute)OTU(MoveActive);"),
+]
+
+AUTO: List[Rung] = [
+    ("R50_Auto: automatic pick/place state machine (Claude.md §11). Drives "
+     "Move0/Move1 to the camera-clear/pick/drop poses, the Z cylinder, vacuum and "
+     "blowoff; advances on status bits (timers only for vacuum settle + blowoff). "
+     "Tags (RobotTags.csv): State/RPP_prev/AR_prev/VacTmr/BlowTmr/Arrived/poses/"
+     "pneumatics/sensors. Keep the timer presets loaded from the constants.",
+     "MOV(VAC_SETTLE,VacTmr.PRE)MOV(BLOWOFF_TIME,BlowTmr.PRE);"),
+    ("Arrived (status/HMI only) = both axes in position. Transitions check the two "
+     "InPosition bits directly so a stale value can't fall through.",
+     "XIC(Move0_InPosition)XIC(Move1_InPosition)OTE(Arrived);"),
+    ("Vacuum settle timer runs in the vacuum states.",
+     "[EQU(State,90),EQU(State,100)]TON(VacTmr,?,?);"),
+    ("Blowoff timer runs in the blowoff state.",
+     "EQU(State,170)TON(BlowTmr,?,?);"),
+    ("State 0 IDLE: on Cmd.RequestPickPlace (edge) while enabled, homed and safe, "
+     "latch the CommandID and start.",
+     "EQU(State,0)XIC(VisionRobot.Cmd.RequestPickPlace)ONS(RPP_prev)"
+     "XIC(VisionRobot.Status.Enabled)XIC(VisionRobot.Status.Homed)XIC(SafetyOK)"
+     "MOV(VisionRobot.Cmd.CommandID,VisionRobot.Status.ActiveCommandID)"
+     "OTU(VisionRobot.Status.Done)MOV(10,State);"),
+    ("State 10 MOVE_CAMERA_CLEAR: command both axes to the camera-clear pose "
+     "(clear stale InPosition so the wait state can't fall through).",
+     "EQU(State,10)MOV(CAMERA_CLEAR_L,Move0_Target_Deg)MOV(CAMERA_CLEAR_R,Move1_Target_Deg)"
+     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(20,State);"),
+    ("State 20: both axes in position at camera-clear -> drop execute, mark CameraClear.",
+     "EQU(State,20)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)"
+     "OTL(VisionRobot.Status.CameraClear)MOV(30,State);"),
+    ("State 30 READY_FOR_VISION: signal the PC (targets already written by it).",
+     "EQU(State,30)OTL(VisionRobot.Status.ReadyForVision)MOV(40,State);"),
+    ("State 40 LATCH_TARGETS: copy the PC's pick/drop angles into working tags.",
+     "EQU(State,40)MOV(VisionRobot.Target.Pick_LeftDeg,PickL)"
+     "MOV(VisionRobot.Target.Pick_RightDeg,PickR)MOV(VisionRobot.Target.Drop_LeftDeg,DropL)"
+     "MOV(VisionRobot.Target.Drop_RightDeg,DropR)OTU(VisionRobot.Status.ReadyForVision)"
+     "MOV(50,State);"),
+    ("State 50 MOVE_ABOVE_PICK.",
+     "EQU(State,50)MOV(PickL,Move0_Target_Deg)MOV(PickR,Move1_Target_Deg)"
+     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(60,State);"),
+    ("State 60: at pick -> drop execute.",
+     "EQU(State,60)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(70,State);"),
+    ("State 70 CYLINDER_DOWN_PICK.",
+     "EQU(State,70)OTL(CylinderDown)MOV(80,State);"),
+    ("State 80: Z down at pick confirmed.",
+     "EQU(State,80)XIC(PickDown)MOV(90,State);"),
+    ("State 90 VACUUM_ON.",
+     "EQU(State,90)OTL(VacuumOn);"),
+    ("State 90: vacuum settle timer done -> verify.",
+     "EQU(State,90)XIC(VacTmr.DN)MOV(100,State);"),
+    ("State 100 VERIFY_VACUUM: confirmed -> continue.",
+     "EQU(State,100)XIC(VisionRobot.Status.VacuumOK)MOV(110,State);"),
+    ("State 100: vacuum not confirmed by the settle timeout -> fault (code 9).",
+     "EQU(State,100)XIC(VacTmr.DN)XIO(VisionRobot.Status.VacuumOK)"
+     "OTL(VisionRobot.Status.Faulted)MOV(9,VisionRobot.Status.FaultCode)MOV(900,State);"),
+    ("State 110 CYLINDER_UP_PICK.",
+     "EQU(State,110)OTU(CylinderDown)MOV(120,State);"),
+    ("State 120: Z up at pick confirmed.",
+     "EQU(State,120)XIC(PickUp)MOV(130,State);"),
+    ("State 130 MOVE_ABOVE_DROP.",
+     "EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)"
+     "OTU(Move0_InPosition)OTU(Move1_InPosition)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);"),
+    ("State 140: at drop -> drop execute.",
+     "EQU(State,140)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(150,State);"),
+    ("State 150 CYLINDER_DOWN_DROP.",
+     "EQU(State,150)OTL(CylinderDown)MOV(160,State);"),
+    ("State 160: Z down at drop confirmed.",
+     "EQU(State,160)XIC(DropDown)MOV(170,State);"),
+    ("State 170 VACUUM_OFF_BLOWOFF: release vacuum, start blowoff.",
+     "EQU(State,170)OTU(VacuumOn)OTL(Blowoff);"),
+    ("State 170: blowoff timer done -> stop blowoff, advance.",
+     "EQU(State,170)XIC(BlowTmr.DN)OTU(Blowoff)MOV(180,State);"),
+    ("State 180 CYLINDER_UP_DROP.",
+     "EQU(State,180)OTU(CylinderDown)MOV(190,State);"),
+    ("State 190: Z up at drop confirmed.",
+     "EQU(State,190)XIC(DropUp)MOV(200,State);"),
+    ("State 200 COMPLETE_JOB: publish CompleteCommandID + Done, back to idle.",
+     "EQU(State,200)MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.CompleteCommandID)"
+     "OTL(VisionRobot.Status.Done)OTU(VisionRobot.Status.CameraClear)MOV(0,State);"),
+    ("State 900 FAULT: on Cmd.Reset (edge) while safe, publish FailedCommandID and "
+     "return to idle.",
+     "EQU(State,900)XIC(VisionRobot.Cmd.Reset)ONS(AR_prev)XIC(SafetyOK)"
+     "MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.FailedCommandID)"
+     "OTU(VisionRobot.Status.Faulted)MOV(0,State);"),
+    ("Any state: Cmd.Abort or unsafe -> stop outputs and go to FAULT.",
+     "[XIC(VisionRobot.Cmd.Abort),XIO(SafetyOK)]OTU(Move0_Execute)OTU(Move1_Execute)"
+     "OTU(VacuumOn)OTU(Blowoff)MOV(900,State);"),
+]
+
+STATUS: List[Rung] = [
+    ("R60_Status: publish the derived status bits (the rest are set where they "
+     "occur). VacuumOK from the vacuum sensor.",
+     "XIC(VacuumSensor)OTE(VisionRobot.Status.VacuumOK);"),
+    ("Ready = idle, homed, not homing.",
+     "EQU(State,0)EQU(HomeStep,0)XIC(VisionRobot.Status.Homed)"
+     "OTE(VisionRobot.Status.Ready);"),
+    ("Busy = a job is running.",
+     "NEQ(State,0)OTE(VisionRobot.Status.Busy);"),
 ]
 
 
@@ -420,7 +618,8 @@ def _glue_tags() -> List[Tag]:
         add(f"Move{m}_Execute", "BOOL", desc=f"Rising edge starts a Motor {m} absolute move.")
         add(f"Move{m}_ons", "BOOL", desc=f"ONS storage for Move{m}_Execute.")
         add(f"Move{m}_Fault", "BOOL", desc=f"Motor {m} move fault (drive fault / shutdown / ALM).")
-        add(f"Move{m}_InPosition", "BOOL", desc=f"Motor {m} at target.")
+        add(f"Move{m}_InPosition", "BOOL", desc=f"Motor {m} at target (only after a loaded move).")
+        add(f"Move{m}_Loaded", "BOOL", desc=f"Motor {m} has a move loaded - gates InPosition off a stale At_Target_Posn.")
         add(f"Move{m}_Steps", "DINT", desc=f"Motor {m} target in steps (deg * STEPS_PER_DEG).")
         add(f"Move{m}_Target_Deg", "REAL", "0.0", desc=f"Motor {m} absolute target angle, deg.")
         add(f"Home{m}_Req", "BOOL", desc=f"Request homing of Motor {m} (set by R30_Homing).")
@@ -590,11 +789,17 @@ def main() -> None:
     xml_files = {name: datatype_l5x(udt, members)
                  for name, udt, members in UDT_FILES}
     xml_files.update({
+        "R00_Main.L5X": routine_l5x("R00_Main", MAIN),
+        "R10_Safety.L5X": routine_l5x("R10_Safety", SAFETY),
+        "R20_Drives.L5X": routine_l5x("R20_Drives", DRIVES),
+        "R30_Homing.L5X": routine_l5x("R30_Homing", COORD),
+        "R40_Manual.L5X": routine_l5x("R40_Manual", MANUAL),
+        "R50_Auto.L5X": routine_l5x("R50_Auto", AUTO),
+        "R60_Status.L5X": routine_l5x("R60_Status", STATUS),
         "R_MoveMotor0.L5X": routine_l5x("R_MoveMotor0", move_rungs(0)),
         "R_MoveMotor1.L5X": routine_l5x("R_MoveMotor1", move_rungs(1)),
         "R_HomeMotor0.L5X": routine_l5x("R_HomeMotor0", home_rungs(0)),
         "R_HomeMotor1.L5X": routine_l5x("R_HomeMotor1", home_rungs(1)),
-        "R30_Homing.L5X": routine_l5x("R30_Homing", COORD),
     })
     for name, text in xml_files.items():
         ET.fromstring(text)                      # well-formedness check

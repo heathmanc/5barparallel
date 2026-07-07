@@ -7,26 +7,22 @@
 <Routine Use="Target" Name="R_MoveMotor0" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R_MoveMotor0: Motor 0 absolute move. Tags/constants come from RobotTags.csv (Move0_Execute/ons/Fault/InPosition, Move0_Steps, Move0_Target_Deg, EM806_0_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) and the ClearLink module (ClearLink:O1/:I1). Import the VisionRobot UDT .L5X files + RobotTags.csv first. Twin routine: R_MoveMotor1.]]></Comment>
-<Text><![CDATA[OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
-</Rung>
-<Rung Number="1" Type="N">
-<Comment><![CDATA[Convert the target angle to steps.]]></Comment>
+<Comment><![CDATA[R_MoveMotor0: Motor 0 absolute move. R20_Drives owns the axis Enable output (this routine no longer sets it). Called each scan by R00_Main. Tags/constants from RobotTags.csv (Move0_Execute/ons/Fault/InPosition, Move0_Steps, Move0_Target_Deg, EM806_0_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) and the ClearLink module. Convert the target angle to steps.]]></Comment>
 <Text><![CDATA[CPT(Move0_Steps,TRN(Move0_Target_Deg * STEPS_PER_DEG));]]></Text>
 </Rung>
-<Rung Number="2" Type="N">
-<Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, and latch Load Position Data.]]></Comment>
-<Text><![CDATA[XIC(Move0_Execute)ONS(Move0_ons)XIO(Move0_Fault)MOV(Move0_Steps,ClearLink:O1.Motor0_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor0_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data);]]></Text>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[Rising edge of Execute: load Move Distance / limits, set Absolute, latch Load Position Data, mark Loaded, and drop any stale InPosition.]]></Comment>
+<Text><![CDATA[XIC(Move0_Execute)ONS(Move0_ons)XIO(Move0_Fault)MOV(Move0_Steps,ClearLink:O1.Motor0_Move_Dist)MOV(MOVE_VEL,ClearLink:O1.Motor0_Vel_Limit)MOV(MOVE_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Abs_Flag)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTL(Move0_Loaded)OTU(Move0_InPosition);]]></Text>
 </Rung>
-<Rung Number="3" Type="N">
+<Rung Number="2" Type="N">
 <Comment><![CDATA[ClearLink acknowledges the load -> drop Load Position Data.]]></Comment>
 <Text><![CDATA[XIC(ClearLink:I1.Motor0_Status_Load_Posn_Move_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data);]]></Text>
 </Rung>
-<Rung Number="4" Type="N">
-<Comment><![CDATA[Move done = At Target Position (needs HLFB Inversion for the EM806).]]></Comment>
-<Text><![CDATA[XIC(ClearLink:I1.Motor0_Status_At_Target_Posn)XIO(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTE(Move0_InPosition);]]></Text>
+<Rung Number="3" Type="N">
+<Comment><![CDATA[Move done = a loaded move reached At Target Position (Loaded gate stops a stale/at-rest At_Target_Posn from reading as done). Latch InPosition, clear Loaded. Needs HLFB Inversion for the EM806.]]></Comment>
+<Text><![CDATA[XIC(Move0_Loaded)XIC(ClearLink:I1.Motor0_Status_At_Target_Posn)XIO(ClearLink:O1.Motor0_Output_Reg_Load_Posn_Data)OTL(Move0_InPosition)OTU(Move0_Loaded);]]></Text>
 </Rung>
-<Rung Number="5" Type="N">
+<Rung Number="4" Type="N">
 <Comment><![CDATA[Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.]]></Comment>
 <Text><![CDATA[[XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),XIC(ClearLink:I1.Motor0_Status_Shutdowns_Pres),XIC(EM806_0_ALM)]OTE(Move0_Fault);]]></Text>
 </Rung>
