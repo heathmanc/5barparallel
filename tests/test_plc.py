@@ -124,6 +124,31 @@ def test_driver_enable_home_move_readback():
     assert d.read_angles() == (120.0, 60.0)
 
 
+def test_driver_reset_clears_fault_and_reads_code():
+    from bung_cover_robot.plc import tags as T
+
+    sim = SimulatedPlcClient(home_angles=(135.0, 45.0)).connect()
+    d = PlcRobotDriver(sim, command_timeout_s=2.0, pulse_hold_s=0.0)
+    # latch a fault, as the PLC would
+    sim.write(T.Status.FAULTED, True)
+    sim.write(T.Status.FAULT_CODE, 4)
+    assert d.is_faulted and d.fault_code() == 4
+    with pytest.raises(RobotDriverError):
+        d.enable()                       # blocked while faulted ("reset before enabling")
+    d.reset()                            # pulses Cmd.Reset -> sim clears the fault
+    assert not d.is_faulted and d.fault_code() is None
+    d.enable()
+    assert d.is_enabled
+
+
+def test_dry_run_driver_reset_and_fault_defaults():
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    d = DryRunRobotDriver()
+    assert not d.is_faulted and d.fault_code() is None
+    d.reset()                            # no-op, must not raise
+
+
 def test_driver_move_requires_enable():
     d = make_driver()
     with pytest.raises(RobotDriverError):

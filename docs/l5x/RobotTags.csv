@@ -51,6 +51,7 @@ TAG,,Ax1_Ready,"Motor 1 drive ready (map to ClearLink:I1.Motor1_Status_Enabled).
 TAG,,EM806_1_ALM,"Motor 1 EM806 ALM. Change to an ALIAS of the ClearLink DI the drive alarm is wired to.","BOOL","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,HomeStep,"Homing coordinator state.","DINT","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,HR_ons,"ONS storage for VisionRobot.Manual.HomeRequest.","BOOL","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
+TAG,,HomeRst_ons,"ONS storage for the R30 homing reset-recovery rung.","BOOL","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,SoftLimitsEnable,"Enable soft limits after homing (mirror Config Register SoftLimitEnable).","BOOL","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,EStop_Pressed,"E-stop pressed input. Map/alias to the hardwired E-stop.","BOOL","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"
 TAG,,EStop_OK,"E-stop circuit healthy (safety-relay feedback). Map to input.","BOOL","","(RADIX := Decimal, Constant := false, ExternalAccess := Read/Write)"

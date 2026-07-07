@@ -192,3 +192,39 @@ def test_factory_uses_configured_home_reference():
     # Driver reports the configured home angles; controller adopts them.
     assert c.driver.read_angles() == pytest.approx(homing.home_angles)
     assert c.state.tcp == pytest.approx(homing.home_tcp_mm, abs=1e-3)
+
+
+# --------------------------------------------------------------------------- #
+# Reset + fault surfacing (a driver fault becomes a MoveResult, never an escape)
+# --------------------------------------------------------------------------- #
+def test_reset_returns_ok_on_dry_run():
+    c = make()
+    assert c.reset().ok
+    assert not c.is_faulted and c.fault_code() is None
+
+
+def test_home_reference_reports_driver_fault_as_reject():
+    from bung_cover_robot.robot.driver import DryRunRobotDriver, RobotDriverError
+
+    class FaultingDriver(DryRunRobotDriver):
+        def home(self):
+            raise RobotDriverError("home / find reference: PLC faulted (code 4)")
+
+    c = RobotTestController(FaultingDriver())
+    c.enable()
+    res = c.home_reference()
+    assert not res.ok
+    assert "code 4" in res.reason        # message surfaced, not an exception
+    assert not c.is_referenced           # stays unreferenced after a failed home
+
+
+def test_enable_reports_driver_fault_as_reject():
+    from bung_cover_robot.robot.driver import DryRunRobotDriver, RobotDriverError
+
+    class FaultingDriver(DryRunRobotDriver):
+        def enable(self):
+            raise RobotDriverError("PLC is faulted (code 4); reset before enabling")
+
+    c = RobotTestController(FaultingDriver())
+    res = c.enable()
+    assert not res.ok and "reset before enabling" in res.reason

@@ -234,6 +234,13 @@ COORD: List[Rung] = [
      "OTE(SoftLimitsEnable)OTL(VisionRobot.Status.Homed)MOV(0,HomeStep);"),
     ("Run the per-axis homing routines every scan (they self-idle at rest).",
      "JSR(R_HomeMotor0,0)JSR(R_HomeMotor1,0);"),
+    ("Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: "
+     "clear the coordinator + per-axis states and latched home faults/requests. "
+     "MUST scan before the fault-latch rung below so the cleared HomeFault can't "
+     "immediately re-latch the fault in the same scan.",
+     "XIC(VisionRobot.Cmd.Reset)ONS(HomeRst_ons)XIC(EStop_OK)XIC(Guard_Closed)"
+     "MOV(0,HomeStep)MOV(0,Home0_State)MOV(0,Home1_State)"
+     "OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)OTU(Home0_Req)OTU(Home1_Req);"),
     ("Either axis homing fault -> homing fault (FaultCode 4).",
      "[XIC(Ax0_HomeFault),XIC(Ax1_HomeFault)]OTL(VisionRobot.Status.Faulted)"
      "MOV(4,VisionRobot.Status.FaultCode)MOV(900,HomeStep);"),
@@ -639,6 +646,7 @@ def _glue_tags() -> List[Tag]:
     # --- homing coordinator (R30_Homing) ---
     add("HomeStep", "DINT", desc="Homing coordinator state.")
     add("HR_ons", "BOOL", desc="ONS storage for VisionRobot.Manual.HomeRequest.")
+    add("HomeRst_ons", "BOOL", desc="ONS storage for the R30 homing reset-recovery rung.")
     add("SoftLimitsEnable", "BOOL", desc="Enable soft limits after homing (mirror Config Register SoftLimitEnable).")
 
     # --- safety (R10_Safety): physical inputs + logic bits ---
