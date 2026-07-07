@@ -14,11 +14,15 @@ which can exceed the placement tolerance.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+
+# operator-drawn pick region, x, y, w, h in pixels
+Roi = Tuple[int, int, int, int]
 
 Point = Tuple[float, float]
 
@@ -190,3 +194,33 @@ class CalibrationManager:
         if not self.dir.exists():
             return []
         return sorted(p.stem for p in self.dir.glob("*.npy"))
+
+    # --- per-recipe pick region (operator-drawn) ---------------------------- #
+    def roi_path(self, recipe_key: str) -> Path:
+        return self.dir / f"{recipe_key}.roi.json"
+
+    def has_roi(self, recipe_key: str) -> bool:
+        return self.roi_path(recipe_key).exists()
+
+    def get_roi(self, recipe_key: str) -> Optional[Roi]:
+        """The recipe's saved pick region, or None if none/unreadable."""
+        p = self.roi_path(recipe_key)
+        if not p.exists():
+            return None
+        try:
+            d = json.loads(p.read_text())
+            return (int(d["x"]), int(d["y"]), int(d["w"]), int(d["h"]))
+        except (ValueError, KeyError, OSError):
+            return None
+
+    def save_roi(self, recipe_key: str, roi: Roi) -> Path:
+        p = self.roi_path(recipe_key)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        x, y, w, h = (int(round(v)) for v in roi)
+        p.write_text(json.dumps({"x": x, "y": y, "w": w, "h": h}))
+        return p
+
+    def clear_roi(self, recipe_key: str) -> None:
+        p = self.roi_path(recipe_key)
+        if p.exists():
+            p.unlink()

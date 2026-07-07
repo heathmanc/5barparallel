@@ -73,7 +73,10 @@ class MainWindow(QMainWindow):
         self.recipes = _load_recipes(cfg_dir)
 
         self.tabs = QTabWidget()
-        self.vision_tab = VisionTab(self.controller, self.camera, None, self.recipes)
+        self.vision_tab = VisionTab(
+            self.controller, self.camera, None, self.recipes,
+            calibration_manager=self.calibration_manager,
+        )
         self.camera_tab = CameraTab(self.camera)
         self.calibration_tab = CalibrationTab(
             self.camera, self.calibration_manager, self.recipes
