@@ -274,6 +274,20 @@ def test_reference_then_jog_updates_readout(qapp):
     assert "OK" in tab.status_label.text()
 
 
+def test_referenced_label_tracks_live_reference_loss(qapp):
+    tab = RobotTestTab(build_dry_run_controller())
+    tab.enable_btn.click()
+    tab._on_home_reference()
+    tab._await_command()
+    assert tab.referenced_label.text() == "REFERENCED"
+    # A disable loses the datum; the live poll (_update_enable_state, not a
+    # command's _refresh) must update the label, not just the buttons.
+    tab.controller.disable()
+    tab._update_enable_state()
+    assert tab.referenced_label.text() == "NOT REFERENCED"
+    assert all(not b.isEnabled() for b in tab._jog_buttons)
+
+
 def test_rejected_move_shows_reason(qapp):
     tab = RobotTestTab(build_dry_run_controller())
     tab.enable_btn.click()
