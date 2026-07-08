@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -39,11 +39,31 @@ FAULT_TEXT = {
 }
 
 
+class _CommandWorker(QThread):
+    """Runs one blocking controller call (home/jog/move) off the GUI thread so a
+    10 s command can't freeze the UI. Emits the MoveResult, or the error text."""
+
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, call, parent=None) -> None:
+        super().__init__(parent)
+        self._call = call
+
+    def run(self) -> None:
+        try:
+            self.done.emit(self._call())
+        except Exception as exc:  # noqa: BLE001 - surfaced to the status line
+            self.failed.emit(str(exc))
+
+
 class RobotTestTab(QWidget):
     def __init__(self, controller: RobotTestController, parent: QWidget | None = None):
         super().__init__(parent)
         self.controller = controller
         self._value_labels: Dict[str, QLabel] = {}
+        self._worker: _CommandWorker | None = None
+        self._command_busy = False
 
         root = QVBoxLayout(self)
         root.addWidget(self._build_enable_group())
@@ -265,14 +285,46 @@ class RobotTestTab(QWidget):
         self._guarded(lambda: self.controller.jog_cartesian(axis, sign * self.cart_step.value()))
 
     def _guarded(self, call) -> None:
-        """Run a controller call that returns a MoveResult, rendering the outcome
-        and never letting an exception escape the Qt slot."""
-        try:
-            self._apply(call())
-        except Exception as exc:
-            self._set_status(f"Error: {exc}", ok=False)
-            self._refresh()
-            self._update_enable_state()
+        """Run a controller call that returns a MoveResult on a worker thread so a
+        blocking command (home/jog can wait up to command_timeout_s) never freezes
+        the GUI. The outcome is rendered when the worker finishes."""
+        if self._worker is not None and self._worker.isRunning():
+            self._set_status("Busy — a command is already running.", ok=False)
+            return
+        self._set_command_busy(True)
+        self._worker = _CommandWorker(call, self)
+        self._worker.done.connect(self._on_command_done)
+        self._worker.failed.connect(self._on_command_failed)
+        self._worker.finished.connect(self._on_command_finished)
+        self._worker.start()
+
+    def _on_command_done(self, result) -> None:
+        self._apply(result)
+
+    def _on_command_failed(self, msg: str) -> None:
+        self._set_status(f"Error: {msg}", ok=False)
+        self._refresh()
+        self._update_enable_state()
+
+    def _on_command_finished(self) -> None:
+        self._worker = None
+        self._set_command_busy(False)
+
+    def _set_command_busy(self, busy: bool) -> None:
+        self._command_busy = busy
+        if busy:
+            self._set_status("Working…", ok=True)
+        self._update_enable_state()
+
+    def _await_command(self, timeout_ms: int = 5000) -> None:
+        """Test/teardown helper: block until the running command worker finishes
+        and its result signal has been delivered. Not used in normal GUI flow."""
+        if self._worker is not None:
+            self._worker.wait(timeout_ms)
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
 
     # --- view update --------------------------------------------------------
     def refresh_all(self) -> None:
@@ -319,15 +371,17 @@ class RobotTestTab(QWidget):
         faulted = self.controller.is_faulted
         enabled = self.controller.is_enabled
         referenced = self.controller.is_referenced
+        busy = self._command_busy
         self.enable_btn.setText("Enabled" if enabled else "Enable")
         self.enable_btn.setChecked(enabled)  # keep the toggle in sync with reality
         # While faulted, only Reset is live — the fault must be cleared first.
-        self.reset_btn.setEnabled(faulted)
-        self.enable_btn.setEnabled(not faulted)
-        self.ref_btn.setEnabled(enabled and not faulted)
+        # While a command runs, freeze the command buttons (STOP stays live).
+        self.reset_btn.setEnabled(faulted and not busy)
+        self.enable_btn.setEnabled(not faulted and not busy)
+        self.ref_btn.setEnabled(enabled and not faulted and not busy)
         # Jogging needs enabled drives, a found home reference, and no fault.
         for btn in getattr(self, "_jog_buttons", []):
-            btn.setEnabled(enabled and referenced and not faulted)
+            btn.setEnabled(enabled and referenced and not faulted and not busy)
 
         # Fault banner + next-step sequencing hint.
         if faulted:

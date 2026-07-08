@@ -267,11 +267,13 @@ COORD: List[Rung] = [
      "JSR(R_HomeMotor0,0)JSR(R_HomeMotor1,0);"),
     ("Disable invalidates the reference. An open-loop stepper has no feedback, so "
      "the instant the drive disables the datum is gone (the shaft can back-drive / "
-     "lose steps unseen). Drop Homed + per-axis HomeDone + soft limits whenever not "
-     "Enabled, forcing a re-home after any disable. The homing state machines are "
-     "NOT reset here (they re-zero on the next HomeRequest) so the brief enable "
-     "cycle during a Clear-Fault can't clobber an in-progress home.",
-     "XIO(VisionRobot.Status.Enabled)OTU(VisionRobot.Status.Homed)"
+     "lose steps unseen). Drop Homed + per-axis HomeDone + soft limits whenever the "
+     "drive is not commanded on, forcing a re-home after any disable. Keyed on "
+     "EnableReq (the commanded enable), NOT Status.Enabled: the latter is the "
+     "ClearLink's HLFB-derived bit 10, which can momentarily dip as a move stops or "
+     "during a Clear-Fault enable cycle - keying on it would spuriously un-home "
+     "between jogs. The homing state machines re-zero on the next HomeRequest.",
+     "XIO(EnableReq)OTU(VisionRobot.Status.Homed)"
      "OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);"),
     ("Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: "
      "clear the coordinator + per-axis states and latched home faults/requests. "

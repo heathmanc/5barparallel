@@ -206,6 +206,7 @@ def test_plc_tab_connect_simulated_and_disconnect(qapp):
     # Reference against the dry-run driver first...
     rt.enable_btn.click()
     rt._on_home_reference()
+    rt._await_command()
     assert win.controller.is_referenced
 
     # ...then connecting the simulated PLC swaps the driver and forces re-home.
@@ -219,6 +220,7 @@ def test_plc_tab_connect_simulated_and_disconnect(qapp):
     # And it really drives: enable + home over the PLC handshake.
     rt.enable_btn.click()
     rt._on_home_reference()
+    rt._await_command()
     assert win.controller.is_referenced
 
     plc._on_disconnect()
@@ -253,6 +255,7 @@ def test_jog_disabled_until_enabled_and_referenced(qapp):
     assert tab.controller.is_enabled
     assert all(not b.isEnabled() for b in tab._jog_buttons)  # still not referenced
     tab._on_home_reference()
+    tab._await_command()
     assert tab.controller.is_referenced
     assert tab.referenced_label.text() == "REFERENCED"
     assert all(b.isEnabled() for b in tab._jog_buttons)
@@ -262,9 +265,11 @@ def test_reference_then_jog_updates_readout(qapp):
     tab = RobotTestTab(build_dry_run_controller())
     tab.enable_btn.click()
     tab._on_home_reference()
+    tab._await_command()
     tab.joint_step.setValue(1.0)
     before = tab._value_labels["left_deg"].text()
     tab._jog_joint("left", +1)
+    tab._await_command()
     assert tab._value_labels["left_deg"].text() != before
     assert "OK" in tab.status_label.text()
 
@@ -273,9 +278,11 @@ def test_rejected_move_shows_reason(qapp):
     tab = RobotTestTab(build_dry_run_controller())
     tab.enable_btn.click()
     tab._on_home_reference()
+    tab._await_command()
     tab.cart_step.setValue(50.0)
     for _ in range(5):
         tab._jog_cart("y", +1)
+        tab._await_command()
     assert "Rejected" in tab.status_label.text()
 
 
@@ -608,6 +615,7 @@ def test_robot_test_home_fault_shows_message(qapp):
     tab = RobotTestTab(RobotTestController(FaultingHome()))
     tab._on_enable_toggled(True)
     tab._on_home_reference()                  # must not raise; shows a message
+    tab._await_command()
     assert "code 4" in tab.status_label.text()
     assert not tab.controller.is_referenced
 
