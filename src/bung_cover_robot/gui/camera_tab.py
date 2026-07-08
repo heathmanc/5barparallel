@@ -1,16 +1,22 @@
-"""Camera (Basler) tab — connection + imaging controls with a live preview.
+"""Camera (Basler) tab — connection + imaging controls with a LIVE preview.
 
-Controls write through to the shared camera (real GenICam nodes on a Basler); the
-preview also applies brightness/contrast/gamma locally so the sliders have a
-visible effect with the mock camera in dry-run.
+A background grabber thread streams frames continuously (so the preview is a live
+feed, not a one-shot snapshot) and the controls write through to the shared camera
+(real GenICam nodes on a Basler). Exposure/gain each have an Auto toggle:
+Auto = the camera's own ExposureAuto/GainAuto Continuous loop (good for getting a
+usable image fast); turning Auto off locks in the last converged value so
+detection sees a stable frame. Brightness/contrast/gamma are also applied locally
+to the preview so the sliders have a visible effect against the mock camera.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtWidgets import (
+    QCheckBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -43,6 +49,50 @@ _CONTROLS = [
     ("Gamma", "gamma", 30, 300, 100, 100),
 ]
 
+# Controls that map to a real camera node with an Auto sibling.
+_AUTO = {"exposure_time_us": "exposure_auto", "gain": "gain_auto"}
+
+
+class _LiveGrabber(QThread):
+    """Continuously grabs frames off the GUI thread and emits them. A short
+    per-grab timeout keeps it responsive; grab errors are surfaced (not fatal)."""
+
+    frameReady = Signal(object)
+    grabError = Signal(str)
+
+    def __init__(self, camera: Camera, fps: float = 15.0, parent=None) -> None:
+        super().__init__(parent)
+        self._camera = camera
+        self._interval = 1.0 / max(1.0, fps)
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        while not self._stop:
+            t0 = time.monotonic()
+            try:
+                frame = self._camera.grab(timeout_ms=1000)
+            except CameraError as exc:
+                if self._stop:
+                    break
+                self.grabError.emit(str(exc))
+                time.sleep(0.3)
+                continue
+            except Exception as exc:  # noqa: BLE001 - never let the thread die silently
+                if self._stop:
+                    break
+                self.grabError.emit(str(exc))
+                time.sleep(0.3)
+                continue
+            if self._stop:
+                break
+            self.frameReady.emit(frame)
+            dt = time.monotonic() - t0
+            if (rest := self._interval - dt) > 0:
+                time.sleep(rest)
+
 
 class CameraTab(QWidget):
     cameraChanged = Signal()
@@ -54,6 +104,9 @@ class CameraTab(QWidget):
         self._sliders: Dict[str, QSlider] = {}
         self._value_labels: Dict[str, QLabel] = {}
         self._scales: Dict[str, float] = {}
+        self._auto_checks: Dict[str, QCheckBox] = {}
+        self._grabber: Optional[_LiveGrabber] = None
+        self._visible = False
 
         root = QHBoxLayout(self)
         root.addWidget(self._build_controls_column())
@@ -61,12 +114,13 @@ class CameraTab(QWidget):
         right.addWidget(self._build_preview_group(), 1)
         root.addLayout(right, 1)
 
+        self._apply_initial_controls()
         self._grab()
 
     # --- layout -------------------------------------------------------------
     def _build_controls_column(self) -> QWidget:
         col = QWidget()
-        col.setFixedWidth(340)
+        col.setFixedWidth(360)
         v = QVBoxLayout(col)
         v.setContentsMargins(0, 0, 0, 0)
 
@@ -88,6 +142,10 @@ class CameraTab(QWidget):
         brow.addWidget(connect_btn)
         brow.addWidget(mock_btn)
         cg.addLayout(brow)
+        self.live_check = QCheckBox("Live view")
+        self.live_check.setChecked(True)
+        self.live_check.toggled.connect(self._on_live_toggled)
+        cg.addWidget(self.live_check)
         v.addWidget(conn)
 
         ctrl = QGroupBox("Imaging controls")
@@ -108,6 +166,13 @@ class CameraTab(QWidget):
             grid.addWidget(name_lbl, r, 0)
             grid.addWidget(slider, r, 1)
             grid.addWidget(val, r, 2)
+            # Auto toggle for exposure/gain, on the far right.
+            if name in _AUTO:
+                auto = QCheckBox("Auto")
+                auto.setChecked(True)  # start in Auto so the image is usable at once
+                auto.toggled.connect(lambda c, n=name: self._on_auto_toggled(n, c))
+                self._auto_checks[name] = auto
+                grid.addWidget(auto, r, 3)
         v.addWidget(ctrl)
         v.addStretch(1)
         self._refresh_conn_status()
@@ -138,22 +203,74 @@ class CameraTab(QWidget):
         self._value_labels[name].setText(
             f"{value:.0f}" if name == "exposure_time_us" else f"{value:.2f}"
         )
+        # If this control is under Auto, don't fight the camera's auto loop.
+        if name in _AUTO and self._auto_checks[name].isChecked():
+            self._render_preview()
+            return
         try:
             self.camera.set_control(name, value)
         except CameraControlError:
             pass  # mock stores it; a real camera may not expose this node
         self._render_preview()
 
+    def _on_auto_toggled(self, name: str, checked: bool) -> None:
+        auto_ctrl = _AUTO[name]
+        slider = self._sliders[name]
+        if checked:
+            slider.setEnabled(False)
+            try:
+                self.camera.set_control(auto_ctrl, "Continuous")
+            except CameraControlError:
+                pass
+        else:
+            # Lock in whatever the auto loop converged to, then go manual.
+            try:
+                converged = float(self.camera.get_control(name))
+                slider.blockSignals(True)
+                slider.setValue(int(round(converged * self._scales[name])))
+                slider.blockSignals(False)
+            except (CameraControlError, CameraError, ValueError, TypeError):
+                pass
+            try:
+                self.camera.set_control(auto_ctrl, "Off")
+            except CameraControlError:
+                pass
+            slider.setEnabled(True)
+            self._on_control(name)  # push the (now manual) value
+
+    def _apply_initial_controls(self) -> None:
+        """Push the current UI state to a freshly connected camera: auto modes
+        first, then manual values / preview-only controls. Skips nodes the model
+        doesn't expose."""
+        for name in _AUTO:
+            self._on_auto_toggled(name, self._auto_checks[name].isChecked())
+        for _, name, *_ in _CONTROLS:
+            if name in _AUTO and self._auto_checks[name].isChecked():
+                continue
+            self._on_control(name)
+
     def _grab(self) -> None:
+        """Single manual grab (also the initial frame). Live view keeps the
+        preview updating on its own."""
         try:
             self._frame = self.camera.grab()
         except CameraError as exc:
             self.info_label.setText(f"grab failed: {exc}")
             return
-        h, w = self._frame.shape[:2]
-        self.info_label.setText(f"{w}×{h}")
-        for name in self._sliders:
-            self._on_control(name)  # push all control values + render
+        self._show_frame(self._frame)
+
+    def _on_frame(self, frame) -> None:
+        self._frame = frame
+        self._show_frame(frame)
+
+    def _show_frame(self, frame) -> None:
+        h, w = frame.shape[:2]
+        tag = "live" if (self._grabber is not None and self._grabber.isRunning()) else "still"
+        self.info_label.setText(f"{w}×{h} · {tag}")
+        self._render_preview()
+
+    def _on_grab_error(self, msg: str) -> None:
+        self.info_label.setText(f"grab failed: {msg}")
 
     def _render_preview(self) -> None:
         if self._frame is None:
@@ -165,6 +282,45 @@ class CameraTab(QWidget):
             gamma=self._value("gamma"),
         )
         self.view.set_pixmap(ndarray_to_qpixmap(img))
+
+    # --- live streaming -----------------------------------------------------
+    def _start_live(self) -> None:
+        if self._grabber is not None and self._grabber.isRunning():
+            return
+        if not self.live_check.isChecked():
+            return
+        self._grabber = _LiveGrabber(self.camera, parent=self)
+        self._grabber.frameReady.connect(self._on_frame)
+        self._grabber.grabError.connect(self._on_grab_error)
+        self._grabber.start()
+
+    def _stop_live(self) -> None:
+        grabber = self._grabber
+        self._grabber = None
+        if grabber is not None:
+            grabber.stop()
+            grabber.wait(2000)
+            grabber.deleteLater()
+
+    def _on_live_toggled(self, checked: bool) -> None:
+        if checked and self._visible:
+            self._start_live()
+        elif not checked:
+            self._stop_live()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._visible = True
+        self._start_live()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().hideEvent(event)
+        self._visible = False
+        self._stop_live()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._stop_live()
+        super().closeEvent(event)
 
     # --- connection ---------------------------------------------------------
     def _on_connect_basler(self) -> None:
@@ -186,6 +342,7 @@ class CameraTab(QWidget):
         self._swap(cam)
 
     def _swap(self, cam: Camera) -> None:
+        self._stop_live()
         old = self.camera
         self.camera = cam
         if old is not cam:
@@ -193,9 +350,31 @@ class CameraTab(QWidget):
                 old.close()
             except Exception:
                 pass
+        self._setup_ranges()
         self._refresh_conn_status()
+        self._apply_initial_controls()
         self._grab()
+        if self._visible:
+            self._start_live()
         self.cameraChanged.emit()
+
+    def _setup_ranges(self) -> None:
+        """Match the exposure/gain slider ranges to the connected camera so a
+        converged auto value (which can exceed the default cap in dim light) is
+        representable. Best-effort — the mock has no ranges."""
+        control_range = getattr(self.camera, "control_range", None)
+        if control_range is None:
+            return
+        for name in _AUTO:
+            try:
+                lo, hi = control_range(name)
+            except (CameraControlError, CameraError):
+                continue
+            scale = self._scales[name]
+            slider = self._sliders[name]
+            slider.blockSignals(True)
+            slider.setRange(int(lo * scale), int(hi * scale))
+            slider.blockSignals(False)
 
     def _refresh_conn_status(self) -> None:
         if isinstance(self.camera, MockCamera):

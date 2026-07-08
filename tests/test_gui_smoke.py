@@ -5,6 +5,7 @@ installed, so the rest of the suite doesn't depend on Qt.
 """
 
 import os
+import time
 
 import pytest
 
@@ -177,6 +178,37 @@ def test_camera_tab_use_mock_reconnect(qapp):
     ct = win.camera_tab
     ct._on_use_mock()  # emits cameraChanged -> main window updates vision tab
     assert win.vision_tab.camera is win.camera_tab.camera
+
+
+def test_camera_tab_live_grabber_streams_frames(qapp):
+    win = MainWindow()
+    ct = win.camera_tab
+    ct._frame = None
+    ct._visible = True
+    ct._start_live()               # background grabber streams the mock frame
+    try:
+        deadline = time.monotonic() + 3.0
+        while ct._frame is None and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.02)
+        assert ct._frame is not None          # a live frame arrived on the GUI thread
+        assert "live" in ct.info_label.text()
+    finally:
+        ct._stop_live()
+    assert ct._grabber is None                # stops cleanly
+
+
+def test_camera_tab_auto_exposure_toggle(qapp):
+    win = MainWindow()
+    ct = win.camera_tab
+    # Auto on by default -> exposure slider disabled, ExposureAuto=Continuous.
+    assert ct._auto_checks["exposure_time_us"].isChecked()
+    assert not ct._sliders["exposure_time_us"].isEnabled()
+    assert win.camera.get_control("exposure_auto") == "Continuous"
+    # Turning Auto off enables the manual slider and writes ExposureAuto=Off.
+    ct._auto_checks["exposure_time_us"].setChecked(False)
+    assert ct._sliders["exposure_time_us"].isEnabled()
+    assert win.camera.get_control("exposure_auto") == "Off"
 
 
 def test_plc_tab_lists_every_tag(qapp):

@@ -22,6 +22,7 @@ logical name.
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -278,6 +279,10 @@ class BaslerCamera(Camera):
         self._camera = None      # pylon.InstantCamera
         self._converter = None   # pylon.ImageFormatConverter
         self._grabbing = False
+        # pypylon's InstantCamera/node map are NOT thread-safe. A live-preview
+        # grabber thread and the GUI thread (writing controls) both touch the
+        # camera, so serialize every SDK call behind this lock.
+        self._lock = threading.RLock()
 
     # --- lazy SDK import ---
     @staticmethod
@@ -361,17 +366,18 @@ class BaslerCamera(Camera):
         return converter
 
     def close(self) -> None:
-        if self._camera is None:
-            return
-        try:
-            if self._grabbing:
-                self._camera.StopGrabbing()
-            if self._camera.IsOpen():
-                self._camera.Close()
-        finally:
-            self._grabbing = False
-            self._camera = None
-            self._converter = None
+        with self._lock:
+            if self._camera is None:
+                return
+            try:
+                if self._grabbing:
+                    self._camera.StopGrabbing()
+                if self._camera.IsOpen():
+                    self._camera.Close()
+            finally:
+                self._grabbing = False
+                self._camera = None
+                self._converter = None
 
     @property
     def is_open(self) -> bool:
@@ -379,71 +385,76 @@ class BaslerCamera(Camera):
 
     # --- capture ---
     def grab(self, timeout_ms: Optional[int] = None) -> np.ndarray:
-        self._require_open()
         pylon, _ = self._import_pylon()
         timeout = self.config.grab_timeout_ms if timeout_ms is None else timeout_ms
-        if not self._grabbing:
-            self._camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
-            self._grabbing = True
-        result = self._camera.RetrieveResult(
-            timeout, pylon.TimeoutHandling_ThrowException
-        )
-        try:
-            if not result.GrabSucceeded():
-                raise CameraGrabError(
-                    f"grab failed: {result.GetErrorCode()} {result.GetErrorDescription()}"
-                )
-            image = self._converter.Convert(result)
-            # Copy: the converted buffer is owned by pylon and reused next grab.
-            return np.array(image.GetArray(), copy=True)
-        finally:
-            result.Release()
+        with self._lock:
+            self._require_open()
+            if not self._grabbing:
+                self._camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+                self._grabbing = True
+            result = self._camera.RetrieveResult(
+                timeout, pylon.TimeoutHandling_ThrowException
+            )
+            try:
+                if not result.GrabSucceeded():
+                    raise CameraGrabError(
+                        f"grab failed: {result.GetErrorCode()} "
+                        f"{result.GetErrorDescription()}"
+                    )
+                image = self._converter.Convert(result)
+                # Copy: the converted buffer is owned by pylon, reused next grab.
+                return np.array(image.GetArray(), copy=True)
+            finally:
+                result.Release()
 
     # --- controls ---
     def set_control(self, name: str, value: Any) -> str:
-        self._require_open()
         _, genicam = self._import_pylon()
-        nodemap = self._camera.GetNodeMap()
-        last_err: Optional[str] = None
-        for node_name in CONTROL_REGISTRY.get(name, [name]):
-            node = nodemap.GetNode(node_name)
-            if node is None or not genicam.IsAvailable(node):
-                continue
-            if not genicam.IsWritable(node):
-                last_err = f"{node_name} is not writable"
-                continue
-            self._write_node(genicam, node, node_name, value)
-            return node_name
-        raise CameraControlError(
-            f"control {name!r} not available on this camera"
-            + (f" ({last_err})" if last_err else "")
-        )
+        with self._lock:
+            self._require_open()
+            nodemap = self._camera.GetNodeMap()
+            last_err: Optional[str] = None
+            for node_name in CONTROL_REGISTRY.get(name, [name]):
+                node = nodemap.GetNode(node_name)
+                if node is None or not genicam.IsAvailable(node):
+                    continue
+                if not genicam.IsWritable(node):
+                    last_err = f"{node_name} is not writable"
+                    continue
+                self._write_node(genicam, node, node_name, value)
+                return node_name
+            raise CameraControlError(
+                f"control {name!r} not available on this camera"
+                + (f" ({last_err})" if last_err else "")
+            )
 
     def get_control(self, name: str) -> Any:
-        self._require_open()
         _, genicam = self._import_pylon()
-        nodemap = self._camera.GetNodeMap()
-        for node_name in CONTROL_REGISTRY.get(name, [name]):
-            node = nodemap.GetNode(node_name)
-            if node is None or not genicam.IsReadable(node):
-                continue
-            if isinstance(node, genicam.IEnumeration):
-                return node.ToString()
-            return node.GetValue()
-        raise CameraControlError(f"control {name!r} not readable on this camera")
+        with self._lock:
+            self._require_open()
+            nodemap = self._camera.GetNodeMap()
+            for node_name in CONTROL_REGISTRY.get(name, [name]):
+                node = nodemap.GetNode(node_name)
+                if node is None or not genicam.IsReadable(node):
+                    continue
+                if isinstance(node, genicam.IEnumeration):
+                    return node.ToString()
+                return node.GetValue()
+            raise CameraControlError(f"control {name!r} not readable on this camera")
 
     def control_range(self, name: str) -> Tuple[float, float]:
         """(min, max) for a numeric control — useful for building UIs/sliders."""
-        self._require_open()
         _, genicam = self._import_pylon()
-        nodemap = self._camera.GetNodeMap()
-        for node_name in CONTROL_REGISTRY.get(name, [name]):
-            node = nodemap.GetNode(node_name)
-            if node is None or not genicam.IsReadable(node):
-                continue
-            if isinstance(node, (genicam.IFloat, genicam.IInteger)):
-                return float(node.GetMin()), float(node.GetMax())
-        raise CameraControlError(f"control {name!r} has no numeric range")
+        with self._lock:
+            self._require_open()
+            nodemap = self._camera.GetNodeMap()
+            for node_name in CONTROL_REGISTRY.get(name, [name]):
+                node = nodemap.GetNode(node_name)
+                if node is None or not genicam.IsReadable(node):
+                    continue
+                if isinstance(node, (genicam.IFloat, genicam.IInteger)):
+                    return float(node.GetMin()), float(node.GetMax())
+            raise CameraControlError(f"control {name!r} has no numeric range")
 
     @staticmethod
     def _write_node(genicam, node, node_name: str, value: Any) -> None:
