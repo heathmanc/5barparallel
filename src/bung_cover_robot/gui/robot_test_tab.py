@@ -63,6 +63,7 @@ class RobotTestTab(QWidget):
         self.controller = controller
         self._value_labels: Dict[str, QLabel] = {}
         self._worker: _CommandWorker | None = None
+        self._on_done = None  # per-command result renderer; defaults to _apply
         self._command_busy = False
 
         root = QVBoxLayout(self)
@@ -216,17 +217,18 @@ class RobotTestTab(QWidget):
 
     # --- handlers -----------------------------------------------------------
     def _on_reset(self) -> None:
-        try:
-            res = self.controller.reset()
-        except Exception as exc:  # belt-and-suspenders; controller catches already
-            self._set_status(f"Reset error: {exc}", ok=False)
+        # reset() holds Cmd.Reset and polls for up to command_timeout_s (the PLC
+        # runs the ClearLink clear/enable-cycle), so it must run off the GUI thread
+        # or it freezes the UI. Route it through the worker like home/jog.
+        self._guarded(lambda: self.controller.reset(), on_done=self._render_reset)
+
+    def _render_reset(self, res) -> None:
+        if res.ok and not self.controller.is_faulted:
+            self._set_status("Fault cleared — reset OK.", ok=True)
+        elif res.ok:
+            self._set_status("Reset sent (fault still active).", ok=False)
         else:
-            if res.ok and not self.controller.is_faulted:
-                self._set_status("Fault cleared — reset OK.", ok=True)
-            elif res.ok:
-                self._set_status("Reset sent (fault still active).", ok=False)
-            else:
-                self._set_status(f"Reset failed: {res.reason}", ok=False)
+            self._set_status(f"Reset failed: {res.reason}", ok=False)
         self._refresh()
         self._update_enable_state()
 
@@ -284,13 +286,15 @@ class RobotTestTab(QWidget):
     def _jog_cart(self, axis: str, sign: int) -> None:
         self._guarded(lambda: self.controller.jog_cartesian(axis, sign * self.cart_step.value()))
 
-    def _guarded(self, call) -> None:
+    def _guarded(self, call, on_done=None) -> None:
         """Run a controller call that returns a MoveResult on a worker thread so a
-        blocking command (home/jog can wait up to command_timeout_s) never freezes
-        the GUI. The outcome is rendered when the worker finishes."""
+        blocking command (home/jog/reset can wait up to command_timeout_s) never
+        freezes the GUI. The outcome is rendered by ``on_done`` (default _apply)
+        when the worker finishes."""
         if self._worker is not None and self._worker.isRunning():
             self._set_status("Busy — a command is already running.", ok=False)
             return
+        self._on_done = on_done or self._apply
         self._set_command_busy(True)
         self._worker = _CommandWorker(call, self)
         self._worker.done.connect(self._on_command_done)
@@ -299,7 +303,7 @@ class RobotTestTab(QWidget):
         self._worker.start()
 
     def _on_command_done(self, result) -> None:
-        self._apply(result)
+        (self._on_done or self._apply)(result)
 
     def _on_command_failed(self, msg: str) -> None:
         self._set_status(f"Error: {msg}", ok=False)
@@ -308,6 +312,7 @@ class RobotTestTab(QWidget):
 
     def _on_command_finished(self) -> None:
         self._worker = None
+        self._on_done = None
         self._set_command_busy(False)
 
     def _set_command_busy(self, busy: bool) -> None:

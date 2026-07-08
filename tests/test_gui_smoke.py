@@ -609,8 +609,9 @@ def test_robot_test_reset_button_and_fault_banner(qapp):
     assert not tab.enable_btn.isChecked()     # reverted to reality (still disabled)
     assert not tab.controller.is_enabled
 
-    # reset clears the fault and re-arms enable
+    # reset clears the fault and re-arms enable (runs on the worker thread now)
     tab._on_reset()
+    tab._await_command()
     assert not tab.controller.is_faulted
     assert tab.fault_banner.isHidden()
     assert tab.enable_btn.isEnabled()
