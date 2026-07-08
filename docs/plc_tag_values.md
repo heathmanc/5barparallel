@@ -45,11 +45,12 @@ points you refine at commissioning; `STEPS_PER_DEG` is fixed and
 | `CAMERA_CLEAR_L` | REAL | `0.0` | deg | Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose. |
 | `CAMERA_CLEAR_R` | REAL | `0.0` | deg | Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose. |
 
-## Heartbeat watchdog (R10_Safety)
+## Heartbeat watchdog + drop-out debounce (R10/R20)
 
 | Tag | Type | Value to set | Unit | Notes |
 |---|---|---|---|---|
 | `HB_TIMEOUT_MS` | DINT | `1000` | ms | PC heartbeat must change within this many ms or the PLC declares comms loss (code 10) and drops the drives. Set > 4x the PC heartbeat period. |
+| `EN_DROP_TMO_MS` | DINT | `1000` | ms | If the drive is commanded on but Status.Enabled stays false this long (ms), treat it as a drop-out (power-cycle) and drop Manual.Enable so it can't auto-re-enable. > drive enable time, < a real power-off. |
 
 ## Timer presets (`.PRE`)
 

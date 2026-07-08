@@ -390,6 +390,16 @@ DRIVES: List[Rung] = [
     ("Enabled when requested and both drives report Enabled.",
      "XIC(EnableReq)XIC(ClearLink:I1.Motor0_Status_Enabled)"
      "XIC(ClearLink:I1.Motor1_Status_Enabled)OTE(VisionRobot.Status.Enabled);"),
+    ("Drop-out debounce preset (EN_DROP_TMO_MS).",
+     "MOV(EN_DROP_TMO_MS,EnDrop_Tmr.PRE);"),
+    ("Time how long the drive is commanded on (EnableReq) but not actually Enabled. "
+     "Resets the instant it enables, so the enable startup / a Clear-Fault enable "
+     "cycle / an HLFB blip don't trip it - only a sustained drop-out does.",
+     "XIC(EnableReq)XIO(VisionRobot.Status.Enabled)TON(EnDrop_Tmr,?,?);"),
+    ("Sustained drop-out (a drive power-cycle: commanded on but dark past the "
+     "debounce) -> drop the operator's Enable request so the drive does NOT come "
+     "back energized when it powers up. Re-enabling is then a deliberate Enable.",
+     "XIC(EnDrop_Tmr.DN)OTU(VisionRobot.Manual.Enable);"),
 ]
 
 MANUAL: List[Rung] = [
@@ -757,6 +767,14 @@ def _glue_tags() -> List[Tag]:
     add("SafetyOK", "BOOL", desc="Aggregate safe: no fault, E-stop OK, guard closed.")
     add("EnableReq", "BOOL", desc="Drive-enable request (set by manual/auto).")
     add("Reset_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.Reset in R10.")
+    add("EnDrop_Tmr", "TIMER",
+        desc="Debounce for an unexpected drive drop-out (commanded on but not "
+             "actually Enabled) - e.g. a drive power-cycle.")
+    add("EN_DROP_TMO_MS", "DINT", "1000",
+        desc="If the drive is commanded on but Status.Enabled stays false this long "
+             "(ms), treat it as a drop-out (power-cycle) and drop Manual.Enable so it "
+             "can't auto-re-enable. > drive enable time, < a real power-off.",
+        unit="ms", hand=True)
 
     # --- PC<->PLC heartbeat watchdog (R10_Safety) ---
     add("HB_last", "DINT", desc="Last-seen VisionRobot.Cmd.Heartbeat value (watchdog).")
@@ -852,8 +870,8 @@ _VALUE_GROUPS: List[Tuple[str, List[str]]] = [
      ["VAC_SETTLE", "BLOWOFF_TIME"]),
     ("Poses — set to safe positions (R50_Auto)",
      ["CAMERA_CLEAR_L", "CAMERA_CLEAR_R"]),
-    ("Heartbeat watchdog (R10_Safety)",
-     ["HB_TIMEOUT_MS"]),
+    ("Heartbeat watchdog + drop-out debounce (R10/R20)",
+     ["HB_TIMEOUT_MS", "EN_DROP_TMO_MS"]),
 ]
 
 
