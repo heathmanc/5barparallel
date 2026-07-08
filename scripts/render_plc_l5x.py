@@ -122,14 +122,19 @@ def move_rungs(m: int) -> List[Rung]:
     """Absolute-move routine for Motor `m` (mirrors Teknic SD_Position_Move)."""
     o = f"ClearLink:O1.Motor{m}_"
     i = f"ClearLink:I1.Motor{m}_"
+    offs = "HOME_OFFSET_L" if m == 0 else "HOME_OFFSET_R"
     other = 1 - m
     return [
         (f"R_MoveMotor{m}: Motor {m} absolute move. R20_Drives owns the axis Enable "
          f"output (this routine no longer sets it). Called each scan by R00_Main. "
-         f"Tags/constants from RobotTags.csv (Move{m}_Execute/ons/Fault/InPosition, "
+         f"Tags/constants from RobotTags.csv (Move{m}_Execute/Fault/InPosition/Loaded, "
          f"Move{m}_Steps, Move{m}_Target_Deg, EM806_{m}_ALM, STEPS_PER_DEG, MOVE_VEL, "
-         f"MOVE_ACC) and the ClearLink module. Convert the target angle to steps.",
-         f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG));"),
+         f"MOVE_ACC, {offs}) and the ClearLink module. Convert the target angle to "
+         f"ClearLink steps. Subtract {offs} because the ClearLink zeroes CommandedPosn "
+         f"at the home prox, not at 0 deg: R30 publishes ActualDeg = (CommandedPosn + "
+         f"{offs})/STEPS_PER_DEG, so the inverse (command) must be Target*SPD - {offs}. "
+         f"Without it, the first move after homing jumps by the whole home offset.",
+         f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG) - {offs});"),
         ("Load the move whenever Execute is commanded but not yet loaded or done "
          "(level-triggered, NOT an Execute edge): a new command clears Loaded + "
          "InPosition in R40/R50, so this loads once, then XIO(Loaded)/XIO(InPosition) "
