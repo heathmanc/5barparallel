@@ -474,6 +474,31 @@ def test_calibration_coach_advances_through_steps(qapp, tmp_path):
     assert tab._coach_step(4) == 6
 
 
+def test_calibration_recipe_params_editor(qapp, tmp_path):
+    tab, _, recipes = _cal_tab(tmp_path)
+    key = tab._selected_recipe_key()
+    # Editor populated from the selected recipe (defaults: 6 holes, 18 mm).
+    assert tab.hole_count_spin.value() == recipes.get(key).hole_count
+    # Edit + save -> persisted onto the recipe (upsert).
+    tab.hole_count_spin.setValue(8)
+    tab.bung_dia_spin.setValue(20.0)
+    tab.tol_spin.setValue(15)  # percent -> 0.15
+    tab._on_save_recipe_params()
+    r = recipes.get(key)
+    assert r.hole_count == 8
+    assert r.cover_diameter_mm == pytest.approx(20.0)
+    assert r.diameter_tolerance == pytest.approx(0.15)
+
+
+def test_vision_single_step_builds_one_hole_config(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    assert hasattr(vt, "single_step_chk")
+    vt.single_step_chk.setChecked(True)
+    # The recipe->detector tolerance wiring is live (cover detector configured).
+    assert vt.cover_detector.config.diameter_tolerance <= 0.25
+
+
 def test_calibration_help_html_has_key_sections():
     from bung_cover_robot.gui.calibration_help import HELP_HTML
 

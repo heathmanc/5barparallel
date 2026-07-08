@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
+    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -31,6 +33,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -238,6 +241,39 @@ class CalibrationTab(QWidget):
         tg.addWidget(capture_btn)
         v.addWidget(tgt)
 
+        # Recipe parameters — the process values that vary by battery type. These
+        # drive the detectors (hole count; cover/bung size gate). Editable so a new
+        # battery type is fully configurable from the app.
+        params = QGroupBox("Recipe parameters")
+        form = QFormLayout(params)
+        self.hole_count_spin = QSpinBox()
+        self.hole_count_spin.setRange(1, 99)
+        self.hole_count_spin.setToolTip("Expected vent-hole count (drop targets).")
+        self.bung_dia_spin = QDoubleSpinBox()
+        self.bung_dia_spin.setRange(0.0, 200.0)
+        self.bung_dia_spin.setDecimals(1)
+        self.bung_dia_spin.setSingleStep(0.5)
+        self.bung_dia_spin.setSuffix(" mm")
+        self.bung_dia_spin.setToolTip(
+            "Nominal cover/bung diameter. 0 = no size gate. Needs a calibration to "
+            "measure real size."
+        )
+        self.tol_spin = QDoubleSpinBox()
+        self.tol_spin.setRange(1.0, 100.0)
+        self.tol_spin.setDecimals(0)
+        self.tol_spin.setSuffix(" %")
+        self.tol_spin.setToolTip(
+            "Size tolerance: accept a cover whose real diameter is within ± this % "
+            "of the nominal. Tighter rejects wrong parts; too tight rejects good ones."
+        )
+        form.addRow("Vent holes", self.hole_count_spin)
+        form.addRow("Bung diameter", self.bung_dia_spin)
+        form.addRow("Size tolerance", self.tol_spin)
+        self.save_params_btn = QPushButton("Save recipe settings")
+        self.save_params_btn.clicked.connect(self._on_save_recipe_params)
+        form.addRow(self.save_params_btn)
+        v.addWidget(params)
+
         # Correspondence table
         pts_box = QGroupBox("Correspondences (>= 4 points)")
         pv = QVBoxLayout(pts_box)
@@ -443,6 +479,7 @@ class CalibrationTab(QWidget):
             self.recipe_combo.addItem(r.name, r.key)
         self.recipe_combo.blockSignals(False)
         self._update_recipe_status()
+        self._populate_recipe_params()
 
     def _selected_recipe_key(self) -> Optional[str]:
         key = self.recipe_combo.currentData()
@@ -450,7 +487,46 @@ class CalibrationTab(QWidget):
 
     def _on_recipe_changed(self) -> None:
         self._update_recipe_status()
+        self._populate_recipe_params()
         self._update_buttons()
+
+    def _populate_recipe_params(self) -> None:
+        """Load the selected recipe's process values into the editor spinboxes."""
+        key = self._selected_recipe_key()
+        if not key or not self.recipes.has(key):
+            return
+        r = self.recipes.get(key)
+        for spin, val in (
+            (self.hole_count_spin, r.hole_count),
+            (self.bung_dia_spin, r.cover_diameter_mm),
+            (self.tol_spin, round(r.diameter_tolerance * 100.0)),
+        ):
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+
+    def _on_save_recipe_params(self) -> None:
+        """Persist the editor values back onto the selected recipe (upsert)."""
+        key = self._selected_recipe_key()
+        if not key or not self.recipes.has(key):
+            self._set_status("Select a recipe first.", theme.WARN)
+            return
+        name = self.recipes.get(key).name
+        try:
+            self.recipes.add(
+                Recipe(
+                    key=key,
+                    name=name,
+                    hole_count=int(self.hole_count_spin.value()),
+                    cover_diameter_mm=float(self.bung_dia_spin.value()),
+                    diameter_tolerance=max(0.01, self.tol_spin.value() / 100.0),
+                )
+            )
+        except RecipeError as exc:
+            self._set_status(f"Cannot save recipe: {exc}", theme.DANGER)
+            return
+        self.recipesChanged.emit()  # re-applies detectors for the active recipe
+        self._set_status(f"Saved settings for '{key}'.", theme.SUCCESS)
 
     def _update_recipe_status(self) -> None:
         key = self._selected_recipe_key()
@@ -468,7 +544,15 @@ class CalibrationTab(QWidget):
             self._set_status("Enter a recipe name to add.", theme.WARN)
             return
         try:
-            self.recipes.add(Recipe(key=key, name=name))
+            self.recipes.add(
+                Recipe(
+                    key=key,
+                    name=name,
+                    hole_count=int(self.hole_count_spin.value()),
+                    cover_diameter_mm=float(self.bung_dia_spin.value()),
+                    diameter_tolerance=max(0.01, self.tol_spin.value() / 100.0),
+                )
+            )
         except RecipeError as exc:
             self._set_status(f"Cannot add recipe: {exc}", theme.DANGER)
             return

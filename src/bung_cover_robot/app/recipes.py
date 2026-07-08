@@ -35,7 +35,10 @@ class Recipe:
     key: str                       # filename-safe id; also the calibration key
     name: str                      # human-readable label
     hole_count: int = 6            # expected vent holes (feeds the hole detector)
-    cover_diameter_mm: float = 0.0  # nominal cover size (0 = unspecified)
+    cover_diameter_mm: float = 0.0  # nominal cover (bung) size (0 = size gate off)
+    # Physical-size gate half-width: a detected cover is accepted only if its real
+    # diameter is cover_diameter_mm * (1 +/- diameter_tolerance). 0.2 = +/-20%.
+    diameter_tolerance: float = 0.2
 
     def __post_init__(self) -> None:
         if not _KEY_RE.match(self.key):
@@ -44,6 +47,10 @@ class Recipe:
             )
         if self.hole_count < 1:
             raise RecipeError("hole_count must be >= 1")
+        if self.cover_diameter_mm < 0:
+            raise RecipeError("cover_diameter_mm must be >= 0")
+        if not 0.0 < self.diameter_tolerance <= 1.0:
+            raise RecipeError("diameter_tolerance must be in (0, 1]")
 
     @classmethod
     def from_dict(cls, data: dict) -> "Recipe":
@@ -52,6 +59,7 @@ class Recipe:
             name=str(data.get("name", data["key"])),
             hole_count=int(data.get("hole_count", 6)),
             cover_diameter_mm=float(data.get("cover_diameter_mm", 0.0)),
+            diameter_tolerance=float(data.get("diameter_tolerance", 0.2)),
         )
 
     def to_dict(self) -> dict:
@@ -60,6 +68,7 @@ class Recipe:
             "name": self.name,
             "hole_count": self.hole_count,
             "cover_diameter_mm": self.cover_diameter_mm,
+            "diameter_tolerance": self.diameter_tolerance,
         }
 
 

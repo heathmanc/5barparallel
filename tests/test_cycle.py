@@ -163,6 +163,24 @@ def test_cycle_places_reachable_covers_then_stops():
     assert len(picks) == len({(round(p[0]), round(p[1])) for p in picks})
 
 
+def test_cycle_single_step_stops_after_one_hole():
+    from bung_cover_robot.app.cycle_manager import (
+        CycleConfig,
+        ScriptedTargetSource,
+        default_scripted_targets,
+    )
+
+    ctrl = _ready_controller()
+    holes, covers = default_scripted_targets(ctrl)
+    mgr = CycleManager(
+        ctrl, _mock_camera(), demo_transform(),
+        target_source=ScriptedTargetSource(holes, covers),
+        config=CycleConfig(max_holes=1),   # hardware-shakeout single step
+    )
+    res = mgr.run_cycle()
+    assert len(res.steps) == 1             # exactly one pick/place attempted
+
+
 def test_cycle_stop_requested_halts_early():
     mgr = CycleManager(_ready_controller(), _mock_camera(), demo_transform())
     res = mgr.run_cycle(should_stop=lambda: True)

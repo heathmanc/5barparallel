@@ -118,7 +118,9 @@ class MainWindow(QMainWindow):
         """Changeover: load the recipe's hole count + its own calibration."""
         recipe = self.recipes.get(key)
         self.vision_tab.set_hole_count(recipe.hole_count)
-        self.vision_tab.set_cover_diameter_mm(recipe.cover_diameter_mm)
+        self.vision_tab.set_cover_diameter_mm(
+            recipe.cover_diameter_mm, recipe.diameter_tolerance
+        )
         self.vision_tab.set_calibration(self._recipe_calibration(key))
         self.vision_tab.refresh()
 

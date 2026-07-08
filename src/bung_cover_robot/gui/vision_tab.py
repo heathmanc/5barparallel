@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..app.cycle_manager import (
+    CycleConfig,
     CycleManager,
     ScriptedTargetSource,
     default_scripted_targets,
@@ -145,6 +146,12 @@ class VisionTab(QWidget):
             "camera, detection, or calibration. Tests plan → PLC handshake."
         )
         rb.addWidget(self.bypass_chk)
+        self.single_step_chk = QCheckBox("Single step (1 hole)")
+        self.single_step_chk.setToolTip(
+            "Run exactly one pick/place then stop — for safely shaking out the "
+            "cycle on real hardware before letting it loop."
+        )
+        rb.addWidget(self.single_step_chk)
         v.addWidget(run_box)
 
         # Pick region — only covers inside the drawn box are picked. Enabled once
@@ -304,13 +311,15 @@ class VisionTab(QWidget):
         """Apply the active recipe's expected vent-hole count to the detector."""
         self.hole_detector = HoleDetector(HoleDetectorConfig(expected_count=count))
 
-    def set_cover_diameter_mm(self, diameter_mm: float) -> None:
-        """Apply the active recipe's nominal cover size as a physical-size gate
-        (needs a calibration to measure; 0 leaves covers ungated on size).
-        Preserves the current pick region."""
+    def set_cover_diameter_mm(self, diameter_mm: float, tolerance: float = 0.25) -> None:
+        """Apply the active recipe's nominal cover (bung) size + size tolerance as a
+        physical-size gate (needs a calibration to measure; 0 leaves covers ungated
+        on size). Preserves the current pick region."""
         self.cover_detector = CoverDetector(
             CoverDetectorConfig(
-                expected_diameter_mm=diameter_mm, pick_roi=self._pick_roi
+                expected_diameter_mm=diameter_mm,
+                diameter_tolerance=tolerance,
+                pick_roi=self._pick_roi,
             )
         )
 
@@ -325,10 +334,11 @@ class VisionTab(QWidget):
         if self.bypass_chk.isChecked():
             holes, covers = default_scripted_targets(self.controller)
             source = ScriptedTargetSource(holes, covers)
+        config = CycleConfig(max_holes=1) if self.single_step_chk.isChecked() else None
         manager = CycleManager(
             self.controller, self.camera, self.calibration,
             hole_detector=self.hole_detector, cover_detector=self.cover_detector,
-            target_source=source,
+            target_source=source, config=config,
         )
         block = manager.preflight()
         if block is not None:
@@ -339,6 +349,8 @@ class VisionTab(QWidget):
         self._running = True
         self.start_btn.setEnabled(False)
         mode = "scripted (vision bypass)" if source else "automatic"
+        if self.single_step_chk.isChecked():
+            mode += ", single step"
         self._set_status(f"Running {mode} cycle…", theme.INFO)
 
         self._thread = QThread(self)

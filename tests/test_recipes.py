@@ -19,6 +19,28 @@ def test_recipe_validates_key():
     assert r.hole_count == 6
 
 
+def test_recipe_diameter_tolerance_default_and_validation():
+    r = Recipe(key="g31-6", name="Group 31")
+    assert r.cover_diameter_mm == 0.0
+    assert r.diameter_tolerance == pytest.approx(0.2)   # tighter, sane default
+    with pytest.raises(RecipeError):                      # out of (0, 1]
+        Recipe(key="ok", name="x", diameter_tolerance=0.0)
+    with pytest.raises(RecipeError):
+        Recipe(key="ok", name="x", diameter_tolerance=1.5)
+    with pytest.raises(RecipeError):
+        Recipe(key="ok", name="x", cover_diameter_mm=-1.0)
+
+
+def test_recipe_params_roundtrip():
+    r = Recipe(
+        key="g65-8", name="Group 65", hole_count=8,
+        cover_diameter_mm=22.5, diameter_tolerance=0.15,
+    )
+    d = r.to_dict()
+    assert d["diameter_tolerance"] == pytest.approx(0.15)
+    assert Recipe.from_dict(d) == r
+
+
 def test_slugify_key():
     assert slugify_key("Group 65 8-vent") == "group-65-8-vent"
     assert slugify_key("  A/B  ") == "a-b"

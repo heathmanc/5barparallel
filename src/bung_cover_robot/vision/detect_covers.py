@@ -35,7 +35,7 @@ class CoverDetectorConfig:
     # Physical-size gate (per recipe): reject blobs whose real diameter is off the
     # expected cover size. Needs a calibration (to_robot); 0 disables the check.
     expected_diameter_mm: float = 0.0
-    diameter_tolerance: float = 0.4       # accept expected * (1 ± tolerance)
+    diameter_tolerance: float = 0.25      # accept expected * (1 ± tolerance)
 
 
 @dataclass
