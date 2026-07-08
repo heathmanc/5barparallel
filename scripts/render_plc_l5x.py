@@ -359,6 +359,12 @@ SAFETY: List[Rung] = [
 ]
 
 DRIVES: List[Rung] = [
+    ("Anti-restart: a latched fault DROPS the operator's Enable request. Enable is "
+     "a maintained level; without this, hitting Reset (which clears Faulted) would "
+     "instantly re-satisfy EnableReq and auto-energize the drives - an auto-restart "
+     "hazard. Clearing it here forces a deliberate Enable AFTER Reset. Done by the "
+     "PLC (not the app) so it still works when the app died (comms loss).",
+     "XIC(VisionRobot.Status.Faulted)OTU(VisionRobot.Manual.Enable);"),
     ("R20_Drives: owns the axis Enable outputs. EnableReq mirrors Manual.Enable "
      "gated by SafetyOK, no fault, AND a live PC heartbeat (Status.PcAlive) so the "
      "drives cannot be enabled or stay enabled without the app talking. Drives both "

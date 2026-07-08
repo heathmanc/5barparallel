@@ -7,18 +7,22 @@
 <Routine Use="Target" Name="R20_Drives" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
+<Comment><![CDATA[Anti-restart: a latched fault DROPS the operator's Enable request. Enable is a maintained level; without this, hitting Reset (which clears Faulted) would instantly re-satisfy EnableReq and auto-energize the drives - an auto-restart hazard. Clearing it here forces a deliberate Enable AFTER Reset. Done by the PLC (not the app) so it still works when the app died (comms loss).]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Status.Faulted)OTU(VisionRobot.Manual.Enable);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
 <Comment><![CDATA[R20_Drives: owns the axis Enable outputs. EnableReq mirrors Manual.Enable gated by SafetyOK, no fault, AND a live PC heartbeat (Status.PcAlive) so the drives cannot be enabled or stay enabled without the app talking. Drives both ClearLink Enable outputs and publishes Status.Enabled. Tag: EnableReq.]]></Comment>
 <Text><![CDATA[XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)XIC(VisionRobot.Status.PcAlive)OTE(EnableReq);]]></Text>
 </Rung>
-<Rung Number="1" Type="N">
+<Rung Number="2" Type="N">
 <Comment><![CDATA[Drive Motor 0 enable.]]></Comment>
 <Text><![CDATA[XIC(EnableReq)OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
 </Rung>
-<Rung Number="2" Type="N">
+<Rung Number="3" Type="N">
 <Comment><![CDATA[Drive Motor 1 enable.]]></Comment>
 <Text><![CDATA[XIC(EnableReq)OTE(ClearLink:O1.Motor1_Output_Reg_Enable);]]></Text>
 </Rung>
-<Rung Number="3" Type="N">
+<Rung Number="4" Type="N">
 <Comment><![CDATA[Enabled when requested and both drives report Enabled.]]></Comment>
 <Text><![CDATA[XIC(EnableReq)XIC(ClearLink:I1.Motor0_Status_Enabled)XIC(ClearLink:I1.Motor1_Status_Enabled)OTE(VisionRobot.Status.Enabled);]]></Text>
 </Rung>

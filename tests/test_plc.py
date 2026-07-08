@@ -218,3 +218,21 @@ def test_set_driver_reconciles_reference_from_homed_plc():
     # rather than blindly assuming un-referenced.
     c.set_driver(PlcRobotDriver(sim, heartbeat_interval_s=0))
     assert c.is_referenced
+
+
+def test_fault_clears_enable_so_reset_does_not_reenable():
+    # Anti-restart: a fault drops the drives AND the operator's Enable request,
+    # so Reset clears the fault but must NOT auto-re-energize the drives.
+    sim = SimulatedPlcClient(home_angles=(135.0, 45.0)).connect()
+    d = PlcRobotDriver(sim, command_timeout_s=2.0, pulse_hold_s=0.0,
+                       heartbeat_interval_s=0)
+    d.enable()
+    assert d.is_enabled
+    sim._fault(9)                                   # any latched fault
+    assert not d.is_enabled
+    assert sim.read(tags.Manual.ENABLE) is False    # operator request cleared
+    d.reset()
+    assert not d.is_faulted
+    assert not d.is_enabled                         # stays OFF after Reset
+    d.enable()                                      # deliberate re-enable works
+    assert d.is_enabled
