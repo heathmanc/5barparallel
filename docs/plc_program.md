@@ -532,33 +532,35 @@ homing:
 - **Soft limits** clamp/refuse targets before any move.
 - `Cmd.Reset` / (recommended) a manual reset clears a latched fault once the
   condition is gone. Reset is **level-driven** (not one-shot):
-  - **What is / isn't latched.** ClearLink `Motor_In_Fault` (Motor Status bit 9)
-    is a **real-time** status, *not* latched — the manual states the Motor Status
-    register "is a real time register," and bit 9 = *HLFB de-asserted AND Enable
-    output asserted*. It falls on its own the instant HLFB returns (bit 14 on) or
-    the Enable output drops. The genuinely **latched** object is the **Motor
-    Shutdowns** register (Or-accumulating), cleared by **Clear Alerts** (Output
-    bit 6) — which needs *no* enable. `Clear Motor Fault` (Output bit 7) is the
-    drive's disable/re-enable cycle for a genuine ClearPath motor fault; on the
-    EM806 step/dir drive (fault = ALM wired to HLFB) there is no latched drive-side
-    fault, so with the Enable output off that cycle is a harmless no-op.
-  - **What Reset does.** While `Cmd.Reset` is held and safe, R_HomeMotor drives
-    `Clear Alerts` (+ `Clear Fault`) on both axes regardless of homing state, so a
-    latched Shutdown clears without running a home. Reset does **not** force the
-    drives to enable — anti-restart still holds them disabled, so re-running is a
-    deliberate Enable.
+  - **Two different objects.** (1) The **Motor Shutdowns** register is
+    Or-accumulating and latched; it is cleared by **Clear Alerts** (Output bit 6),
+    which needs *no* enable. (2) A **Motor Fault** — `Motor_In_Fault`, Motor Status
+    bit 9 — *sets* when HLFB de-asserts while the Enable output is asserted, and
+    **latches**: it does **not** fall on its own when HLFB returns. Per the manual it
+    clears **only** via **Clear Motor Fault** (Output bit 7), a momentary
+    disable/re-enable **enable cycle** — which does nothing unless the Enable output
+    is asserted at the time.
+  - **The deadlock and how Reset breaks it.** Anti-restart drops `Manual.Enable` on
+    any fault and `EnableReq` refuses to enable while `Faulted`, so the Enable output
+    is off — and the enable cycle can't run, so bit 9 can never clear (this is why
+    hitting Clear Alerts alone does nothing to bit 9). While `Cmd.Reset` (or the
+    bench `DriveClearReq`) is held and safe, R20 `DriveClearActive` **force-enables
+    each axis whose HLFB is present** (`HLFB_ON` bit 14 = 1) so the Clear-Motor-Fault
+    enable cycle can run and clear bit 9. It is **gated on HLFB_ON** so an axis whose
+    HLFB is still de-asserted (drive genuinely alarmed) is **never** energized — its
+    fault correctly persists until HLFB is restored. `DriveClearActive` does **not**
+    set `Status.Enabled` (that needs `EnableReq`/`Manual.Enable`), so no motion is
+    possible and the drives end **disabled** — re-running is a deliberate Enable.
   - **Honest reporting.** The R10 reset rung runs **before** the fault-latch rungs,
     so after re-detection end-of-scan `Faulted` reflects the true live state. The
     PC's `reset()` holds `Cmd.Reset` and polls `Status.Faulted` (needs two
     consecutive clear reads, to dodge the mid-scan clear/re-latch window) until it
     genuinely clears or times out. If the fault source is gone the reset sticks; if
     not, it honestly fails instead of a fixed pulse masking it as OK.
-  - **If `Motor_In_Fault` (bit 9) stays set with HLFB present (bit 14 on) and the
-    Enable output off**, the ClearLink is *mis-reading* HLFB — a real-time bit 9
-    cannot be true in that state. This is a ClearLink **config/wiring** issue, not
-    a ladder one: per the manual's troubleshooting, check **HLFB Inversion**,
-    **Enable Inversion**, and the fault-signal **cable**. No ladder reset can clear
-    a bit 9 the drive is actively (mis)reporting.
+  - **If bit 9 still won't clear** with HLFB restored and the enable cycle run, the
+    drive is genuinely still faulted or the ClearLink is mis-reading HLFB — per the
+    manual's troubleshooting, check **HLFB Inversion** / **Enable Inversion** (Motor
+    Config Register, set in the ClearLink web UI) and the fault-signal **cable**.
 
 **Recommended `Status.FaultCode` values** (PLC-defined; keep 0 = none):
 

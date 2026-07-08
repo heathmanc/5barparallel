@@ -184,25 +184,24 @@ def home_rungs(m: int) -> List[Rung]:
          "HLFB_ON even when fully enabled, so gating on it hangs homing at state 10 "
          "forever. R20_Drives holds the Enable; Enabled is the real enable-complete.",
          f"EQU(Home{m}_State,10)XIC({i}Status_Enabled)MOV(20,Home{m}_State);"),
-        ("State 20 CLEAR MOTOR FAULT (Output bit 7): the drive's disable/re-enable "
-         "cycle for a genuine motor fault. Also fires on a bench DriveClearReq or on "
-         "VisionRobot.Cmd.Reset. On the EM806 (step/dir, fault = ALM wired to HLFB) "
-         "there is no latched drive-side motor fault, and with the Enable output off "
-         "the cycle is a harmless no-op - the real clear is Clear Alerts (State 30). "
-         "Kept for a genuine ClearPath motor fault and for symmetry. Single owner of "
-         "this coil.",
+        ("State 20 CLEAR MOTOR FAULT (Output bit 7): the drive's momentary "
+         "disable/re-enable cycle - the real clear for a latched Motor_In_Fault "
+         "(Status bit 9), which cannot be cleared any other way. Also fires on a bench "
+         "DriveClearReq or on VisionRobot.Cmd.Reset. The cycle is a no-op unless the "
+         "Enable output is asserted, so R20 DriveClearActive force-enables the axis "
+         "during the clear (only when its HLFB is present). Single owner of this coil.",
          f"[EQU(Home{m}_State,20),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]"
          f"OTE({o}Output_Reg_Clear_Fault);"),
         ("State 20: on Clear-Fault ack, drop the request and advance.",
          f"EQU(Home{m}_State,20)XIC({i}Status_Clear_Motor_Fault_Ack)"
          f"OTU({o}Output_Reg_Clear_Fault)MOV(30,Home{m}_State);"),
-        ("State 30 CLEAR ALERTS (Output bit 6): the real clear. Clears the "
-         "OR-accumulating Motor Shutdowns register (the latched object that inhibits "
-         "motion, e.g. Motor-Faulted bit 10) with NO enable precondition. Also fires "
-         "on a bench DriveClearReq or on VisionRobot.Cmd.Reset so a latched Shutdown "
-         "clears without homing. If it will not clear, the shutdown condition is still "
-         "live (per the manual) - fix the source, not the ladder. Single owner of this "
-         "coil.",
+        ("State 30 CLEAR ALERTS (Output bit 6): clears the OR-accumulating Motor "
+         "Shutdowns register (the latched object that inhibits motion) with NO enable "
+         "precondition. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset "
+         "so a latched Shutdown clears without homing. (A Motor_In_Fault / bit 9 is a "
+         "separate thing cleared by Clear Motor Fault in State 20, not here.) If a "
+         "shutdown will not clear, its condition is still live (per the manual) - fix "
+         "the source. Single owner of this coil.",
          f"[EQU(Home{m}_State,30),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]"
          f"OTE({o}Output_Reg_Clear_Alerts);"),
         ("State 30: when no shutdowns remain, drop the request and advance.",
@@ -348,13 +347,13 @@ SAFETY: List[Rung] = [
      "source is actually gone, and re-latches the same scan if not. That is what lets "
      "the PC's reset() poll tell a real clear from a transient (an unclearable drive "
      "fault honestly times out instead of falsely reporting OK). Reset also drives the "
-     "ClearLink Clear-Alerts + Clear-Fault (R_HomeMotor State 20/30) to clear a latched "
-     "Shutdown. NOTE: the drive-alarm fault (code 1) tracks Motor_In_Fault (Status bit "
-     "9), which is REAL-TIME (= HLFB de-asserted AND Enable asserted), not latched - it "
-     "falls on its own once HLFB returns and the Enable output is off, so Reset needs "
-     "no enable cycle. If bit 9 stays set with HLFB present and Enable off, the "
-     "ClearLink is mis-reading HLFB (check HLFB/Enable Inversion + fault cable); no "
-     "ladder reset can clear that.",
+     "ClearLink clears: Clear-Alerts (Shutdowns register) + Clear-Fault (R_HomeMotor "
+     "State 20/30), and via R20 DriveClearActive it force-enables any HLFB-present axis "
+     "so the Clear-Motor-Fault enable cycle can actually clear a latched Motor_In_Fault "
+     "(Status bit 9): that fault latches when HLFB de-asserts while enabled and clears "
+     "ONLY by cycling the enable, which needs the Enable output asserted. R20 gates "
+     "that force-enable on HLFB_ON, so an axis whose HLFB is still absent is NOT "
+     "energized and its fault correctly persists until HLFB is restored.",
      "XIC(VisionRobot.Cmd.Reset)XIC(EStop_OK)XIC(Guard_Closed)"
      "OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);"),
     ("E-stop or guard open -> fault (code 2).",
@@ -417,10 +416,31 @@ DRIVES: List[Rung] = [
      "ClearLink Enable outputs and publishes Status.Enabled. Tag: EnableReq.",
      "XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)"
      "XIC(VisionRobot.Status.PcAlive)OTE(EnableReq);"),
-    ("Drive Motor 0 enable.",
-     "XIC(EnableReq)OTE(ClearLink:O1.Motor0_Output_Reg_Enable);"),
-    ("Drive Motor 1 enable.",
-     "XIC(EnableReq)OTE(ClearLink:O1.Motor1_Output_Reg_Enable);"),
+    ("Drive-fault clear, Motor 0. A ClearLink Motor Fault (Status bit 9) latches when "
+     "HLFB de-asserts while enabled and clears ONLY via the Clear-Motor-Fault enable "
+     "cycle (Output bit 7, commanded on Reset/DriveClearReq by R_HomeMotor State 20) - "
+     "which is a no-op unless the Enable output is asserted, and anti-restart holds it "
+     "off while Faulted. So while Cmd.Reset or the bench DriveClearReq is held, safe, "
+     "AND this axis's HLFB is present (HLFB_ON b14 = 1), force the Enable output on so "
+     "the cycle can run. Gating on HLFB_ON means we NEVER energize an alarmed / "
+     "HLFB-absent drive (that is the case where forcing enable would just re-create "
+     "bit 9). Sealed in so the cycle's own 10ms disable can't drop it. Does NOT set "
+     "Status.Enabled (needs EnableReq), so no motion is possible and the HMI stays "
+     "disabled; drops when Reset releases -> drives end disabled.",
+     "[XIC(VisionRobot.Cmd.Reset),XIC(DriveClearReq)]XIC(EStop_OK)XIC(Guard_Closed)"
+     "XIC(ClearLink:I1.Motor0_Status_HLFB_ON)"
+     "[XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),XIC(DriveClearActive0)]"
+     "OTE(DriveClearActive0);"),
+    ("Drive-fault clear, Motor 1 (see Motor 0). Force Enable on for the HLFB-present "
+     "enable cycle so a latched Motor Fault can clear.",
+     "[XIC(VisionRobot.Cmd.Reset),XIC(DriveClearReq)]XIC(EStop_OK)XIC(Guard_Closed)"
+     "XIC(ClearLink:I1.Motor1_Status_HLFB_ON)"
+     "[XIC(ClearLink:I1.Motor1_Status_Motor_In_Fault),XIC(DriveClearActive1)]"
+     "OTE(DriveClearActive1);"),
+    ("Drive Motor 0 enable (EnableReq, or an HLFB-present drive-fault clear cycle).",
+     "[XIC(EnableReq),XIC(DriveClearActive0)]OTE(ClearLink:O1.Motor0_Output_Reg_Enable);"),
+    ("Drive Motor 1 enable (EnableReq, or an HLFB-present drive-fault clear cycle).",
+     "[XIC(EnableReq),XIC(DriveClearActive1)]OTE(ClearLink:O1.Motor1_Output_Reg_Enable);"),
     ("Enabled when requested and both drives report Enabled.",
      "XIC(EnableReq)XIC(ClearLink:I1.Motor0_Status_Enabled)"
      "XIC(ClearLink:I1.Motor1_Status_Enabled)OTE(VisionRobot.Status.Enabled);"),
@@ -861,12 +881,19 @@ def _glue_tags() -> List[Tag]:
         desc="BENCH: R50 auto-satisfies the Z reed switches + vacuum sensor so the "
              "pick/place motion runs open-loop. Leave 0 in production.")
     add("DriveClearReq", "BOOL",
-        desc="BENCH: pulse true to clear the ClearLink Motor Shutdowns register on both "
-             "axes (pulses Clear_Alerts, plus Clear_Fault for a genuine drive motor "
-             "fault). The Shutdowns register is the latched, Or-accumulating object that "
-             "inhibits motion; Motor_In_Fault (Status bit 9) is real-time, not latched. "
-             "Lets you clear a latched Shutdown without running homing. Leave 0 in "
+        desc="BENCH: pulse true to clear ClearLink drive faults on both axes without "
+             "homing. Drives Clear_Alerts (clears the Shutdowns register) and Clear_Fault "
+             "(the Motor-Fault enable cycle), and - for any axis whose HLFB is present - "
+             "forces the Enable output on (DriveClearActive) so that enable cycle can "
+             "actually run and clear a latched Motor_In_Fault (Status bit 9). Leave 0 in "
              "production.")
+    add("DriveClearActive0", "BOOL",
+        desc="R20: forces Motor 0's Enable output on during a deliberate drive-fault "
+             "clear (Cmd.Reset/DriveClearReq, safe, HLFB_ON present) so the "
+             "Clear-Motor-Fault enable cycle can clear a latched bit 9. HLFB-gated so an "
+             "alarmed/HLFB-absent drive is never energized. Does NOT set Status.Enabled.")
+    add("DriveClearActive1", "BOOL",
+        desc="R20: Motor 1 counterpart of DriveClearActive0.")
     add("HRB_ons", "BOOL", desc="ONS storage for the R30 bypass-home rung.")
     add("HOME_ANGLE_L", "REAL", "135.8504", desc="Left home angle published on a "
         "bypass home, deg (nominal reference).", unit="deg", hand=True)

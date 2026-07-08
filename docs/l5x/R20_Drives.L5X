@@ -15,26 +15,34 @@
 <Text><![CDATA[XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)XIC(VisionRobot.Status.PcAlive)OTE(EnableReq);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
-<Comment><![CDATA[Drive Motor 0 enable.]]></Comment>
-<Text><![CDATA[XIC(EnableReq)OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
+<Comment><![CDATA[Drive-fault clear, Motor 0. A ClearLink Motor Fault (Status bit 9) latches when HLFB de-asserts while enabled and clears ONLY via the Clear-Motor-Fault enable cycle (Output bit 7, commanded on Reset/DriveClearReq by R_HomeMotor State 20) - which is a no-op unless the Enable output is asserted, and anti-restart holds it off while Faulted. So while Cmd.Reset or the bench DriveClearReq is held, safe, AND this axis's HLFB is present (HLFB_ON b14 = 1), force the Enable output on so the cycle can run. Gating on HLFB_ON means we NEVER energize an alarmed / HLFB-absent drive (that is the case where forcing enable would just re-create bit 9). Sealed in so the cycle's own 10ms disable can't drop it. Does NOT set Status.Enabled (needs EnableReq), so no motion is possible and the HMI stays disabled; drops when Reset releases -> drives end disabled.]]></Comment>
+<Text><![CDATA[[XIC(VisionRobot.Cmd.Reset),XIC(DriveClearReq)]XIC(EStop_OK)XIC(Guard_Closed)XIC(ClearLink:I1.Motor0_Status_HLFB_ON)[XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),XIC(DriveClearActive0)]OTE(DriveClearActive0);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
-<Comment><![CDATA[Drive Motor 1 enable.]]></Comment>
-<Text><![CDATA[XIC(EnableReq)OTE(ClearLink:O1.Motor1_Output_Reg_Enable);]]></Text>
+<Comment><![CDATA[Drive-fault clear, Motor 1 (see Motor 0). Force Enable on for the HLFB-present enable cycle so a latched Motor Fault can clear.]]></Comment>
+<Text><![CDATA[[XIC(VisionRobot.Cmd.Reset),XIC(DriveClearReq)]XIC(EStop_OK)XIC(Guard_Closed)XIC(ClearLink:I1.Motor1_Status_HLFB_ON)[XIC(ClearLink:I1.Motor1_Status_Motor_In_Fault),XIC(DriveClearActive1)]OTE(DriveClearActive1);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
+<Comment><![CDATA[Drive Motor 0 enable (EnableReq, or an HLFB-present drive-fault clear cycle).]]></Comment>
+<Text><![CDATA[[XIC(EnableReq),XIC(DriveClearActive0)]OTE(ClearLink:O1.Motor0_Output_Reg_Enable);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[Drive Motor 1 enable (EnableReq, or an HLFB-present drive-fault clear cycle).]]></Comment>
+<Text><![CDATA[[XIC(EnableReq),XIC(DriveClearActive1)]OTE(ClearLink:O1.Motor1_Output_Reg_Enable);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
 <Comment><![CDATA[Enabled when requested and both drives report Enabled.]]></Comment>
 <Text><![CDATA[XIC(EnableReq)XIC(ClearLink:I1.Motor0_Status_Enabled)XIC(ClearLink:I1.Motor1_Status_Enabled)OTE(VisionRobot.Status.Enabled);]]></Text>
 </Rung>
-<Rung Number="5" Type="N">
+<Rung Number="7" Type="N">
 <Comment><![CDATA[Drop-out debounce preset (EN_DROP_TMO_MS).]]></Comment>
 <Text><![CDATA[MOV(EN_DROP_TMO_MS,EnDrop_Tmr.PRE);]]></Text>
 </Rung>
-<Rung Number="6" Type="N">
+<Rung Number="8" Type="N">
 <Comment><![CDATA[Time how long the drive is commanded on (EnableReq) but not actually Enabled. Resets the instant it enables, so the enable startup / a Clear-Fault enable cycle / an HLFB blip don't trip it - only a sustained drop-out does.]]></Comment>
 <Text><![CDATA[XIC(EnableReq)XIO(VisionRobot.Status.Enabled)TON(EnDrop_Tmr,?,?);]]></Text>
 </Rung>
-<Rung Number="7" Type="N">
+<Rung Number="9" Type="N">
 <Comment><![CDATA[Sustained drop-out (a drive power-cycle: commanded on but dark past the debounce) -> drop the operator's Enable request so the drive does NOT come back energized when it powers up. Re-enabling is then a deliberate Enable.]]></Comment>
 <Text><![CDATA[XIC(EnDrop_Tmr.DN)OTU(VisionRobot.Manual.Enable);]]></Text>
 </Rung>

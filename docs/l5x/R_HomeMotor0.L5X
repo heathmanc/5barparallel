@@ -15,7 +15,7 @@
 <Text><![CDATA[EQU(Home0_State,10)XIC(ClearLink:I1.Motor0_Status_Enabled)MOV(20,Home0_State);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
-<Comment><![CDATA[State 20 CLEAR MOTOR FAULT (Output bit 7): the drive's disable/re-enable cycle for a genuine motor fault. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset. On the EM806 (step/dir, fault = ALM wired to HLFB) there is no latched drive-side motor fault, and with the Enable output off the cycle is a harmless no-op - the real clear is Clear Alerts (State 30). Kept for a genuine ClearPath motor fault and for symmetry. Single owner of this coil.]]></Comment>
+<Comment><![CDATA[State 20 CLEAR MOTOR FAULT (Output bit 7): the drive's momentary disable/re-enable cycle - the real clear for a latched Motor_In_Fault (Status bit 9), which cannot be cleared any other way. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset. The cycle is a no-op unless the Enable output is asserted, so R20 DriveClearActive force-enables the axis during the clear (only when its HLFB is present). Single owner of this coil.]]></Comment>
 <Text><![CDATA[[EQU(Home0_State,20),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Fault);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
@@ -23,7 +23,7 @@
 <Text><![CDATA[EQU(Home0_State,20)XIC(ClearLink:I1.Motor0_Status_Clear_Motor_Fault_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Clear_Fault)MOV(30,Home0_State);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
-<Comment><![CDATA[State 30 CLEAR ALERTS (Output bit 6): the real clear. Clears the OR-accumulating Motor Shutdowns register (the latched object that inhibits motion, e.g. Motor-Faulted bit 10) with NO enable precondition. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset so a latched Shutdown clears without homing. If it will not clear, the shutdown condition is still live (per the manual) - fix the source, not the ladder. Single owner of this coil.]]></Comment>
+<Comment><![CDATA[State 30 CLEAR ALERTS (Output bit 6): clears the OR-accumulating Motor Shutdowns register (the latched object that inhibits motion) with NO enable precondition. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset so a latched Shutdown clears without homing. (A Motor_In_Fault / bit 9 is a separate thing cleared by Clear Motor Fault in State 20, not here.) If a shutdown will not clear, its condition is still live (per the manual) - fix the source. Single owner of this coil.]]></Comment>
 <Text><![CDATA[[EQU(Home0_State,30),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Alerts);]]></Text>
 </Rung>
 <Rung Number="5" Type="N">
