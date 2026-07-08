@@ -336,9 +336,17 @@ SAFETY: List[Rung] = [
     ("Any hard limit tripped -> fault (code 3).",
      "[XIC(Ax0_LimitMin),XIC(Ax0_LimitMax),XIC(Ax1_LimitMin),XIC(Ax1_LimitMax)]"
      "OTL(VisionRobot.Status.Faulted)MOV(3,VisionRobot.Status.FaultCode);"),
-    ("Either EM806 drive alarm -> fault (code 1).",
-     "[XIC(EM806_0_ALM),XIC(EM806_1_ALM)]OTL(VisionRobot.Status.Faulted)"
-     "MOV(1,VisionRobot.Status.FaultCode);"),
+    ("Either EM806 drive alarm -> fault (code 1). The EM806 ALM output is wired to "
+     "the ClearLink HLFB input, so a drive alarm OR a drive power-loss de-asserts "
+     "HLFB and shows up as Motor_In_Fault (Status bit 9 = HLFB de-asserted AND enable "
+     "asserted) - NOT as a standalone EM806_x_ALM DI. Fault on both. Bit 9 is "
+     "dip-sensitive and independent of homed state, so this catches a drive "
+     "power-cycle while enabled whether or not the machine was homed; the fault then "
+     "drops Manual.Enable (anti-restart) and the reference (via EnableReq).",
+     "[XIC(EM806_0_ALM),XIC(EM806_1_ALM),"
+     "XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),"
+     "XIC(ClearLink:I1.Motor1_Status_Motor_In_Fault)]"
+     "OTL(VisionRobot.Status.Faulted)MOV(1,VisionRobot.Status.FaultCode);"),
     ("SafetyOK = no active fault, E-stop healthy, guard closed.",
      "XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);"),
     ("Cmd.Reset (rising edge) while physically safe clears the latched fault.",
