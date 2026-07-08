@@ -37,7 +37,29 @@ def test_main_window_has_all_tabs(qapp):
         "Settings",
         "PLC",
         "Bypass",
+        "Diagnostics",
     ]
+
+
+def test_diagnostics_tab_formats_and_updates(qapp):
+    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
+    from bung_cover_robot.gui.diagnostics_tab import DiagnosticsTab
+
+    tab = DiagnosticsTab(build_dry_run_controller())
+    # No PLC client on the dry-run driver -> no poller thread started.
+    assert tab._poller is None
+
+    assert DiagnosticsTab._format(True, "bool") == "1"
+    assert DiagnosticsTab._format(None, "num") == "—"
+    assert DiagnosticsTab._format(4, "faultcode") == "4 (homing fail/timeout)"
+    assert "f85149" in DiagnosticsTab._color(1, "fault")          # fault true = red
+    assert "f85149" in DiagnosticsTab._color(0, "numwarn0")       # HOME_VEL 0 = red
+    assert DiagnosticsTab._color(2000, "numwarn0") == ""          # nonzero = plain
+
+    # Feeding a poll result updates the value labels off any thread.
+    tab._on_polled({"HOME_VEL_0": 0, "VisionRobot.Status.Faulted": True})
+    assert tab._value_labels["HOME_VEL_0"][0].text() == "0"
+    assert tab._value_labels["VisionRobot.Status.Faulted"][0].text() == "1"
 
 
 def test_theme_applies(qapp):

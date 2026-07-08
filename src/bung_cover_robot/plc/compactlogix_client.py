@@ -15,6 +15,7 @@ the PlcClient interface so the driver is testable with no hardware:
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 
@@ -51,6 +52,18 @@ class PlcClient(ABC):
     def write(self, tag: str, value: Any) -> None:
         ...
 
+    def read_many(self, tag_list) -> Dict[str, Any]:
+        """Read several tags at once. Default loops ``read``; subclasses may
+        batch. A tag that errors maps to ``None`` instead of aborting the batch,
+        so a diagnostics poller shows every other tag."""
+        out: Dict[str, Any] = {}
+        for tag in tag_list:
+            try:
+                out[tag] = self.read(tag)
+            except PlcError:
+                out[tag] = None
+        return out
+
     def __enter__(self) -> "PlcClient":
         return self.connect()
 
@@ -64,6 +77,9 @@ class CompactLogixClient(PlcClient):
     def __init__(self, path: str) -> None:
         self.path = path
         self._plc = None
+        # pycomm3's LogixDriver is not thread-safe; serialize all I/O so a
+        # background diagnostics poller can read while the main thread commands.
+        self._lock = threading.Lock()
 
     @staticmethod
     def _import_driver():
@@ -103,15 +119,32 @@ class CompactLogixClient(PlcClient):
     def read(self, tag: str) -> Any:  # pragma: no cover - hardware path
         if not self.is_connected:
             raise PlcError("not connected")
-        result = self._plc.read(tag)
+        with self._lock:
+            result = self._plc.read(tag)
         if result is None or getattr(result, "error", None):
             raise PlcError(f"read {tag} failed: {getattr(result, 'error', 'no result')}")
         return result.value
 
+    def read_many(self, tag_list) -> Dict[str, Any]:  # pragma: no cover - hardware path
+        tag_list = list(tag_list)
+        if not self.is_connected:
+            raise PlcError("not connected")
+        if not tag_list:
+            return {}
+        with self._lock:
+            results = self._plc.read(*tag_list)
+        if len(tag_list) == 1:
+            results = [results]
+        out: Dict[str, Any] = {}
+        for tag, res in zip(tag_list, results):
+            out[tag] = None if res is None or getattr(res, "error", None) else res.value
+        return out
+
     def write(self, tag: str, value: Any) -> None:  # pragma: no cover - hardware path
         if not self.is_connected:
             raise PlcError("not connected")
-        result = self._plc.write((tag, value))
+        with self._lock:
+            result = self._plc.write((tag, value))
         if result is None or getattr(result, "error", None):
             raise PlcError(f"write {tag}={value!r} failed: "
                            f"{getattr(result, 'error', 'no result')}")
