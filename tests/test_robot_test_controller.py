@@ -23,6 +23,19 @@ def ready() -> RobotTestController:
     return c
 
 
+def test_disable_clears_reference_and_forces_rehome():
+    c = ready()
+    assert c.is_referenced
+    c.disable()
+    assert not c.is_referenced                 # open-loop: disable loses the datum
+    c.enable()                                 # re-enable alone does NOT restore it
+    assert not c.is_referenced
+    res = c.jog_joint("left", 1.0)             # motion refused until re-homed
+    assert not res.ok and "referenced" in res.reason
+    c.home_reference()
+    assert c.is_referenced
+
+
 # --------------------------------------------------------------------------- #
 # Initial state
 # --------------------------------------------------------------------------- #

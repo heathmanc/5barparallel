@@ -109,6 +109,14 @@ class RobotDriver(ABC):
         """Clear a latched fault so the drives can be enabled/homed again."""
 
     @property
+    def is_referenced(self) -> bool:
+        """True if a home reference is currently established. Default: we know a
+        position. The PLC driver overrides to read Status.Homed live, so a
+        disable/fault (which clears the PLC's home) is reflected immediately -- an
+        open-loop stepper loses its datum on disable and must be re-homed."""
+        return self.read_angles() is not None
+
+    @property
     def is_faulted(self) -> bool:
         """True if a fault is latched. Default False for drivers with no fault
         concept (overridden by the PLC driver)."""
@@ -139,7 +147,9 @@ class DryRunRobotDriver(RobotDriver):
 
     def disable(self) -> None:
         self._enabled = False
-        logger.info("[dry-run] drives DISABLED")
+        # Disable loses the reference (open-loop: no feedback once de-energized).
+        self._angles = None
+        logger.info("[dry-run] drives DISABLED (reference cleared)")
 
     def move_to_angles(self, left_deg: float, right_deg: float) -> None:
         if not self._enabled:

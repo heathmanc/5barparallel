@@ -95,8 +95,11 @@ class RobotTestController:
 
     @property
     def is_referenced(self) -> bool:
-        """True once the hardware home reference has been found (driver.home)."""
-        return self._referenced
+        """Referenced only if we ran a home AND the driver still reports it homed.
+        The driver's is_referenced is live (PLC Status.Homed), so a disable/fault
+        -- which clears the machine's home on an open-loop stepper -- drops this
+        immediately and forces a re-home, instead of trusting a stale cache."""
+        return self._referenced and self.driver.is_referenced
 
     @property
     def is_faulted(self) -> bool:
@@ -253,7 +256,7 @@ class RobotTestController:
     def _motion_guard(self) -> Optional[MoveResult]:
         if not self.is_enabled:
             return self._reject("drives are disabled — enable first")
-        if not self._referenced:
+        if not self.is_referenced:
             return self._reject("robot is not referenced — Home (find ref) first")
         return None
 
