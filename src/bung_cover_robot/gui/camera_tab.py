@@ -373,7 +373,7 @@ class CameraTab(QWidget):
                 old.close()
             except Exception:
                 pass
-        self._setup_ranges()
+        self._adopt_camera_controls()
         self._refresh_conn_status()
         self._apply_initial_controls()
         self._grab()
@@ -381,23 +381,41 @@ class CameraTab(QWidget):
             self._start_live()
         self.cameraChanged.emit()
 
-    def _setup_ranges(self) -> None:
-        """Match the exposure/gain slider ranges to the connected camera so a
-        converged auto value (which can exceed the default cap in dim light) is
-        representable. Best-effort — the mock has no ranges."""
+    def _adopt_camera_controls(self) -> None:
+        """Match each slider's RANGE and starting VALUE to the connected camera's
+        actual node. The hardcoded defaults suit the software preview model (e.g.
+        contrast is a multiplier centered at 1.0), but a real Basler's BslContrast
+        is centered at 0 over roughly [-1, 1] — so a default of 1.0 is max contrast,
+        and 0 has no room below it. Adopting the camera's own range + current value
+        gives every slider the right zero and headroom. Best-effort per control;
+        the mock exposes no ranges, so it keeps the designed software sliders."""
         control_range = getattr(self.camera, "control_range", None)
+        get_control = getattr(self.camera, "get_control", None)
         if control_range is None:
             return
-        for name in _AUTO:
+        for _, name, *_rest in _CONTROLS:
             try:
                 lo, hi = control_range(name)
             except (CameraControlError, CameraError):
-                continue
+                continue  # node absent on this model -> keep the designed slider
+            cur = None
+            if get_control is not None:
+                try:
+                    cur = float(get_control(name))
+                except (CameraControlError, CameraError, ValueError, TypeError):
+                    cur = None
+            if cur is None:
+                cur = 0.0 if lo <= 0.0 <= hi else (lo + hi) / 2.0  # neutral fallback
             scale = self._scales[name]
             slider = self._sliders[name]
             slider.blockSignals(True)
-            slider.setRange(int(lo * scale), int(hi * scale))
+            slider.setRange(int(round(lo * scale)), int(round(hi * scale)))
+            slider.setValue(int(round(cur * scale)))
             slider.blockSignals(False)
+            self._value_labels[name].setText(
+                f"{self._value(name):.0f}" if name == "exposure_time_us"
+                else f"{self._value(name):.2f}"
+            )
 
     def _refresh_conn_status(self) -> None:
         if isinstance(self.camera, MockCamera):
