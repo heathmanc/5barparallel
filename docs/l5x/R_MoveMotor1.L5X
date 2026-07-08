@@ -7,8 +7,8 @@
 <Routine Use="Target" Name="R_MoveMotor1" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R_MoveMotor1: Motor 1 absolute move. R20_Drives owns the axis Enable output (this routine no longer sets it). Called each scan by R00_Main. Tags/constants from RobotTags.csv (Move1_Execute/ons/Fault/InPosition, Move1_Steps, Move1_Target_Deg, EM806_1_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC) and the ClearLink module. Convert the target angle to steps.]]></Comment>
-<Text><![CDATA[CPT(Move1_Steps,TRN(Move1_Target_Deg * STEPS_PER_DEG));]]></Text>
+<Comment><![CDATA[R_MoveMotor1: Motor 1 absolute move. R20_Drives owns the axis Enable output (this routine no longer sets it). Called each scan by R00_Main. Tags/constants from RobotTags.csv (Move1_Execute/Fault/InPosition/Loaded, Move1_Steps, Move1_Target_Deg, EM806_1_ALM, STEPS_PER_DEG, MOVE_VEL, MOVE_ACC, HOME_OFFSET_R) and the ClearLink module. Convert the target angle to ClearLink steps. Subtract HOME_OFFSET_R because the ClearLink zeroes CommandedPosn at the home prox, not at 0 deg: R30 publishes ActualDeg = (CommandedPosn + HOME_OFFSET_R)/STEPS_PER_DEG, so the inverse (command) must be Target*SPD - HOME_OFFSET_R. Without it, the first move after homing jumps by the whole home offset.]]></Comment>
+<Text><![CDATA[CPT(Move1_Steps,TRN(Move1_Target_Deg * STEPS_PER_DEG) - HOME_OFFSET_R);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
 <Comment><![CDATA[Load the move whenever Execute is commanded but not yet loaded or done (level-triggered, NOT an Execute edge): a new command clears Loaded + InPosition in R40/R50, so this loads once, then XIO(Loaded)/XIO(InPosition) hold it off. Level-triggering avoids the deadlock where a sticky Execute latch (move never completed) leaves a one-shot that can never re-fire. Gated by the motor-local fault AND the latched controller fault so a code-4 homing failure inhibits the move until Reset clears it. Loads Move Distance / limits, sets Absolute, latches Load Position Data + Loaded.]]></Comment>

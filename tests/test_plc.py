@@ -179,3 +179,42 @@ def test_controller_over_plc_driver():
     # The commanded angles reached the (simulated) PLC.
     assert client.read(tags.Status.ACTUAL_LEFT_DEG) == pytest.approx(res.state.left_deg)
     assert client.read(tags.Status.ACTUAL_RIGHT_DEG) == pytest.approx(res.state.right_deg)
+
+
+# --------------------------------------------------------------------------- #
+# Heartbeat watchdog handshake
+# --------------------------------------------------------------------------- #
+def test_heartbeat_marks_pc_alive_and_ticks_beats():
+    import time
+
+    client = SimulatedPlcClient(home_angles=(135.0, 45.0)).connect()
+    d = PlcRobotDriver(client, heartbeat_interval_s=0.02)
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not d.is_pc_alive:
+            time.sleep(0.01)
+        assert d.is_pc_alive                       # PLC saw the beat (sim watchdog)
+        hb1 = d.plc_heartbeat()
+        time.sleep(0.06)
+        assert d.plc_heartbeat() != hb1            # PLC beat advances while alive
+    finally:
+        d.stop_heartbeat()
+    frozen = client.read(tags.Cmd.HEARTBEAT)       # writer stopped -> value freezes
+    time.sleep(0.05)
+    assert client.read(tags.Cmd.HEARTBEAT) == frozen
+
+
+def test_set_driver_reconciles_reference_from_homed_plc():
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    sim = SimulatedPlcClient(home_angles=(135.85, 44.15)).connect()
+    sim.write(tags.Status.HOMED, True)
+    sim.write(tags.Status.ACTUAL_LEFT_DEG, 135.85)
+    sim.write(tags.Status.ACTUAL_RIGHT_DEG, 44.15)
+
+    c = RobotTestController(DryRunRobotDriver())
+    assert not c.is_referenced
+    # Connecting to an already-homed PLC adopts its reference (real handshaking),
+    # rather than blindly assuming un-referenced.
+    c.set_driver(PlcRobotDriver(sim, heartbeat_interval_s=0))
+    assert c.is_referenced

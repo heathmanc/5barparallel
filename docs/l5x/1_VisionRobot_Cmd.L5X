@@ -9,6 +9,7 @@
 <Member Name="Abort" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Cmd0" BitNumber="1" ExternalAccess="Read/Write"/>
 <Member Name="Reset" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Cmd0" BitNumber="2" ExternalAccess="Read/Write"/>
 <Member Name="CommandID" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
+<Member Name="Heartbeat" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
 </Members>
 </DataType>
 </DataTypes>

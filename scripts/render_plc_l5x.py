@@ -122,14 +122,19 @@ def move_rungs(m: int) -> List[Rung]:
     """Absolute-move routine for Motor `m` (mirrors Teknic SD_Position_Move)."""
     o = f"ClearLink:O1.Motor{m}_"
     i = f"ClearLink:I1.Motor{m}_"
+    offs = "HOME_OFFSET_L" if m == 0 else "HOME_OFFSET_R"
     other = 1 - m
     return [
         (f"R_MoveMotor{m}: Motor {m} absolute move. R20_Drives owns the axis Enable "
          f"output (this routine no longer sets it). Called each scan by R00_Main. "
-         f"Tags/constants from RobotTags.csv (Move{m}_Execute/ons/Fault/InPosition, "
+         f"Tags/constants from RobotTags.csv (Move{m}_Execute/Fault/InPosition/Loaded, "
          f"Move{m}_Steps, Move{m}_Target_Deg, EM806_{m}_ALM, STEPS_PER_DEG, MOVE_VEL, "
-         f"MOVE_ACC) and the ClearLink module. Convert the target angle to steps.",
-         f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG));"),
+         f"MOVE_ACC, {offs}) and the ClearLink module. Convert the target angle to "
+         f"ClearLink steps. Subtract {offs} because the ClearLink zeroes CommandedPosn "
+         f"at the home prox, not at 0 deg: R30 publishes ActualDeg = (CommandedPosn + "
+         f"{offs})/STEPS_PER_DEG, so the inverse (command) must be Target*SPD - {offs}. "
+         f"Without it, the first move after homing jumps by the whole home offset.",
+         f"CPT(Move{m}_Steps,TRN(Move{m}_Target_Deg * STEPS_PER_DEG) - {offs});"),
         ("Load the move whenever Execute is commanded but not yet loaded or done "
          "(level-triggered, NOT an Execute edge): a new command clears Loaded + "
          "InPosition in R40/R50, so this loads once, then XIO(Loaded)/XIO(InPosition) "
@@ -326,14 +331,40 @@ SAFETY: List[Rung] = [
     ("Cmd.Reset (rising edge) while physically safe clears the latched fault.",
      "XIC(VisionRobot.Cmd.Reset)ONS(Reset_prev)XIC(EStop_OK)XIC(Guard_Closed)"
      "OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);"),
+    # --- PC<->PLC heartbeat watchdog ---
+    ("Watchdog: keep the PC-heartbeat timer preset loaded (HB_TIMEOUT_MS ms).",
+     "MOV(HB_TIMEOUT_MS,HB_Tmr.PRE);"),
+    ("PC heartbeat changed -> HB_seen pulses one scan (which resets the watchdog "
+     "timer) and we latch the new value. The PC (PlcRobotDriver) increments "
+     "VisionRobot.Cmd.Heartbeat continuously while connected.",
+     "NEQ(VisionRobot.Cmd.Heartbeat,HB_last)OTE(HB_seen)"
+     "MOV(VisionRobot.Cmd.Heartbeat,HB_last);"),
+    ("Watchdog timer runs while NO new heartbeat; each change resets it. Expiry "
+     "= the PC stopped talking.",
+     "XIO(HB_seen)TON(HB_Tmr,?,?);"),
+    ("PcAlive = a PC heartbeat arrived within HB_TIMEOUT_MS. R20 gates the drive "
+     "Enable on this, so the drives can't be (or stay) enabled without a live app.",
+     "XIO(HB_Tmr.DN)OTE(VisionRobot.Status.PcAlive);"),
+    ("Heartbeat lost while the operator has Enable requested -> comms-loss fault "
+     "(code 10). Dead-man: a crashed/closed app drops the drives via R20 losing "
+     "PcAlive, and latches this fault. Clears on Reset once the heartbeat returns.",
+     "XIC(HB_Tmr.DN)XIC(VisionRobot.Manual.Enable)OTL(VisionRobot.Status.Faulted)"
+     "MOV(10,VisionRobot.Status.FaultCode);"),
+    ("PLC heartbeat: increment each scan so the PC can confirm the ladder is "
+     "actually scanning (not just that the tag read succeeded).",
+     "ADD(VisionRobot.Status.Heartbeat,1,VisionRobot.Status.Heartbeat);"),
+    ("Wrap the PLC heartbeat to avoid DINT overflow.",
+     "GRT(VisionRobot.Status.Heartbeat,1000000000)"
+     "MOV(0,VisionRobot.Status.Heartbeat);"),
 ]
 
 DRIVES: List[Rung] = [
     ("R20_Drives: owns the axis Enable outputs. EnableReq mirrors Manual.Enable "
-     "gated by SafetyOK and no fault; drives both ClearLink Enable outputs and "
-     "publishes Status.Enabled. Tag: EnableReq (RobotTags.csv).",
+     "gated by SafetyOK, no fault, AND a live PC heartbeat (Status.PcAlive) so the "
+     "drives cannot be enabled or stay enabled without the app talking. Drives both "
+     "ClearLink Enable outputs and publishes Status.Enabled. Tag: EnableReq.",
      "XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)"
-     "OTE(EnableReq);"),
+     "XIC(VisionRobot.Status.PcAlive)OTE(EnableReq);"),
     ("Drive Motor 0 enable.",
      "XIC(EnableReq)OTE(ClearLink:O1.Motor0_Output_Reg_Enable);"),
     ("Drive Motor 1 enable.",
@@ -529,6 +560,7 @@ def _pack_members(udt: str, members: List[Member]) -> str:
 UDT_CMD: List[Member] = [
     ("RequestPickPlace", "BOOL"), ("Abort", "BOOL"), ("Reset", "BOOL"),
     ("CommandID", "DINT"),
+    ("Heartbeat", "DINT"),   # PC increments continuously; PLC watchdogs it
 ]
 UDT_TARGET: List[Member] = [
     ("Pick_LeftDeg", "REAL"), ("Pick_RightDeg", "REAL"),
@@ -549,6 +581,8 @@ UDT_STATUS: List[Member] = [
     ("ActiveCommandID", "DINT"), ("CompleteCommandID", "DINT"),
     ("FailedCommandID", "DINT"),
     ("VacuumOK", "BOOL"), ("CameraClear", "BOOL"), ("ReadyForVision", "BOOL"),
+    ("PcAlive", "BOOL"),      # PC heartbeat seen within HB_TIMEOUT_MS
+    ("Heartbeat", "DINT"),    # PLC increments each scan; PC verifies the ladder scans
 ]
 UDT_PARENT: List[Member] = [
     ("Cmd", "VisionRobot_Cmd"), ("Target", "VisionRobot_Target"),
@@ -706,6 +740,15 @@ def _glue_tags() -> List[Tag]:
     add("EnableReq", "BOOL", desc="Drive-enable request (set by manual/auto).")
     add("Reset_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.Reset in R10.")
 
+    # --- PC<->PLC heartbeat watchdog (R10_Safety) ---
+    add("HB_last", "DINT", desc="Last-seen VisionRobot.Cmd.Heartbeat value (watchdog).")
+    add("HB_seen", "BOOL", desc="Pulses one scan when the PC heartbeat changes (resets HB_Tmr).")
+    add("HB_Tmr", "TIMER", desc="PC-heartbeat watchdog timer (preset HB_TIMEOUT_MS).")
+    add("HB_TIMEOUT_MS", "DINT", "1000",
+        desc="PC heartbeat must change within this many ms or the PLC declares comms "
+             "loss (code 10) and drops the drives. Set > 4x the PC heartbeat period.",
+        unit="ms", hand=True)
+
     # --- manual jog/home (R40_Manual) + mode selector ---
     add("AutoMode", "BOOL", desc="Mode: 1 = auto (R50) owns motion, 0 = manual (R40).")
     add("WithinLimits", "BOOL", desc="Manual target within -20..+200 deg soft limits.")
@@ -791,6 +834,8 @@ _VALUE_GROUPS: List[Tuple[str, List[str]]] = [
      ["VAC_SETTLE", "BLOWOFF_TIME"]),
     ("Poses — set to safe positions (R50_Auto)",
      ["CAMERA_CLEAR_L", "CAMERA_CLEAR_R"]),
+    ("Heartbeat watchdog (R10_Safety)",
+     ["HB_TIMEOUT_MS"]),
 ]
 
 

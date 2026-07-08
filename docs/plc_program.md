@@ -554,6 +554,32 @@ The `FaultCode` numbering is PLC-defined — `PlcRobotDriver` only checks
 message, so pick any consistent scheme (the repo's simulator uses its own
 placeholder codes purely for GUI testing).
 
+### 9a. Heartbeat watchdog (dead-man) — code 10
+
+The app and the PLC exchange a liveness heartbeat so an app that crashes, hangs,
+or is closed **cannot leave the drives energized**, and a fresh app can never
+find drives "already enabled" by a dead session:
+
+- **PC → PLC:** `PlcRobotDriver` runs a background thread that increments
+  `VisionRobot.Cmd.Heartbeat` every `heartbeat_interval_s` (0.2 s) while
+  connected.
+- **PLC watchdog (R10_Safety):** a timer (`HB_Tmr`, preset `HB_TIMEOUT_MS` ≈ 1 s)
+  resets every time `Cmd.Heartbeat` changes. If it expires, `Status.PcAlive`
+  drops; if the operator had Enable requested, it latches **FaultCode 10**.
+- **Enable is gated on `PcAlive`** (R20): `EnableReq = Manual.Enable · SafetyOK ·
+  ¬Faulted · PcAlive`. So the drives **cannot be enabled — or stay enabled —
+  without a live app heartbeat.** A crashed app drops the drives within
+  `HB_TIMEOUT_MS`.
+- **PLC → PC:** the PLC increments `VisionRobot.Status.Heartbeat` each scan so the
+  app can confirm the ladder is actually *scanning* (not just that a tag read
+  ACKed). Watch both on the Diagnostics tab.
+- **Startup reconciliation:** on connect, the controller reads the PLC's real
+  `Status.Homed`/angles and adopts the reference if valid, instead of assuming a
+  fixed state — real handshaking, not a blind reset.
+
+Set `HB_TIMEOUT_MS` to at least 4× the PC heartbeat period (default 0.2 s → ≥ 1 s)
+so a momentary comms jitter doesn't nuisance-trip the dead-man.
+
 ---
 
 ## 10. CommandID handshake <a id="10-handshake"></a>
