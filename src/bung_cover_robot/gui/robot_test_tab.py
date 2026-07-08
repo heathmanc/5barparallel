@@ -383,6 +383,16 @@ class RobotTestTab(QWidget):
         for btn in getattr(self, "_jog_buttons", []):
             btn.setEnabled(enabled and referenced and not faulted and not busy)
 
+        # Keep the REFERENCED label live off the poll too (not just after a
+        # command) so a disable / drive power-cycle that drops the reference
+        # updates the readout immediately, not only after the next click.
+        self.referenced_label.setText("REFERENCED" if referenced else "NOT REFERENCED")
+        self.referenced_label.setStyleSheet(
+            "color: #3fb950; font-weight: bold;"
+            if referenced
+            else "color: #f85149; font-weight: bold;"
+        )
+
         # Fault banner + next-step sequencing hint.
         if faulted:
             code = self.controller.fault_code()
