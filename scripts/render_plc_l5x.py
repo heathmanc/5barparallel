@@ -280,6 +280,18 @@ COORD: List[Rung] = [
      "between jogs. The homing state machines re-zero on the next HomeRequest.",
      "XIO(EnableReq)OTU(VisionRobot.Status.Homed)"
      "OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);"),
+    ("Drive power-cycle invalidates the reference even while still commanded on. "
+     "The ClearLink's own Has_Homed (bit 13) de-asserts when HLFB drops (drive "
+     "powered down) and does NOT re-assert on power-up until a fresh home - so if "
+     "we think we're homed (real homing, not bypass) but either axis has dropped "
+     "Has_Homed, the datum is gone: clear it and force a re-home. This catches a "
+     "drive power-cycle that EnableReq (still true) misses. Excluded in bypass, "
+     "where Has_Homed is intentionally not used.",
+     "XIC(VisionRobot.Status.Homed)XIO(Bypass_Homing)"
+     "[XIO(ClearLink:I1.Motor0_Status_Has_Homed),"
+     "XIO(ClearLink:I1.Motor1_Status_Has_Homed)]"
+     "OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)"
+     "OTU(SoftLimitsEnable);"),
     ("Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: "
      "clear the coordinator + per-axis states and latched home faults/requests. "
      "MUST scan before the fault-latch rung below so the cleared HomeFault can't "
