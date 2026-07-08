@@ -274,3 +274,8 @@ class SimulatedPlcClient(PlcClient):
     def _fault(self, code: int) -> None:
         self._store[T.Status.FAULTED] = True
         self._store[T.Status.FAULT_CODE] = code
+        # Mirror R20's anti-restart: a fault drops the drives AND the operator's
+        # Enable request, so Reset alone never re-energizes the drives.
+        self._store[T.Status.ENABLED] = False
+        self._store[T.Manual.ENABLE] = False
+        self._store[T.Status.MOVING] = False
