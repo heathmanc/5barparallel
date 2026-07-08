@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QGroupBox,
@@ -65,6 +66,7 @@ class BypassTab(QWidget):
         root.addWidget(warn)
 
         root.addWidget(self._build_safety_group())
+        root.addWidget(self._build_drives_group())
         root.addWidget(self._build_homing_group())
         root.addWidget(self._build_vision_group())
 
@@ -86,6 +88,19 @@ class BypassTab(QWidget):
         self.force_safe_btn = QPushButton("Force safeties SAFE")
         self.force_safe_btn.clicked.connect(self._on_force_safe)
         v.addWidget(self.force_safe_btn)
+        return box
+
+    def _build_drives_group(self) -> QGroupBox:
+        box = QGroupBox("Drive alerts / faults")
+        v = QVBoxLayout(box)
+        v.addWidget(QLabel(
+            "Pulses Clear_Alerts + Clear_Fault on both ClearLink axes (DriveClearReq). "
+            "Clears a latched Shutdown (e.g. Motor Faulted from a no-HLFB drive) without "
+            "running homing. Fix the HLFB config first, or it re-latches immediately."
+        ))
+        self.clear_drives_btn = QPushButton("Clear drive alerts / faults")
+        self.clear_drives_btn.clicked.connect(self._on_clear_drives)
+        v.addWidget(self.clear_drives_btn)
         return box
 
     def _build_homing_group(self) -> QGroupBox:
@@ -143,6 +158,21 @@ class BypassTab(QWidget):
                 ok=True,
             )
 
+    def _on_clear_drives(self) -> None:
+        if self._client() is None:
+            self._set_status("No PLC connected (PLC tab -> Connect).", ok=False)
+            return
+        if not self._write("DriveClearReq", True):
+            return
+        # Hold true a few PLC scans so the ClearLink sees the Clear pulse, then drop it.
+        QTimer.singleShot(400, lambda: self._write("DriveClearReq", False))
+        self._set_status(
+            "Pulsed DriveClearReq — ClearLink Clear_Alerts + Clear_Fault. If the "
+            "Shutdown re-latches, the fault condition is still present (check "
+            "Motor_In_Fault / HLFB config).",
+            ok=True,
+        )
+
     def _on_homing_toggled(self, checked: bool) -> None:
         if self._write("Bypass_Homing", bool(checked)):
             self._set_status(
@@ -165,7 +195,8 @@ class BypassTab(QWidget):
         toggles to the live tag values."""
         client = self._client()
         connected = client is not None
-        for w in (self.force_safe_btn, self.homing_chk, self.vision_chk):
+        for w in (self.force_safe_btn, self.clear_drives_btn,
+                  self.homing_chk, self.vision_chk):
             w.setEnabled(connected)
         if not connected:
             self._set_status(

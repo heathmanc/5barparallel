@@ -177,13 +177,16 @@ def home_rungs(m: int) -> List[Rung]:
         ("State 10 ENABLING: R20_Drives holds the axis Enable; advance once HLFB is "
          "asserted (enable-complete).",
          f"EQU(Home{m}_State,10)XIC({i}Status_HLFB_ON)MOV(20,Home{m}_State);"),
-        ("State 20 CLEAR MOTOR FAULTS.",
-         f"EQU(Home{m}_State,20)OTE({o}Output_Reg_Clear_Fault);"),
+        ("State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq so a "
+         "latched Motor-Faulted shutdown can be cleared without homing (bypass "
+         "never reaches this state otherwise). Single owner of this coil.",
+         f"[EQU(Home{m}_State,20),XIC(DriveClearReq)]OTE({o}Output_Reg_Clear_Fault);"),
         ("State 20: on Clear-Fault ack, drop the request and advance.",
          f"EQU(Home{m}_State,20)XIC({i}Status_Clear_Motor_Fault_Ack)"
          f"OTU({o}Output_Reg_Clear_Fault)MOV(30,Home{m}_State);"),
-        ("State 30 CLEAR ALERTS.",
-         f"EQU(Home{m}_State,30)OTE({o}Output_Reg_Clear_Alerts);"),
+        ("State 30 CLEAR ALERTS. Also fires on a bench DriveClearReq to clear the "
+         "OR-accumulating Shutdown register without homing. Single owner of this coil.",
+         f"[EQU(Home{m}_State,30),XIC(DriveClearReq)]OTE({o}Output_Reg_Clear_Alerts);"),
         ("State 30: when no shutdowns remain, drop the request and advance.",
          f"EQU(Home{m}_State,30)XIO({i}Status_Shutdowns_Pres)"
          f"OTU({o}Output_Reg_Clear_Alerts)MOV(40,Home{m}_State);"),
@@ -733,6 +736,10 @@ def _glue_tags() -> List[Tag]:
     add("Bypass_Vision", "BOOL",
         desc="BENCH: R50 auto-satisfies the Z reed switches + vacuum sensor so the "
              "pick/place motion runs open-loop. Leave 0 in production.")
+    add("DriveClearReq", "BOOL",
+        desc="BENCH: pulse true to clear ClearLink alerts + motor faults on both axes "
+             "(pulses Clear_Alerts + Clear_Fault). Lets you clear a latched Shutdown "
+             "without running homing. Leave 0 in production.")
     add("HRB_ons", "BOOL", desc="ONS storage for the R30 bypass-home rung.")
     add("HOME_ANGLE_L", "REAL", "135.8504", desc="Left home angle published on a "
         "bypass home, deg (nominal reference).", unit="deg", hand=True)

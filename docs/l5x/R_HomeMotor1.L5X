@@ -15,16 +15,16 @@
 <Text><![CDATA[EQU(Home1_State,10)XIC(ClearLink:I1.Motor1_Status_HLFB_ON)MOV(20,Home1_State);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
-<Comment><![CDATA[State 20 CLEAR MOTOR FAULTS.]]></Comment>
-<Text><![CDATA[EQU(Home1_State,20)OTE(ClearLink:O1.Motor1_Output_Reg_Clear_Fault);]]></Text>
+<Comment><![CDATA[State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq so a latched Motor-Faulted shutdown can be cleared without homing (bypass never reaches this state otherwise). Single owner of this coil.]]></Comment>
+<Text><![CDATA[[EQU(Home1_State,20),XIC(DriveClearReq)]OTE(ClearLink:O1.Motor1_Output_Reg_Clear_Fault);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
 <Comment><![CDATA[State 20: on Clear-Fault ack, drop the request and advance.]]></Comment>
 <Text><![CDATA[EQU(Home1_State,20)XIC(ClearLink:I1.Motor1_Status_Clear_Motor_Fault_Ack)OTU(ClearLink:O1.Motor1_Output_Reg_Clear_Fault)MOV(30,Home1_State);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
-<Comment><![CDATA[State 30 CLEAR ALERTS.]]></Comment>
-<Text><![CDATA[EQU(Home1_State,30)OTE(ClearLink:O1.Motor1_Output_Reg_Clear_Alerts);]]></Text>
+<Comment><![CDATA[State 30 CLEAR ALERTS. Also fires on a bench DriveClearReq to clear the OR-accumulating Shutdown register without homing. Single owner of this coil.]]></Comment>
+<Text><![CDATA[[EQU(Home1_State,30),XIC(DriveClearReq)]OTE(ClearLink:O1.Motor1_Output_Reg_Clear_Alerts);]]></Text>
 </Rung>
 <Rung Number="5" Type="N">
 <Comment><![CDATA[State 30: when no shutdowns remain, drop the request and advance.]]></Comment>
