@@ -118,6 +118,12 @@ class PlcRobotDriver(RobotDriver):
             return False
 
     @property
+    def is_referenced(self) -> bool:
+        """Live from the PLC's Status.Homed, so a disable/fault (which the ladder
+        clears home on) immediately reads as un-referenced -- no stale cache."""
+        return bool(self._read_safe(T.Status.HOMED))
+
+    @property
     def is_faulted(self) -> bool:
         return bool(self._read_safe(T.Status.FAULTED))
 
