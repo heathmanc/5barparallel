@@ -531,13 +531,34 @@ homing:
 - **EM806 ALM** (drive alarm) → fault.
 - **Soft limits** clamp/refuse targets before any move.
 - `Cmd.Reset` / (recommended) a manual reset clears a latched fault once the
-  condition is gone. Reset is **level-driven** (not one-shot): while the PC holds
-  `Cmd.Reset` it also drives the ClearLink `Clear Fault` + `Clear Alerts` outputs
-  (via the R_HomeMotor State-20/30 coils), so a latched drive fault
-  (`Motor_In_Fault` bit 9 / Motor-Faulted shutdown) is actually cleared on the
-  drive — not just on the PLC. If the fault source is gone, bit 9 stays low and
-  the reset sticks; if it isn't, releasing Reset re-latches the fault and reset
-  simply retries.
+  condition is gone. Reset is **level-driven** (not one-shot):
+  - **What is / isn't latched.** ClearLink `Motor_In_Fault` (Motor Status bit 9)
+    is a **real-time** status, *not* latched — the manual states the Motor Status
+    register "is a real time register," and bit 9 = *HLFB de-asserted AND Enable
+    output asserted*. It falls on its own the instant HLFB returns (bit 14 on) or
+    the Enable output drops. The genuinely **latched** object is the **Motor
+    Shutdowns** register (Or-accumulating), cleared by **Clear Alerts** (Output
+    bit 6) — which needs *no* enable. `Clear Motor Fault` (Output bit 7) is the
+    drive's disable/re-enable cycle for a genuine ClearPath motor fault; on the
+    EM806 step/dir drive (fault = ALM wired to HLFB) there is no latched drive-side
+    fault, so with the Enable output off that cycle is a harmless no-op.
+  - **What Reset does.** While `Cmd.Reset` is held and safe, R_HomeMotor drives
+    `Clear Alerts` (+ `Clear Fault`) on both axes regardless of homing state, so a
+    latched Shutdown clears without running a home. Reset does **not** force the
+    drives to enable — anti-restart still holds them disabled, so re-running is a
+    deliberate Enable.
+  - **Honest reporting.** The R10 reset rung runs **before** the fault-latch rungs,
+    so after re-detection end-of-scan `Faulted` reflects the true live state. The
+    PC's `reset()` holds `Cmd.Reset` and polls `Status.Faulted` (needs two
+    consecutive clear reads, to dodge the mid-scan clear/re-latch window) until it
+    genuinely clears or times out. If the fault source is gone the reset sticks; if
+    not, it honestly fails instead of a fixed pulse masking it as OK.
+  - **If `Motor_In_Fault` (bit 9) stays set with HLFB present (bit 14 on) and the
+    Enable output off**, the ClearLink is *mis-reading* HLFB — a real-time bit 9
+    cannot be true in that state. This is a ClearLink **config/wiring** issue, not
+    a ladder one: per the manual's troubleshooting, check **HLFB Inversion**,
+    **Enable Inversion**, and the fault-signal **cable**. No ladder reset can clear
+    a bit 9 the drive is actively (mis)reporting.
 
 **Recommended `Status.FaultCode` values** (PLC-defined; keep 0 = none):
 

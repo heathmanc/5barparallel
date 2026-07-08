@@ -136,12 +136,44 @@ class PlcRobotDriver(RobotDriver):
             return None
 
     def reset(self) -> None:
-        """Pulse Cmd.Reset and wait for the latched fault to clear."""
+        """Hold Cmd.Reset until the fault actually clears, then drop it.
+
+        R10 clears Faulted on the Reset level and, running before the fault-latch
+        rungs, lets them re-detect - so end-of-scan Status.Faulted is the TRUE live
+        state. While Reset is held the PLC also commands the ClearLink Clear Alerts
+        (+ Clear Fault) to clear a latched Shutdown. We keep Reset asserted while
+        polling Faulted, rather than a fixed pulse, so a fault that needs a couple of
+        scans to clear still resolves, and - crucially - a drive fault that will NOT
+        clear (e.g. a live shutdown or a mis-read HLFB) honestly times out here
+        instead of the old fixed-pulse masking it as OK. Transient Faulted while held
+        is expected (not fatal); we only fail if it never clears within the timeout."""
+        deadline = time.monotonic() + self.command_timeout_s
+        # R10 clears Faulted at the top of the scan then re-latches it lower down if
+        # the fault is still live, so a single async CIP read could catch the brief
+        # mid-scan window where Faulted reads 0 while the drive is still faulted.
+        # Require two consecutive clear reads (a poll apart, i.e. >= 1 scan) so a
+        # transient mid-scan clear can't be mistaken for a real one.
+        clear_needed = 2
         try:
-            self._pulse(T.Cmd.RESET)
-            self._wait(
-                lambda: not bool(self._read(T.Status.FAULTED)), "clear fault"
-            )
+            self._write(T.Cmd.RESET, True)
+            try:
+                clear_seen = 0
+                while True:
+                    if not bool(self._read(T.Status.FAULTED)):
+                        clear_seen += 1
+                        if clear_seen >= clear_needed:
+                            return
+                    else:
+                        clear_seen = 0
+                    if time.monotonic() >= deadline:
+                        code = self._read_safe(T.Status.FAULT_CODE)
+                        raise RobotDriverError(
+                            f"reset: fault did not clear (code {code}) within "
+                            f"{self.command_timeout_s:.1f}s"
+                        )
+                    time.sleep(self.poll_interval_s)
+            finally:
+                self._write(T.Cmd.RESET, False)
         except PlcError as exc:
             raise RobotDriverError(f"reset: PLC comms error: {exc}") from exc
 

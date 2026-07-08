@@ -7,24 +7,24 @@
 <Routine Use="Target" Name="R10_Safety" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags (RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/EM806_*_ALM/SafetyOK. The hardware safety relay is primary; these bits only mirror it. E-stop or guard open -> fault (code 2).]]></Comment>
-<Text><![CDATA[[XIC(EStop_Pressed),XIO(Guard_Closed)]OTL(VisionRobot.Status.Faulted)MOV(2,VisionRobot.Status.FaultCode);]]></Text>
+<Comment><![CDATA[R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags (RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/EM806_*_ALM/SafetyOK. The hardware safety relay is primary; these bits only mirror it. RESET RUNS FIRST (before the fault-latch rungs below): clear Faulted+FaultCode on the Cmd.Reset LEVEL while safe, then let the latch rungs re-detect. So at end-of-scan Faulted reflects the TRUE live state - it stays 0 only if the fault source is actually gone, and re-latches the same scan if not. That is what lets the PC's reset() poll tell a real clear from a transient (an unclearable drive fault honestly times out instead of falsely reporting OK). Reset also drives the ClearLink Clear-Alerts + Clear-Fault (R_HomeMotor State 20/30) to clear a latched Shutdown. NOTE: the drive-alarm fault (code 1) tracks Motor_In_Fault (Status bit 9), which is REAL-TIME (= HLFB de-asserted AND Enable asserted), not latched - it falls on its own once HLFB returns and the Enable output is off, so Reset needs no enable cycle. If bit 9 stays set with HLFB present and Enable off, the ClearLink is mis-reading HLFB (check HLFB/Enable Inversion + fault cable); no ladder reset can clear that.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)XIC(EStop_OK)XIC(Guard_Closed)OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
+<Comment><![CDATA[E-stop or guard open -> fault (code 2).]]></Comment>
+<Text><![CDATA[[XIC(EStop_Pressed),XIO(Guard_Closed)]OTL(VisionRobot.Status.Faulted)MOV(2,VisionRobot.Status.FaultCode);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
 <Comment><![CDATA[Any hard limit tripped -> fault (code 3).]]></Comment>
 <Text><![CDATA[[XIC(Ax0_LimitMin),XIC(Ax0_LimitMax),XIC(Ax1_LimitMin),XIC(Ax1_LimitMax)]OTL(VisionRobot.Status.Faulted)MOV(3,VisionRobot.Status.FaultCode);]]></Text>
 </Rung>
-<Rung Number="2" Type="N">
+<Rung Number="3" Type="N">
 <Comment><![CDATA[Either EM806 drive alarm -> fault (code 1). The EM806 ALM output is wired to the ClearLink HLFB input, so a drive alarm OR a drive power-loss de-asserts HLFB and shows up as Motor_In_Fault (Status bit 9 = HLFB de-asserted AND enable asserted) - NOT as a standalone EM806_x_ALM DI. Fault on both. Bit 9 is dip-sensitive and independent of homed state, so this catches a drive power-cycle while enabled whether or not the machine was homed; the fault then drops Manual.Enable (anti-restart) and the reference (via EnableReq).]]></Comment>
 <Text><![CDATA[[XIC(EM806_0_ALM),XIC(EM806_1_ALM),XIC(ClearLink:I1.Motor0_Status_Motor_In_Fault),XIC(ClearLink:I1.Motor1_Status_Motor_In_Fault)]OTL(VisionRobot.Status.Faulted)MOV(1,VisionRobot.Status.FaultCode);]]></Text>
 </Rung>
-<Rung Number="3" Type="N">
-<Comment><![CDATA[SafetyOK = no active fault, E-stop healthy, guard closed.]]></Comment>
-<Text><![CDATA[XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);]]></Text>
-</Rung>
 <Rung Number="4" Type="N">
-<Comment><![CDATA[Cmd.Reset while physically safe clears the latched fault. LEVEL (no ONS): the PC holds Cmd.Reset for several scans, and the drive-alarm rung above re-latches Faulted every scan the ClearLink is still in fault (bit 9). Clearing on the level (not the edge) holds Faulted low for the whole Reset window while the State-20/30 Clear-Fault/Clear-Alerts coils (also driven by Cmd.Reset) command the ClearLink to clear its own motor fault + shutdown. If the drive fault is genuinely gone, bit 9 drops and it stays clear; if not, releasing Reset re-latches it - reset then simply retries.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)XIC(EStop_OK)XIC(Guard_Closed)OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);]]></Text>
+<Comment><![CDATA[SafetyOK = no active fault, E-stop healthy, guard closed. Runs after the latch rungs so it sees the re-detected Faulted, not the mid-scan reset clear.]]></Comment>
+<Text><![CDATA[XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);]]></Text>
 </Rung>
 <Rung Number="5" Type="N">
 <Comment><![CDATA[Watchdog: keep the PC-heartbeat timer preset loaded (HB_TIMEOUT_MS ms).]]></Comment>
