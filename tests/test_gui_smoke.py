@@ -424,6 +424,63 @@ def test_calibration_tab_add_recipe(qapp, tmp_path):
     assert mgr.has("group-65-8-vent")
 
 
+def test_zoompan_view_roundtrip_and_click(qapp):
+    from PySide6.QtGui import QPixmap
+    from bung_cover_robot.gui.widgets import ZoomPanImageView
+
+    v = ZoomPanImageView()
+    v.resize(400, 300)
+    v.set_pixmap(QPixmap(800, 600))
+    got = []
+    v.pixelClicked.connect(lambda x, y: got.append((x, y)))
+    # place_source_point is the test seam: emits in source coords, no geometry.
+    v.place_source_point(123.0, 456.0)
+    assert got and got[-1] == (123.0, 456.0)
+    # source<->widget round-trips exactly across zoom + pan states.
+    for z in (1.0, 3.0, 12.0):
+        v._z = z
+        v._clamp_pan()
+        w = v.source_to_widget(400, 300)
+        b = v.widget_to_source(w[0], w[1])
+        assert b == pytest.approx((400.0, 300.0), abs=1e-6)
+    v.one_to_one()
+    assert v._scale() == pytest.approx(1.0, abs=1e-6)  # 1:1 -> one screen px/source px
+    v.fit()
+    assert v._z == pytest.approx(1.0)
+    v.set_loupe(False)
+    v.set_points([(10, 10), (700, 500)])
+    v.set_active(1)  # must not raise without a shown widget
+
+
+def test_calibration_coach_advances_through_steps(qapp, tmp_path):
+    tab, _, _ = _cal_tab(tmp_path)
+    # Recipe selected (default) + frame captured on construct + 0 points -> mark step.
+    assert tab._coach_step(0) == 3
+    # No recipe -> step 1; no frame -> step 2.
+    tab.recipe_combo.setCurrentIndex(-1)
+    assert tab._coach_step(0) == 1
+    tab.recipe_combo.setCurrentIndex(0)
+    saved_frame = tab._frame
+    tab._frame = None
+    assert tab._coach_step(0) == 2
+    tab._frame = saved_frame
+    # 4 complete points -> fit; after fit -> review; after save -> done.
+    pix, rob = _rect_correspondences()
+    _click_points(tab, pix, rob)
+    assert tab._coach_step(4) == 4
+    tab._on_fit()
+    assert tab._coach_step(4) == 5
+    tab._on_save()
+    assert tab._coach_step(4) == 6
+
+
+def test_calibration_help_html_has_key_sections():
+    from bung_cover_robot.gui.calibration_help import HELP_HTML
+
+    for needle in ("homography", "residual", "parallax", "corners"):
+        assert needle.lower() in HELP_HTML.lower()
+
+
 def test_calibration_tab_remove_and_clear(qapp, tmp_path):
     tab, _, _ = _cal_tab(tmp_path)
     _click_points(tab, [[10, 10], [20, 20], [30, 30]], [[0, 0], [1, 1], [2, 2]])
