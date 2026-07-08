@@ -265,6 +265,14 @@ COORD: List[Rung] = [
      "OTL(SoftLimitsEnable)OTL(VisionRobot.Status.Homed)MOV(0,HomeStep);"),
     ("Run the per-axis homing routines every scan (they self-idle at rest).",
      "JSR(R_HomeMotor0,0)JSR(R_HomeMotor1,0);"),
+    ("Disable invalidates the reference. An open-loop stepper has no feedback, so "
+     "the instant the drive disables the datum is gone (the shaft can back-drive / "
+     "lose steps unseen). Drop Homed + per-axis HomeDone + soft limits whenever not "
+     "Enabled, forcing a re-home after any disable. The homing state machines are "
+     "NOT reset here (they re-zero on the next HomeRequest) so the brief enable "
+     "cycle during a Clear-Fault can't clobber an in-progress home.",
+     "XIO(VisionRobot.Status.Enabled)OTU(VisionRobot.Status.Homed)"
+     "OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);"),
     ("Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: "
      "clear the coordinator + per-axis states and latched home faults/requests. "
      "MUST scan before the fault-latch rung below so the cleared HomeFault can't "
