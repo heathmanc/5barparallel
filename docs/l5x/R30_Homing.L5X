@@ -35,8 +35,8 @@
 <Text><![CDATA[XIO(EnableReq)OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);]]></Text>
 </Rung>
 <Rung Number="7" Type="N">
-<Comment><![CDATA[Drive power-cycle invalidates the reference even while still commanded on. The ClearLink's own Has_Homed (bit 13) de-asserts when HLFB drops (drive powered down) and does NOT re-assert on power-up until a fresh home - so if we think we're homed (real homing, not bypass) but either axis has dropped Has_Homed, the datum is gone: clear it and force a re-home. This catches a drive power-cycle that EnableReq (still true) misses. Excluded in bypass, where Has_Homed is intentionally not used.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Status.Homed)XIO(Bypass_Homing)[XIO(ClearLink:I1.Motor0_Status_Has_Homed),XIO(ClearLink:I1.Motor1_Status_Has_Homed)]OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);]]></Text>
+<Comment><![CDATA[Drive power-cycle invalidates the reference AND drops the enable, even while still commanded on. The ClearLink's Has_Homed (bit 13) de-asserts the instant HLFB drops (drive powered down) - dip-sensitive, so it catches even a quick unplug that a level like Status.Enabled misses. If we think we're homed (real homing, not bypass) but either axis dropped Has_Homed: clear the reference (force a re-home) AND drop Manual.Enable so the drive powers back up DISABLED, not holding torque. Gated by Status.Homed so a normal re-home (which itself clears Has_Homed) can't trip it. Excluded in bypass.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Status.Homed)XIO(Bypass_Homing)[XIO(ClearLink:I1.Motor0_Status_Has_Homed),XIO(ClearLink:I1.Motor1_Status_Has_Homed)]OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable)OTU(VisionRobot.Manual.Enable);]]></Text>
 </Rung>
 <Rung Number="8" Type="N">
 <Comment><![CDATA[Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: clear the coordinator + per-axis states and latched home faults/requests. MUST scan before the fault-latch rung below so the cleared HomeFault can't immediately re-latch the fault in the same scan.]]></Comment>
