@@ -174,9 +174,11 @@ def home_rungs(m: int) -> List[Rung]:
          f"R_HomeMotor0/R_HomeMotor1.",
          f"XIC(Home{m}_Req)ONS(Home{m}_ons)EQU(Home{m}_State,0)XIO(Ax{m}_HomeFault)"
          f"OTU(Home{m}_Moved)MOV(10,Home{m}_State);"),
-        ("State 10 ENABLING: R20_Drives holds the axis Enable; advance once HLFB is "
-         "asserted (enable-complete).",
-         f"EQU(Home{m}_State,10)XIC({i}Status_HLFB_ON)MOV(20,Home{m}_State);"),
+        ("State 10 ENABLING: advance once the axis reports Enabled (Status bit 10). "
+         "NOT HLFB_ON (bit 14): a no-HLFB step/dir drive (EM806) never asserts "
+         "HLFB_ON even when fully enabled, so gating on it hangs homing at state 10 "
+         "forever. R20_Drives holds the Enable; Enabled is the real enable-complete.",
+         f"EQU(Home{m}_State,10)XIC({i}Status_Enabled)MOV(20,Home{m}_State);"),
         ("State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq so a "
          "latched Motor-Faulted shutdown can be cleared without homing (bypass "
          "never reaches this state otherwise). Single owner of this coil.",

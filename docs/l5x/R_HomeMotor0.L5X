@@ -11,8 +11,8 @@
 <Text><![CDATA[XIC(Home0_Req)ONS(Home0_ons)EQU(Home0_State,0)XIO(Ax0_HomeFault)OTU(Home0_Moved)MOV(10,Home0_State);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
-<Comment><![CDATA[State 10 ENABLING: R20_Drives holds the axis Enable; advance once HLFB is asserted (enable-complete).]]></Comment>
-<Text><![CDATA[EQU(Home0_State,10)XIC(ClearLink:I1.Motor0_Status_HLFB_ON)MOV(20,Home0_State);]]></Text>
+<Comment><![CDATA[State 10 ENABLING: advance once the axis reports Enabled (Status bit 10). NOT HLFB_ON (bit 14): a no-HLFB step/dir drive (EM806) never asserts HLFB_ON even when fully enabled, so gating on it hangs homing at state 10 forever. R20_Drives holds the Enable; Enabled is the real enable-complete.]]></Comment>
+<Text><![CDATA[EQU(Home0_State,10)XIC(ClearLink:I1.Motor0_Status_Enabled)MOV(20,Home0_State);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
 <Comment><![CDATA[State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq so a latched Motor-Faulted shutdown can be cleared without homing (bypass never reaches this state otherwise). Single owner of this coil.]]></Comment>
