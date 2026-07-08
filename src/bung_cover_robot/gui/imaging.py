@@ -87,8 +87,29 @@ def adjust_preview(
 ) -> np.ndarray:
     """Apply brightness/contrast/gamma for the mock-camera preview so the control
     sliders visibly change the image (a real Basler applies these itself)."""
+    # Fast path: identity settings -> no per-frame float conversion (this runs on
+    # every live frame, so the no-op case must be free).
+    if abs(brightness) < 1e-3 and abs(contrast - 1.0) < 1e-3 and abs(gamma - 1.0) < 1e-3:
+        return frame
     f = frame.astype(np.float32) * float(contrast) + float(brightness) * 255.0
     f = np.clip(f, 0, 255)
     if abs(gamma - 1.0) > 1e-3:
         f = ((f / 255.0) ** (1.0 / max(gamma, 0.01))) * 255.0
     return np.clip(f, 0, 255).astype(np.uint8)
+
+
+def downscale_for_preview(frame: np.ndarray, max_dim: int = 960) -> np.ndarray:
+    """Shrink a frame so its longest side is <= max_dim, for a cheap live preview.
+    A multi-MP sensor frame is far larger than any on-screen view; scaling it down
+    once (off the GUI thread, in the grabber) makes the QImage/QPixmap/scaled()
+    path cheap. Returns the frame unchanged if already small enough."""
+    import cv2
+
+    h, w = frame.shape[:2]
+    longest = max(h, w)
+    if longest <= max_dim:
+        return frame
+    s = max_dim / float(longest)
+    return cv2.resize(
+        frame, (max(1, int(w * s)), max(1, int(h * s))), interpolation=cv2.INTER_AREA
+    )

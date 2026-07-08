@@ -37,30 +37,40 @@ from ..vision.camera import (
     MockCamera,
 )
 from . import theme
-from .imaging import adjust_preview, demo_frame, ndarray_to_qpixmap
+from .imaging import (
+    adjust_preview,
+    demo_frame,
+    downscale_for_preview,
+    ndarray_to_qpixmap,
+)
 from .widgets import ImageView
 
 # (label, control-name, slider min, max, scale, default) — value = slider/scale
 _CONTROLS = [
     ("Exposure (µs)", "exposure_time_us", 100, 30000, 1, 8000),
-    ("Gain (dB)", "gain", 0, 240, 10, 20),
+    ("Gain (dB)", "gain", 0, 240, 10, 0),
     ("Brightness", "brightness", -100, 100, 100, 0),
     ("Contrast", "contrast", 0, 200, 100, 100),
     ("Gamma", "gamma", 30, 300, 100, 100),
 ]
 
-# Controls that map to a real camera node with an Auto sibling.
+# Controls that map to a real camera node with an Auto sibling, and whether Auto
+# starts on. Auto-exposure on gives a usable image immediately; auto-GAIN starts
+# OFF (gain=0) because auto-gain amplifies sensor noise -> a grainy image. Raise
+# gain by hand only if exposure alone can't brighten the scene.
 _AUTO = {"exposure_time_us": "exposure_auto", "gain": "gain_auto"}
+_AUTO_DEFAULT = {"exposure_time_us": True, "gain": False}
 
 
 class _LiveGrabber(QThread):
     """Continuously grabs frames off the GUI thread and emits them. A short
     per-grab timeout keeps it responsive; grab errors are surfaced (not fatal)."""
 
-    frameReady = Signal(object)
+    # (preview_frame downscaled off the GUI thread, (h, w) of the full sensor frame)
+    frameReady = Signal(object, object)
     grabError = Signal(str)
 
-    def __init__(self, camera: Camera, fps: float = 15.0, parent=None) -> None:
+    def __init__(self, camera: Camera, fps: float = 60.0, parent=None) -> None:
         super().__init__(parent)
         self._camera = camera
         self._interval = 1.0 / max(1.0, fps)
@@ -74,12 +84,6 @@ class _LiveGrabber(QThread):
             t0 = time.monotonic()
             try:
                 frame = self._camera.grab(timeout_ms=1000)
-            except CameraError as exc:
-                if self._stop:
-                    break
-                self.grabError.emit(str(exc))
-                time.sleep(0.3)
-                continue
             except Exception as exc:  # noqa: BLE001 - never let the thread die silently
                 if self._stop:
                     break
@@ -88,7 +92,10 @@ class _LiveGrabber(QThread):
                 continue
             if self._stop:
                 break
-            self.frameReady.emit(frame)
+            h, w = frame.shape[:2]
+            # Downscale HERE, off the GUI thread: a multi-MP frame is far bigger
+            # than the view, and shrinking it makes the QPixmap/scale path cheap.
+            self.frameReady.emit(downscale_for_preview(frame), (h, w))
             dt = time.monotonic() - t0
             if (rest := self._interval - dt) > 0:
                 time.sleep(rest)
@@ -107,6 +114,7 @@ class CameraTab(QWidget):
         self._auto_checks: Dict[str, QCheckBox] = {}
         self._grabber: Optional[_LiveGrabber] = None
         self._visible = False
+        self._frame_times: list = []   # rolling timestamps for a live FPS readout
 
         root = QHBoxLayout(self)
         root.addWidget(self._build_controls_column())
@@ -169,7 +177,7 @@ class CameraTab(QWidget):
             # Auto toggle for exposure/gain, on the far right.
             if name in _AUTO:
                 auto = QCheckBox("Auto")
-                auto.setChecked(True)  # start in Auto so the image is usable at once
+                auto.setChecked(_AUTO_DEFAULT[name])
                 auto.toggled.connect(lambda c, n=name: self._on_auto_toggled(n, c))
                 self._auto_checks[name] = auto
                 grid.addWidget(auto, r, 3)
@@ -253,21 +261,30 @@ class CameraTab(QWidget):
         """Single manual grab (also the initial frame). Live view keeps the
         preview updating on its own."""
         try:
-            self._frame = self.camera.grab()
+            raw = self.camera.grab()
         except CameraError as exc:
             self.info_label.setText(f"grab failed: {exc}")
             return
-        self._show_frame(self._frame)
-
-    def _on_frame(self, frame) -> None:
-        self._frame = frame
-        self._show_frame(frame)
-
-    def _show_frame(self, frame) -> None:
-        h, w = frame.shape[:2]
-        tag = "live" if (self._grabber is not None and self._grabber.isRunning()) else "still"
-        self.info_label.setText(f"{w}×{h} · {tag}")
+        h, w = raw.shape[:2]
+        self._frame = downscale_for_preview(raw)
+        self._frame_times.clear()
+        self.info_label.setText(f"{w}×{h} · still")
         self._render_preview()
+
+    def _on_frame(self, frame, orig) -> None:
+        self._frame = frame
+        h, w = orig
+        self.info_label.setText(f"{w}×{h} · {self._live_fps():.0f} fps · live")
+        self._render_preview()
+
+    def _live_fps(self) -> float:
+        now = time.monotonic()
+        self._frame_times.append(now)
+        if len(self._frame_times) > 30:
+            self._frame_times.pop(0)
+        span = self._frame_times[-1] - self._frame_times[0]
+        n = len(self._frame_times)
+        return (n - 1) / span if n > 1 and span > 0 else 0.0
 
     def _on_grab_error(self, msg: str) -> None:
         self.info_label.setText(f"grab failed: {msg}")
@@ -275,12 +292,18 @@ class CameraTab(QWidget):
     def _render_preview(self) -> None:
         if self._frame is None:
             return
-        img = adjust_preview(
-            self._frame,
-            brightness=self._value("brightness"),
-            contrast=self._value("contrast"),
-            gamma=self._value("gamma"),
-        )
+        # A real Basler applies brightness/contrast/gamma on-sensor (the sliders
+        # write those nodes), so don't re-do it in software on every live frame;
+        # only the mock needs the CPU-side adjust to make its sliders visible.
+        if isinstance(self.camera, MockCamera):
+            img = adjust_preview(
+                self._frame,
+                brightness=self._value("brightness"),
+                contrast=self._value("contrast"),
+                gamma=self._value("gamma"),
+            )
+        else:
+            img = self._frame
         self.view.set_pixmap(ndarray_to_qpixmap(img))
 
     # --- live streaming -----------------------------------------------------

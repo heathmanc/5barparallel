@@ -331,6 +331,7 @@ class BaslerCamera(Camera):
         except Exception as exc:  # pragma: no cover - hardware path
             raise CameraConnectionError(f"failed to open Basler camera: {exc}") from exc
 
+        self._auto_select_mono()
         self._converter = self._build_converter(pylon)
         logger.info(
             "opened Basler %s (serial %s)",
@@ -355,6 +356,34 @@ class BaslerCamera(Camera):
                 f"device_index {idx} out of range (found {len(devices)} camera(s))"
             )
         return devices[idx]
+
+    def _auto_select_mono(self) -> None:
+        """A mono sensor cannot produce color, so force Mono8 output (and set the
+        sensor to Mono8): converting a mono frame to BGR8 triples the data, costs a
+        color conversion per frame, and gives a washed-out 'grayscale'. Detected by
+        the absence of any color PixelFormat entry. Best-effort; on any hiccup the
+        configured output format is left as-is."""
+        _, genicam = self._import_pylon()
+        try:
+            nodemap = self._camera.GetNodeMap()
+            pf = nodemap.GetNode("PixelFormat")
+            if pf is None or not genicam.IsAvailable(pf):
+                return
+            entries = []
+            for e in pf.GetEntries():
+                try:
+                    entries.append(e.GetSymbolic())
+                except Exception:  # noqa: BLE001
+                    continue
+            color = ("Bayer", "RGB", "BGR", "YUV", "YCbCr", "YCC")
+            if any(any(c in name for c in color) for name in entries):
+                return  # a color camera — keep the configured output format
+            self.config.output_pixel_format = "Mono8"
+            if genicam.IsWritable(pf) and any("Mono8" == n for n in entries):
+                pf.FromString("Mono8")
+            logger.info("mono camera detected -> Mono8 output")
+        except Exception:  # noqa: BLE001 - detection must never break open()
+            pass
 
     def _build_converter(self, pylon):
         converter = pylon.ImageFormatConverter()
