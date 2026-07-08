@@ -531,7 +531,13 @@ homing:
 - **EM806 ALM** (drive alarm) → fault.
 - **Soft limits** clamp/refuse targets before any move.
 - `Cmd.Reset` / (recommended) a manual reset clears a latched fault once the
-  condition is gone.
+  condition is gone. Reset is **level-driven** (not one-shot): while the PC holds
+  `Cmd.Reset` it also drives the ClearLink `Clear Fault` + `Clear Alerts` outputs
+  (via the R_HomeMotor State-20/30 coils), so a latched drive fault
+  (`Motor_In_Fault` bit 9 / Motor-Faulted shutdown) is actually cleared on the
+  drive — not just on the PLC. If the fault source is gone, bit 9 stays low and
+  the reset sticks; if it isn't, releasing Reset re-latches the fault and reset
+  simply retries.
 
 **Recommended `Status.FaultCode` values** (PLC-defined; keep 0 = none):
 

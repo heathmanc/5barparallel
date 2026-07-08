@@ -15,16 +15,16 @@
 <Text><![CDATA[EQU(Home0_State,10)XIC(ClearLink:I1.Motor0_Status_Enabled)MOV(20,Home0_State);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
-<Comment><![CDATA[State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq so a latched Motor-Faulted shutdown can be cleared without homing (bypass never reaches this state otherwise). Single owner of this coil.]]></Comment>
-<Text><![CDATA[[EQU(Home0_State,20),XIC(DriveClearReq)]OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Fault);]]></Text>
+<Comment><![CDATA[State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset so a latched Motor-Faulted (Status bit 9) can be cleared without homing (bypass/plain reset never reach this state otherwise). Reset holds it for the whole Cmd.Reset window. Single owner of this coil.]]></Comment>
+<Text><![CDATA[[EQU(Home0_State,20),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Fault);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
 <Comment><![CDATA[State 20: on Clear-Fault ack, drop the request and advance.]]></Comment>
 <Text><![CDATA[EQU(Home0_State,20)XIC(ClearLink:I1.Motor0_Status_Clear_Motor_Fault_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Clear_Fault)MOV(30,Home0_State);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
-<Comment><![CDATA[State 30 CLEAR ALERTS. Also fires on a bench DriveClearReq to clear the OR-accumulating Shutdown register without homing. Single owner of this coil.]]></Comment>
-<Text><![CDATA[[EQU(Home0_State,30),XIC(DriveClearReq)]OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Alerts);]]></Text>
+<Comment><![CDATA[State 30 CLEAR ALERTS. Also fires on a bench DriveClearReq or on VisionRobot.Cmd.Reset to clear the OR-accumulating Shutdown register (Motor-Faulted bit 10) without homing. Single owner of this coil.]]></Comment>
+<Text><![CDATA[[EQU(Home0_State,30),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]OTE(ClearLink:O1.Motor0_Output_Reg_Clear_Alerts);]]></Text>
 </Rung>
 <Rung Number="5" Type="N">
 <Comment><![CDATA[State 30: when no shutdowns remain, drop the request and advance.]]></Comment>

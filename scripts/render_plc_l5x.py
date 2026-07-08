@@ -184,16 +184,21 @@ def home_rungs(m: int) -> List[Rung]:
          "HLFB_ON even when fully enabled, so gating on it hangs homing at state 10 "
          "forever. R20_Drives holds the Enable; Enabled is the real enable-complete.",
          f"EQU(Home{m}_State,10)XIC({i}Status_Enabled)MOV(20,Home{m}_State);"),
-        ("State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq so a "
-         "latched Motor-Faulted shutdown can be cleared without homing (bypass "
-         "never reaches this state otherwise). Single owner of this coil.",
-         f"[EQU(Home{m}_State,20),XIC(DriveClearReq)]OTE({o}Output_Reg_Clear_Fault);"),
+        ("State 20 CLEAR MOTOR FAULTS. Also fires on a bench DriveClearReq or on "
+         "VisionRobot.Cmd.Reset so a latched Motor-Faulted (Status bit 9) can be "
+         "cleared without homing (bypass/plain reset never reach this state "
+         "otherwise). Reset holds it for the whole Cmd.Reset window. Single owner "
+         "of this coil.",
+         f"[EQU(Home{m}_State,20),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]"
+         f"OTE({o}Output_Reg_Clear_Fault);"),
         ("State 20: on Clear-Fault ack, drop the request and advance.",
          f"EQU(Home{m}_State,20)XIC({i}Status_Clear_Motor_Fault_Ack)"
          f"OTU({o}Output_Reg_Clear_Fault)MOV(30,Home{m}_State);"),
-        ("State 30 CLEAR ALERTS. Also fires on a bench DriveClearReq to clear the "
-         "OR-accumulating Shutdown register without homing. Single owner of this coil.",
-         f"[EQU(Home{m}_State,30),XIC(DriveClearReq)]OTE({o}Output_Reg_Clear_Alerts);"),
+        ("State 30 CLEAR ALERTS. Also fires on a bench DriveClearReq or on "
+         "VisionRobot.Cmd.Reset to clear the OR-accumulating Shutdown register "
+         "(Motor-Faulted bit 10) without homing. Single owner of this coil.",
+         f"[EQU(Home{m}_State,30),XIC(DriveClearReq),XIC(VisionRobot.Cmd.Reset)]"
+         f"OTE({o}Output_Reg_Clear_Alerts);"),
         ("State 30: when no shutdowns remain, drop the request and advance.",
          f"EQU(Home{m}_State,30)XIO({i}Status_Shutdowns_Pres)"
          f"OTU({o}Output_Reg_Clear_Alerts)MOV(40,Home{m}_State);"),
@@ -329,7 +334,7 @@ SAFETY: List[Rung] = [
     ("R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + "
      "FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags "
      "(RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/"
-     "EM806_*_ALM/SafetyOK/Reset_prev. The hardware safety relay is primary; these "
+     "EM806_*_ALM/SafetyOK. The hardware safety relay is primary; these "
      "bits only mirror it. E-stop or guard open -> fault (code 2).",
      "[XIC(EStop_Pressed),XIO(Guard_Closed)]OTL(VisionRobot.Status.Faulted)"
      "MOV(2,VisionRobot.Status.FaultCode);"),
@@ -349,8 +354,15 @@ SAFETY: List[Rung] = [
      "OTL(VisionRobot.Status.Faulted)MOV(1,VisionRobot.Status.FaultCode);"),
     ("SafetyOK = no active fault, E-stop healthy, guard closed.",
      "XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);"),
-    ("Cmd.Reset (rising edge) while physically safe clears the latched fault.",
-     "XIC(VisionRobot.Cmd.Reset)ONS(Reset_prev)XIC(EStop_OK)XIC(Guard_Closed)"
+    ("Cmd.Reset while physically safe clears the latched fault. LEVEL (no ONS): the "
+     "PC holds Cmd.Reset for several scans, and the drive-alarm rung above re-latches "
+     "Faulted every scan the ClearLink is still in fault (bit 9). Clearing on the "
+     "level (not the edge) holds Faulted low for the whole Reset window while the "
+     "State-20/30 Clear-Fault/Clear-Alerts coils (also driven by Cmd.Reset) command "
+     "the ClearLink to clear its own motor fault + shutdown. If the drive fault is "
+     "genuinely gone, bit 9 drops and it stays clear; if not, releasing Reset "
+     "re-latches it - reset then simply retries.",
+     "XIC(VisionRobot.Cmd.Reset)XIC(EStop_OK)XIC(Guard_Closed)"
      "OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);"),
     # --- PC<->PLC heartbeat watchdog ---
     ("Watchdog: keep the PC-heartbeat timer preset loaded (HB_TIMEOUT_MS ms).",
@@ -775,7 +787,6 @@ def _glue_tags() -> List[Tag]:
     add("Ax1_LimitMax", "BOOL", desc="Right shoulder max hard-limit input. Map to input.")
     add("SafetyOK", "BOOL", desc="Aggregate safe: no fault, E-stop OK, guard closed.")
     add("EnableReq", "BOOL", desc="Drive-enable request (set by manual/auto).")
-    add("Reset_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.Reset in R10.")
     add("EnDrop_Tmr", "TIMER",
         desc="Debounce for an unexpected drive drop-out (commanded on but not "
              "actually Enabled) - e.g. a drive power-cycle.")

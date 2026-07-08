@@ -7,7 +7,7 @@
 <Routine Use="Target" Name="R10_Safety" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags (RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/EM806_*_ALM/SafetyOK/Reset_prev. The hardware safety relay is primary; these bits only mirror it. E-stop or guard open -> fault (code 2).]]></Comment>
+<Comment><![CDATA[R10_Safety: E-stop / guard / hard limits / drive alarm -> Status.Faulted + FaultCode; compute SafetyOK; Cmd.Reset clears a latched fault when safe. Tags (RobotTags.csv): EStop_Pressed/EStop_OK/Guard_Closed/Ax*_LimitMin/Max/EM806_*_ALM/SafetyOK. The hardware safety relay is primary; these bits only mirror it. E-stop or guard open -> fault (code 2).]]></Comment>
 <Text><![CDATA[[XIC(EStop_Pressed),XIO(Guard_Closed)]OTL(VisionRobot.Status.Faulted)MOV(2,VisionRobot.Status.FaultCode);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
@@ -23,8 +23,8 @@
 <Text><![CDATA[XIO(VisionRobot.Status.Faulted)XIC(EStop_OK)XIC(Guard_Closed)OTE(SafetyOK);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
-<Comment><![CDATA[Cmd.Reset (rising edge) while physically safe clears the latched fault.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)ONS(Reset_prev)XIC(EStop_OK)XIC(Guard_Closed)OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);]]></Text>
+<Comment><![CDATA[Cmd.Reset while physically safe clears the latched fault. LEVEL (no ONS): the PC holds Cmd.Reset for several scans, and the drive-alarm rung above re-latches Faulted every scan the ClearLink is still in fault (bit 9). Clearing on the level (not the edge) holds Faulted low for the whole Reset window while the State-20/30 Clear-Fault/Clear-Alerts coils (also driven by Cmd.Reset) command the ClearLink to clear its own motor fault + shutdown. If the drive fault is genuinely gone, bit 9 drops and it stays clear; if not, releasing Reset re-latches it - reset then simply retries.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)XIC(EStop_OK)XIC(Guard_Closed)OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);]]></Text>
 </Rung>
 <Rung Number="5" Type="N">
 <Comment><![CDATA[Watchdog: keep the PC-heartbeat timer preset loaded (HB_TIMEOUT_MS ms).]]></Comment>
