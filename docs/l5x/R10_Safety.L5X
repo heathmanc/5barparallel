@@ -26,6 +26,34 @@
 <Comment><![CDATA[Cmd.Reset (rising edge) while physically safe clears the latched fault.]]></Comment>
 <Text><![CDATA[XIC(VisionRobot.Cmd.Reset)ONS(Reset_prev)XIC(EStop_OK)XIC(Guard_Closed)OTU(VisionRobot.Status.Faulted)MOV(0,VisionRobot.Status.FaultCode);]]></Text>
 </Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[Watchdog: keep the PC-heartbeat timer preset loaded (HB_TIMEOUT_MS ms).]]></Comment>
+<Text><![CDATA[MOV(HB_TIMEOUT_MS,HB_Tmr.PRE);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
+<Comment><![CDATA[PC heartbeat changed -> HB_seen pulses one scan (which resets the watchdog timer) and we latch the new value. The PC (PlcRobotDriver) increments VisionRobot.Cmd.Heartbeat continuously while connected.]]></Comment>
+<Text><![CDATA[NEQ(VisionRobot.Cmd.Heartbeat,HB_last)OTE(HB_seen)MOV(VisionRobot.Cmd.Heartbeat,HB_last);]]></Text>
+</Rung>
+<Rung Number="7" Type="N">
+<Comment><![CDATA[Watchdog timer runs while NO new heartbeat; each change resets it. Expiry = the PC stopped talking.]]></Comment>
+<Text><![CDATA[XIO(HB_seen)TON(HB_Tmr,?,?);]]></Text>
+</Rung>
+<Rung Number="8" Type="N">
+<Comment><![CDATA[PcAlive = a PC heartbeat arrived within HB_TIMEOUT_MS. R20 gates the drive Enable on this, so the drives can't be (or stay) enabled without a live app.]]></Comment>
+<Text><![CDATA[XIO(HB_Tmr.DN)OTE(VisionRobot.Status.PcAlive);]]></Text>
+</Rung>
+<Rung Number="9" Type="N">
+<Comment><![CDATA[Heartbeat lost while the operator has Enable requested -> comms-loss fault (code 10). Dead-man: a crashed/closed app drops the drives via R20 losing PcAlive, and latches this fault. Clears on Reset once the heartbeat returns.]]></Comment>
+<Text><![CDATA[XIC(HB_Tmr.DN)XIC(VisionRobot.Manual.Enable)OTL(VisionRobot.Status.Faulted)MOV(10,VisionRobot.Status.FaultCode);]]></Text>
+</Rung>
+<Rung Number="10" Type="N">
+<Comment><![CDATA[PLC heartbeat: increment each scan so the PC can confirm the ladder is actually scanning (not just that the tag read succeeded).]]></Comment>
+<Text><![CDATA[ADD(VisionRobot.Status.Heartbeat,1,VisionRobot.Status.Heartbeat);]]></Text>
+</Rung>
+<Rung Number="11" Type="N">
+<Comment><![CDATA[Wrap the PLC heartbeat to avoid DINT overflow.]]></Comment>
+<Text><![CDATA[GRT(VisionRobot.Status.Heartbeat,1000000000)MOV(0,VisionRobot.Status.Heartbeat);]]></Text>
+</Rung>
 </RLLContent>
 </Routine>
 </Routines>

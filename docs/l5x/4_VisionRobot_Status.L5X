@@ -24,6 +24,8 @@
 <Member Name="VacuumOK" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="0" ExternalAccess="Read/Write"/>
 <Member Name="CameraClear" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="1" ExternalAccess="Read/Write"/>
 <Member Name="ReadyForVision" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="2" ExternalAccess="Read/Write"/>
+<Member Name="PcAlive" DataType="BIT" Dimension="0" Radix="Decimal" Hidden="false" Target="ZZZZZZZZZZVisionRobot_Status2" BitNumber="3" ExternalAccess="Read/Write"/>
+<Member Name="Heartbeat" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"/>
 </Members>
 </DataType>
 </DataTypes>

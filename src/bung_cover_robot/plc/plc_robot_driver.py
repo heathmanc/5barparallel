@@ -16,6 +16,7 @@ Waits poll status bits with a timeout — never a blind fixed sleep (Claude.md
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Callable, Optional
 
@@ -33,6 +34,7 @@ class PlcRobotDriver(RobotDriver):
         command_timeout_s: float = 10.0,
         poll_interval_s: float = 0.02,
         pulse_hold_s: float = 0.1,
+        heartbeat_interval_s: float = 0.2,
     ) -> None:
         self.client = client
         self.command_timeout_s = command_timeout_s
@@ -42,17 +44,70 @@ class PlcRobotDriver(RobotDriver):
         # between scans and never be seen. 0 = no dwell (e.g. against the sim).
         self.pulse_hold_s = pulse_hold_s
         self._command_id = 0
+        # Heartbeat: a background thread increments Cmd.Heartbeat so the PLC's
+        # watchdog (R10) knows the app is alive; if it stalls the PLC drops the
+        # drives + faults code 10. Set 0 to disable (tests that don't want a
+        # background thread). Started now if the client is already connected
+        # (sim path), otherwise on connect() (real path).
+        self.heartbeat_interval_s = heartbeat_interval_s
+        self._hb_value = 0
+        self._hb_stop = threading.Event()
+        self._hb_thread: Optional[threading.Thread] = None
+        if getattr(client, "is_connected", False):
+            self.start_heartbeat()
 
     # --- lifecycle ----------------------------------------------------------
     def connect(self) -> "PlcRobotDriver":
         self.client.connect()
+        self.start_heartbeat()
         return self
 
     def close(self) -> None:
+        self.stop_heartbeat()
         try:
             self.disable()
         finally:
             self.client.close()
+
+    # --- heartbeat ----------------------------------------------------------
+    def start_heartbeat(self) -> None:
+        if self.heartbeat_interval_s <= 0:
+            return
+        if self._hb_thread is not None and self._hb_thread.is_alive():
+            return
+        self._hb_stop.clear()
+        self._hb_thread = threading.Thread(
+            target=self._heartbeat_loop, name="plc-heartbeat", daemon=True
+        )
+        self._hb_thread.start()
+
+    def stop_heartbeat(self) -> None:
+        self._hb_stop.set()
+        t = self._hb_thread
+        if t is not None:
+            t.join(timeout=1.0)
+        self._hb_thread = None
+
+    def _heartbeat_loop(self) -> None:
+        while not self._hb_stop.is_set():
+            self._hb_value = (self._hb_value + 1) & 0x3FFFFFFF
+            try:
+                self.client.write(T.Cmd.HEARTBEAT, self._hb_value)
+            except Exception:  # noqa: BLE001 - a comms hiccup must not kill the beat
+                pass
+            self._hb_stop.wait(self.heartbeat_interval_s)
+
+    @property
+    def is_pc_alive(self) -> bool:
+        """The PLC's view of our heartbeat (Status.PcAlive)."""
+        return bool(self._read_safe(T.Status.PC_ALIVE))
+
+    def plc_heartbeat(self) -> Optional[int]:
+        """The PLC's own heartbeat counter, or None on a read error."""
+        try:
+            return int(self._read_safe(T.Status.HEARTBEAT))
+        except (TypeError, ValueError):
+            return None
 
     # --- RobotDriver --------------------------------------------------------
     @property

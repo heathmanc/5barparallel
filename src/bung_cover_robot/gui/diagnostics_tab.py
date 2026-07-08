@@ -63,6 +63,12 @@ GROUPS: List[Tuple[str, List[Field]]] = [
         ("ActualRightDeg", "VisionRobot.Status.ActualRightDeg", "num"),
         ("SafetyOK", "SafetyOK", "bool"),
     ]),
+    ("Heartbeat watchdog", [
+        ("PcAlive", "VisionRobot.Status.PcAlive", "bool"),
+        ("PC Heartbeat (Cmd)", "VisionRobot.Cmd.Heartbeat", "num"),
+        ("PLC Heartbeat (Status)", "VisionRobot.Status.Heartbeat", "num"),
+        ("HB_TIMEOUT_MS", "HB_TIMEOUT_MS", "num"),
+    ]),
     ("Homing state machine", [
         ("HomeStep (R30)", "HomeStep", "num"),
         ("Home0_State", "Home0_State", "num"),

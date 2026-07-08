@@ -164,6 +164,9 @@ class SimulatedPlcClient(PlcClient):
         self._store: Dict[str, Any] = {}
         self._connected = False
         self._home_angles = home_angles
+        # The driver's heartbeat thread writes concurrently with GUI/main-thread
+        # reads, so serialize store access.
+        self._lock = threading.Lock()
         self._seed()
 
     def _seed(self) -> None:
@@ -187,16 +190,23 @@ class SimulatedPlcClient(PlcClient):
     def read(self, tag: str) -> Any:
         if not self._connected:
             raise PlcError("not connected")
-        return self._store.get(tag, 0)
+        with self._lock:
+            return self._store.get(tag, 0)
 
     def write(self, tag: str, value: Any) -> None:
         if not self._connected:
             raise PlcError("not connected")
-        self._store[tag] = value
-        self._react(tag, value)
+        with self._lock:
+            self._store[tag] = value
+            self._react(tag, value)
 
     # --- emulated ladder ----------------------------------------------------
     def _react(self, tag: str, value: Any) -> None:
+        if tag == T.Cmd.HEARTBEAT:
+            # The (emulated) watchdog sees a live PC beat and ticks its own.
+            self._store[T.Status.PC_ALIVE] = True
+            self._store[T.Status.HEARTBEAT] = self._store.get(T.Status.HEARTBEAT, 0) + 1
+            return
         if tag == T.Manual.ENABLE:
             self._store[T.Status.ENABLED] = bool(value)
             if not value:

@@ -45,6 +45,12 @@ points you refine at commissioning; `STEPS_PER_DEG` is fixed and
 | `CAMERA_CLEAR_L` | REAL | `0.0` | deg | Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose. |
 | `CAMERA_CLEAR_R` | REAL | `0.0` | deg | Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose. |
 
+## Heartbeat watchdog (R10_Safety)
+
+| Tag | Type | Value to set | Unit | Notes |
+|---|---|---|---|---|
+| `HB_TIMEOUT_MS` | DINT | `1000` | ms | PC heartbeat must change within this many ms or the PLC declares comms loss (code 10) and drops the drives. Set > 4x the PC heartbeat period. |
+
 ## Timer presets (`.PRE`)
 
 Timers import with `.PRE = 0`, which would make `.DN` true immediately.

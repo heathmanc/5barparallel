@@ -111,8 +111,12 @@ class RobotTestController:
     def set_driver(self, driver: RobotDriver) -> None:
         """Hot-swap the motion driver (e.g. connect/disconnect a real PLC).
 
-        Disables and closes the old driver, then requires re-homing against the
-        new one (a fresh connection has no known position reference)."""
+        Disables and closes the old driver, then *reconciles* with the new one's
+        actual state instead of blindly assuming disabled/un-homed. Real
+        handshaking: if the PLC reports a valid reference (Status.Homed with live
+        angles), adopt it; otherwise require homing. The PLC's own heartbeat
+        watchdog guarantees the drives can't be enabled without the app talking,
+        so a reference only survives here if the machine genuinely still holds it."""
         old = self.driver
         if old is not driver:
             try:
@@ -128,6 +132,16 @@ class RobotTestController:
                     pass
         self.driver = driver
         self._referenced = False
+        # Reconcile the reference from the PLC's reported state (None => not homed).
+        try:
+            angles = driver.read_angles()
+        except Exception:  # a read hiccup just leaves us un-referenced (safe)
+            angles = None
+        if angles is not None:
+            state, _ = self._state_from_angles(*angles)
+            if state is not None:
+                self._state = state
+                self._referenced = True
 
     # --- enable / reset -----------------------------------------------------
     def enable(self) -> MoveResult:

@@ -28,6 +28,7 @@ class Cmd:
     ABORT = f"{ROOT}.Cmd.Abort"
     RESET = f"{ROOT}.Cmd.Reset"
     COMMAND_ID = f"{ROOT}.Cmd.CommandID"
+    HEARTBEAT = f"{ROOT}.Cmd.Heartbeat"  # DINT: PC increments continuously (watchdog)
 
 
 class Target:
@@ -76,6 +77,9 @@ class Status:
     VACUUM_OK = f"{ROOT}.Status.VacuumOK"
     CAMERA_CLEAR = f"{ROOT}.Status.CameraClear"
     READY_FOR_VISION = f"{ROOT}.Status.ReadyForVision"
+    # heartbeat watchdog
+    PC_ALIVE = f"{ROOT}.Status.PcAlive"    # BOOL: PLC saw the PC heartbeat in time
+    HEARTBEAT = f"{ROOT}.Status.Heartbeat"  # DINT: PLC increments each scan
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,8 @@ TAG_SPECS: List[TagSpec] = [
             "Clear a latched fault and return to Ready."),
     TagSpec(Cmd.COMMAND_ID, "DINT", PC_TO_PLC, "Cmd",
             "Monotonic id for the current job; rejects stale/duplicate commands."),
+    TagSpec(Cmd.HEARTBEAT, "DINT", PC_TO_PLC, "Cmd",
+            "PC increments continuously while connected; PLC watchdogs it (code 10)."),
     # --- automatic pick/place targets ---
     TagSpec(Target.PICK_LEFT_DEG, "REAL", PC_TO_PLC, "Target",
             "Left shoulder angle at the pick pose (deg)."),
@@ -164,6 +170,10 @@ TAG_SPECS: List[TagSpec] = [
             "Robot is clear of the camera field of view."),
     TagSpec(Status.READY_FOR_VISION, "BOOL", PLC_TO_PC, "Status",
             "PLC is ready to receive a vision command."),
+    TagSpec(Status.PC_ALIVE, "BOOL", PLC_TO_PC, "Status",
+            "PLC saw the PC heartbeat within HB_TIMEOUT_MS; gates the drive enable."),
+    TagSpec(Status.HEARTBEAT, "DINT", PLC_TO_PC, "Status",
+            "PLC increments each scan; PC verifies the ladder is actually scanning."),
 ]
 
 

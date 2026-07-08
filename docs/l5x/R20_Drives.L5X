@@ -7,8 +7,8 @@
 <Routine Use="Target" Name="R20_Drives" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R20_Drives: owns the axis Enable outputs. EnableReq mirrors Manual.Enable gated by SafetyOK and no fault; drives both ClearLink Enable outputs and publishes Status.Enabled. Tag: EnableReq (RobotTags.csv).]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)OTE(EnableReq);]]></Text>
+<Comment><![CDATA[R20_Drives: owns the axis Enable outputs. EnableReq mirrors Manual.Enable gated by SafetyOK, no fault, AND a live PC heartbeat (Status.PcAlive) so the drives cannot be enabled or stay enabled without the app talking. Drives both ClearLink Enable outputs and publishes Status.Enabled. Tag: EnableReq.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Manual.Enable)XIC(SafetyOK)XIO(VisionRobot.Status.Faulted)XIC(VisionRobot.Status.PcAlive)OTE(EnableReq);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
 <Comment><![CDATA[Drive Motor 0 enable.]]></Comment>
