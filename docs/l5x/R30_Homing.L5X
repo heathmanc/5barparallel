@@ -31,10 +31,14 @@
 <Text><![CDATA[JSR(R_HomeMotor0,0)JSR(R_HomeMotor1,0);]]></Text>
 </Rung>
 <Rung Number="6" Type="N">
+<Comment><![CDATA[Disable invalidates the reference. An open-loop stepper has no feedback, so the instant the drive disables the datum is gone (the shaft can back-drive / lose steps unseen). Drop Homed + per-axis HomeDone + soft limits whenever not Enabled, forcing a re-home after any disable. The homing state machines are NOT reset here (they re-zero on the next HomeRequest) so the brief enable cycle during a Clear-Fault can't clobber an in-progress home.]]></Comment>
+<Text><![CDATA[XIO(VisionRobot.Status.Enabled)OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);]]></Text>
+</Rung>
+<Rung Number="7" Type="N">
 <Comment><![CDATA[Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: clear the coordinator + per-axis states and latched home faults/requests. MUST scan before the fault-latch rung below so the cleared HomeFault can't immediately re-latch the fault in the same scan.]]></Comment>
 <Text><![CDATA[XIC(VisionRobot.Cmd.Reset)ONS(HomeRst_ons)XIC(EStop_OK)XIC(Guard_Closed)MOV(0,HomeStep)MOV(0,Home0_State)MOV(0,Home1_State)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)OTU(Home0_Req)OTU(Home1_Req);]]></Text>
 </Rung>
-<Rung Number="7" Type="N">
+<Rung Number="8" Type="N">
 <Comment><![CDATA[Either axis homing fault -> homing fault (FaultCode 4).]]></Comment>
 <Text><![CDATA[[XIC(Ax0_HomeFault),XIC(Ax1_HomeFault)]OTL(VisionRobot.Status.Faulted)MOV(4,VisionRobot.Status.FaultCode)MOV(900,HomeStep);]]></Text>
 </Rung>
