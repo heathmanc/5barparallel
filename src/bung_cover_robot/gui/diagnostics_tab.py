@@ -36,7 +36,9 @@ FAULT_CODES = {
 
 def _clearlink_status(m: int) -> List[Field]:
     i = f"ClearLink:I1.Motor{m}_"
+    o = f"ClearLink:O1.Motor{m}_"
     return [
+        (f"M{m} EnableOut (O.b0)", f"{o}Output_Reg_Enable", "bool"),
         (f"M{m} Enabled (b10)", f"{i}Status_Enabled", "bool"),
         (f"M{m} HLFB_ON (b14)", f"{i}Status_HLFB_ON", "bool"),
         (f"M{m} Motor_In_Fault (b9)", f"{i}Status_Motor_In_Fault", "fault"),
