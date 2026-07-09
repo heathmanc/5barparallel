@@ -83,6 +83,8 @@ is the **midpoint between the two shoulder pivots**; +X runs along the line
 joining them (toward the right pivot), +Y is perpendicular, into the work area.
 The two pivots sit at **(−40, 0)** and **(+40, 0)** mm (80 mm base spacing).
 
+![Calibration jig, top view](calibration_jig.svg)
+
 The easy, accurate point is **on the centerline (X = 0)** — the locus
 equidistant from both pivots. Build it like this:
 
