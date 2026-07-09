@@ -11,10 +11,14 @@
 <Text><![CDATA[XIC(VacuumSensor)OTE(VisionRobot.Status.VacuumOK);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
+<Comment><![CDATA[Live position feedback: publish ActualLeft/RightDeg every scan from the ClearLink commanded step count (open-loop steppers, no encoder -> the commanded position IS the best 'actual'), zeroed at the home prox: ActualDeg = (CommandedPosn + HOME_OFFSET)/STEPS_PER_DEG — the same formula R30 uses at home-complete, now published continuously so the HMI shows the arm move live. Gated on a real reference (Homed AND not Bypass_Homing) so the readout isn't garbage before homing or on the bench without a datum.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Status.Homed)XIO(Bypass_Homing)CPT(VisionRobot.Status.ActualLeftDeg,(ClearLink:I1.Motor0_CommandedPosn + HOME_OFFSET_L) / STEPS_PER_DEG)CPT(VisionRobot.Status.ActualRightDeg,(ClearLink:I1.Motor1_CommandedPosn + HOME_OFFSET_R) / STEPS_PER_DEG);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
 <Comment><![CDATA[Ready = idle, homed, not homing.]]></Comment>
 <Text><![CDATA[EQU(State,0)EQU(HomeStep,0)XIC(VisionRobot.Status.Homed)OTE(VisionRobot.Status.Ready);]]></Text>
 </Rung>
-<Rung Number="2" Type="N">
+<Rung Number="3" Type="N">
 <Comment><![CDATA[Busy = a job is running.]]></Comment>
 <Text><![CDATA[NEQ(State,0)OTE(VisionRobot.Status.Busy);]]></Text>
 </Rung>

@@ -152,6 +152,26 @@ def test_camera_settings_save_and_restore(qapp, tmp_path):
     assert ct2._sliders["contrast"].value() == 150
 
 
+def test_vision_live_position_readout(qapp):
+    import re
+
+    win = MainWindow()
+    vt = win.vision_tab
+    # not referenced -> dashes + hint
+    vt._on_position(None)
+    assert "—" in vt.pos_deg_label.text()
+    assert "not referenced" in vt.pos_xy_label.text().lower()
+    # a referenced pose -> live angles + forward-kinematics TCP in mm
+    win.controller.enable()
+    win.controller.home_reference()
+    angles = vt._read_angles()
+    assert angles is not None
+    vt._on_position(angles)
+    assert re.search(r"\d", vt.pos_deg_label.text())      # shows angle numbers
+    assert "mm" in vt.pos_xy_label.text()
+    assert re.search(r"\d", vt.pos_xy_label.text())       # shows an X/Y value
+
+
 def test_vision_mode_buttons_drive_controller(qapp):
     win = MainWindow()
     vt = win.vision_tab

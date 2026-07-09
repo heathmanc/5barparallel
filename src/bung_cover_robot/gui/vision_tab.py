@@ -51,6 +51,34 @@ from .imaging import ndarray_to_qpixmap
 from .widgets import RoiImageView, StatusPill
 
 
+class _PositionPoller(QThread):
+    """Reads the live shoulder angles off the GUI thread and emits them, so the
+    Vision screen shows the arm move without ever blocking on PLC I/O."""
+
+    positionUpdated = Signal(object)   # (left_deg, right_deg) or None
+
+    def __init__(self, read_angles, interval_ms: int = 250, parent=None) -> None:
+        super().__init__(parent)
+        self._read_angles = read_angles
+        self._interval_ms = interval_ms
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+        self.wait(1500)
+
+    def run(self) -> None:  # pragma: no cover - thread loop
+        while not self._stop:
+            try:
+                angles = self._read_angles()
+            except Exception:  # noqa: BLE001 - never let the poller thread die
+                angles = None
+            if self._stop:
+                break
+            self.positionUpdated.emit(angles)
+            self.msleep(self._interval_ms)
+
+
 class VisionTab(QWidget):
     # emitted when the operator changes the active recipe (changeover)
     recipeChanged = Signal(str)
@@ -86,6 +114,7 @@ class VisionTab(QWidget):
         self._running = False
         self._thread: Optional[QThread] = None
         self._worker: Optional[CycleWorker] = None
+        self._pos_poller: Optional[_PositionPoller] = None
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -147,6 +176,20 @@ class VisionTab(QWidget):
             grid.addWidget(lbl, row, 0)
             grid.addWidget(pill, row, 1, Qt.AlignmentFlag.AlignRight)
         v.addWidget(status_box)
+
+        # Live position — the arm's current shoulder angles + TCP (from the PLC's
+        # continuous ActualDeg publish; open-loop commanded position).
+        pos_box = QGroupBox("Live position")
+        pv = QVBoxLayout(pos_box)
+        self.pos_deg_label = QLabel("L —°   R —°")
+        self.pos_xy_label = QLabel("X — · Y — mm")
+        for lab in (self.pos_deg_label, self.pos_xy_label):
+            lab.setStyleSheet("font-family: monospace; font-size:13px;")
+        self.pos_xy_label.setStyleSheet(
+            f"font-family: monospace; font-size:13px; color:{theme.TEXT_DIM};")
+        pv.addWidget(self.pos_deg_label)
+        pv.addWidget(self.pos_xy_label)
+        v.addWidget(pos_box)
 
         # Mode select — like an HMI Manual/Auto selector. Auto is required before
         # the cycle can start (only in Auto does the PLC scan the pick/place
@@ -810,3 +853,52 @@ class VisionTab(QWidget):
     def _set_status(self, text: str, color: str) -> None:
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color:{color};")
+
+    # --- live position ------------------------------------------------------
+    def _read_angles(self):
+        """Current shoulder angles (L, R) deg, or None if not referenced. Runs on
+        the poller thread — the PLC read is serialized by the client's lock."""
+        return self.controller.driver.read_angles()
+
+    def _start_pos_poller(self) -> None:
+        if self._pos_poller is not None:
+            return
+        self._pos_poller = _PositionPoller(self._read_angles, parent=self)
+        self._pos_poller.positionUpdated.connect(self._on_position)
+        self._pos_poller.start()
+
+    def _stop_pos_poller(self) -> None:
+        if self._pos_poller is not None:
+            self._pos_poller.stop()
+            self._pos_poller.deleteLater()
+            self._pos_poller = None
+
+    def _on_position(self, angles) -> None:
+        """Paint the live shoulder angles + forward-kinematics TCP."""
+        if angles is None:
+            self.pos_deg_label.setText("L —°   R —°")
+            self.pos_xy_label.setText("not referenced — Home first")
+            self.pos_xy_label.setStyleSheet(
+                f"font-family: monospace; font-size:13px; color:{theme.TEXT_DIM};")
+            return
+        left, right = float(angles[0]), float(angles[1])
+        self.pos_deg_label.setText(f"L {left:6.1f}°   R {right:6.1f}°")
+        try:
+            x, y = self.controller.kin.forward(left, right)
+            self.pos_xy_label.setText(f"X {x:6.0f} · Y {y:6.0f} mm")
+            self.pos_xy_label.setStyleSheet(
+                f"font-family: monospace; font-size:13px; color:{theme.TEXT};")
+        except Exception:  # noqa: BLE001 - a bad-geometry angle pair
+            self.pos_xy_label.setText("X — · Y — mm")
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._start_pos_poller()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._stop_pos_poller()
+        super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._stop_pos_poller()
+        super().closeEvent(event)

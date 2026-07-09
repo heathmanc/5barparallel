@@ -590,6 +590,18 @@ STATUS: List[Rung] = [
     ("R60_Status: publish the derived status bits (the rest are set where they "
      "occur). VacuumOK from the vacuum sensor.",
      "XIC(VacuumSensor)OTE(VisionRobot.Status.VacuumOK);"),
+    ("Live position feedback: publish ActualLeft/RightDeg every scan from the "
+     "ClearLink commanded step count (open-loop steppers, no encoder -> the "
+     "commanded position IS the best 'actual'), zeroed at the home prox: "
+     "ActualDeg = (CommandedPosn + HOME_OFFSET)/STEPS_PER_DEG — the same formula "
+     "R30 uses at home-complete, now published continuously so the HMI shows the "
+     "arm move live. Gated on a real reference (Homed AND not Bypass_Homing) so "
+     "the readout isn't garbage before homing or on the bench without a datum.",
+     "XIC(VisionRobot.Status.Homed)XIO(Bypass_Homing)"
+     "CPT(VisionRobot.Status.ActualLeftDeg,"
+     "(ClearLink:I1.Motor0_CommandedPosn + HOME_OFFSET_L) / STEPS_PER_DEG)"
+     "CPT(VisionRobot.Status.ActualRightDeg,"
+     "(ClearLink:I1.Motor1_CommandedPosn + HOME_OFFSET_R) / STEPS_PER_DEG);"),
     ("Ready = idle, homed, not homing.",
      "EQU(State,0)EQU(HomeStep,0)XIC(VisionRobot.Status.Homed)"
      "OTE(VisionRobot.Status.Ready);"),

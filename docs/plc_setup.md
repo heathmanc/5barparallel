@@ -175,7 +175,7 @@ rest each scan:
 | `R30_Homing.L5X` | homing coordinator | `JSR`s `R_HomeMotor0/1`; offset-aware angle publish |
 | `R40_Manual.L5X` | manual jog/home | absolute jog on `Manual.MoveToTarget`, gated by enabled/homed/limits |
 | `R50_Auto.L5X` | **automatic pick/place** | the §11 state machine — camera-clear → pick → vacuum → drop → blowoff |
-| `R60_Status.L5X` | status | publishes `Ready`/`Busy`/`VacuumOK` |
+| `R60_Status.L5X` | status | publishes `Ready`/`Busy`/`VacuumOK` + **live `ActualLeft/RightDeg`** each scan (from the ClearLink commanded position; open-loop) |
 | `R_MoveMotor0.L5X` / `R_MoveMotor1.L5X` | move engine, per axis | mirrors `SD_Position_Move`, `Abs_Flag` set |
 | `R_HomeMotor0.L5X` / `R_HomeMotor1.L5X` | ClearLink homing, per axis | mirrors `SD_Homing`; `JSR`'d by `R30` |
 
