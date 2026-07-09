@@ -128,6 +128,24 @@ def test_shape_finder_is_color_and_shape_agnostic():
         assert any(abs(fx - cx) <= 14 for fx in xs), f"missed object near {cx}: {xs}"
 
 
+def test_hough_finds_a_clean_disk():
+    from bung_cover_robot.vision.detection import find_hough_circles
+
+    img = np.full((260, 260, 3), 60, np.uint8)
+    cv2.circle(img, (130, 130), 60, (205, 205, 205), -1)
+    found = find_hough_circles(img, 80, 170, param2=25)
+    assert found and any(abs(c.cx - 130) <= 8 and abs(c.cy - 130) <= 8 for c in found)
+
+
+def test_cover_detector_hough_method():
+    img = np.full((260, 260, 3), 60, np.uint8)
+    cv2.circle(img, (130, 130), 58, (205, 205, 205), -1)
+    cfg = CoverDetectorConfig(
+        method="hough", min_diameter_px=80, max_diameter_px=170, hough_param2=25)
+    res = CoverDetector(cfg).detect(img)
+    assert res.count >= 1
+
+
 def test_shape_finds_low_contrast_solid_cover():
     # a dark-grey D cover on lighter wood with soft edges — the real failure case
     # (edge-only detection missed it; the Otsu-region pass catches it).

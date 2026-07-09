@@ -76,6 +76,7 @@ class VisionTab(QWidget):
             CoverDetectorConfig(method="shape", min_diameter_px=40, max_diameter_px=400))
         self._pick_roi = None           # (x, y, w, h) px — covers must be inside
         self._frame = None
+        self._display = None            # last rendered image (raw or overlay), for Save
         self._running = False
         self._thread: Optional[QThread] = None
         self._worker: Optional[CycleWorker] = None
@@ -220,6 +221,14 @@ class VisionTab(QWidget):
         self.show_holes_chk.setToolTip("Overlay drop-hole detections too (off keeps the cover view clean).")
         self.show_holes_chk.toggled.connect(self._on_tuning_changed)
         grid.addWidget(self.show_holes_chk, 6, 0, 1, 3)
+        self.hough_chk = QCheckBox("Use Hough circles")
+        self.hough_chk.setToolTip(
+            "Detect circles by the Hough transform instead of the region/edge "
+            "outline — often better for a clean round cover. 'Edge sens' controls "
+            "the accumulator threshold."
+        )
+        self.hough_chk.toggled.connect(self._on_tuning_changed)
+        grid.addWidget(self.hough_chk, 7, 0, 1, 3)
         return box
 
     def _tune_row(self, grid: QGridLayout, row: int, label: str,
@@ -236,9 +245,10 @@ class VisionTab(QWidget):
         return slider
 
     def _apply_tuning(self) -> None:
-        """Push the slider values into the cover detector's shape config."""
+        """Push the slider values into the cover detector config."""
         cfg = self.cover_detector.config
-        cfg.method = "shape"                     # sliders only affect the shape finder
+        hough = getattr(self, "hough_chk", None) and self.hough_chk.isChecked()
+        cfg.method = "hough" if hough else "shape"
         cfg.min_diameter_px = float(self.tune_min.value())
         cfg.max_diameter_px = float(max(self.tune_max.value(), self.tune_min.value() + 1))
         s = self.tune_edge.value()               # 0 (insensitive) .. 100 (sensitive)
@@ -247,6 +257,7 @@ class VisionTab(QWidget):
         cfg.shape_canny_lo_frac = 0.5 * hi
         cfg.shape_min_solidity = self.tune_sol.value() / 100.0
         cfg.shape_min_circularity = self.tune_circ.value() / 100.0
+        cfg.hough_param2 = max(8.0, 60.0 - 0.5 * s)   # more sens -> lower accumulator
 
     def _on_tuning_changed(self) -> None:
         self._apply_tuning()
@@ -256,15 +267,16 @@ class VisionTab(QWidget):
     def _on_save_frame(self) -> None:
         if self._frame is None:
             self._capture()
-        if self._frame is None:
+        img = self._display if self._display is not None else self._frame
+        if img is None:
             self._set_status("No frame to save (connect the camera).", theme.WARN)
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Save frame", "frame.png", "PNG (*.png)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save image", "frame.png", "PNG (*.png)")
         if not path:
             return
         import cv2
-        cv2.imwrite(path, self._frame)
-        self._set_status(f"Saved frame to {path}", theme.SUCCESS)
+        cv2.imwrite(path, img)
+        self._set_status(f"Saved to {path}", theme.SUCCESS)
 
     # --- camera -------------------------------------------------------------
     def set_camera(self, camera: Camera) -> None:
@@ -283,6 +295,7 @@ class VisionTab(QWidget):
             self._set_status(f"Capture failed: {exc}", theme.DANGER)
             return
         self._frame = frame
+        self._display = frame
         self.view.set_pixmap(ndarray_to_qpixmap(frame))
         self._update_roi_buttons()      # a frame is enough to draw a pick region
 
@@ -293,8 +306,9 @@ class VisionTab(QWidget):
             return
         show_holes = getattr(self, "show_holes_chk", None) and self.show_holes_chk.isChecked()
         holes = self.hole_detector.detect(self._frame) if show_holes else None
+        hough = getattr(self, "hough_chk", None) and self.hough_chk.isChecked()
 
-        if getattr(self, "debug_chk", None) and self.debug_chk.isChecked():
+        if not hough and getattr(self, "debug_chk", None) and self.debug_chk.isChecked():
             self._render_debug(holes)
             return
 
@@ -304,6 +318,7 @@ class VisionTab(QWidget):
         validator = self.controller.validator if self.calibration else None
         covers = self.cover_detector.detect(self._frame, to_robot, validator)
         overlay = annotate(self._frame, holes.holes if holes else None, covers.covers)
+        self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         reach = " reachable" if self.calibration else " pickable"
         holes_txt = f"{holes.count} holes · " if holes else ""
@@ -326,6 +341,7 @@ class VisionTab(QWidget):
         overlay = annotate_candidates(self._frame, cands)
         if holes:
             overlay = annotate(overlay, holes.holes, None)
+        self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         kept = sum(1 for _, r in cands if r == "ok")
         self._set_status(

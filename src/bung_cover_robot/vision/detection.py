@@ -176,6 +176,37 @@ def find_blobs(
     return out
 
 
+def find_hough_circles(
+    frame: np.ndarray,
+    min_diameter: float,
+    max_diameter: float,
+    blur: int = 5,
+    dp: float = 1.2,
+    param1: float = 120.0,
+    param2: float = 30.0,
+    min_dist: Optional[float] = None,
+) -> List[Circle]:
+    """Circles by the Hough gradient transform — votes accumulate from a circular
+    edge and ignore linear clutter (wood grain), so it's a strong fit for a clean
+    round cover. ``param2`` is the accumulator threshold: lower finds more (and
+    more false) circles. Best on a near-circular object; for a very flat-sided (D)
+    shape prefer ``find_round_objects``."""
+    import cv2
+
+    gray = _gray_blur(frame, blur)
+    md = min_dist if min_dist else max(min_diameter, 20.0)
+    res = cv2.HoughCircles(
+        gray, cv2.HOUGH_GRADIENT, dp, md, param1=param1, param2=param2,
+        minRadius=max(0, int(round(min_diameter / 2.0))),
+        maxRadius=int(round(max_diameter / 2.0)))
+    out: List[Circle] = []
+    if res is not None:
+        for x, y, r in res[0]:
+            out.append(Circle(float(x), float(y), float(r),
+                              float(math.pi * r * r), 1.0))
+    return out
+
+
 def _round_candidates(
     frame: np.ndarray,
     min_diameter: float,

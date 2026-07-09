@@ -18,6 +18,7 @@ from .detection import (
     Circle,
     crop_roi,
     find_blobs,
+    find_hough_circles,
     find_round_objects,
     offset_circles,
 )
@@ -42,11 +43,14 @@ class CoverDetectorConfig:
     # Finder: "shape" = region outline (color-agnostic, D-shape tolerant); "blob" =
     # dark/bright fill; "auto" = shape when a pick region is drawn (search confined
     # to it), else blob. Covers vary in color AND are D-shaped, so shape-in-region.
+    # "shape" (region+edge outline), "hough" (Hough circles — best for a clean
+    # round cover), "blob" (dark/bright fill), or "auto" (shape within a pick region).
     method: str = "auto"
     shape_min_circularity: float = 0.6    # relaxed so a flat-sided (D) cover passes
     shape_min_solidity: float = 0.9       # convexity: rejects grain, keeps a D
     shape_canny_lo_frac: float = 0.33     # edge sensitivity (of median): lower = more
     shape_canny_hi_frac: float = 0.66
+    hough_param2: float = 30.0            # Hough accumulator: lower = more circles
     # Physical-size gate (per recipe): reject blobs whose real diameter is off the
     # expected cover size. Needs a calibration (to_robot); 0 disables the check.
     expected_diameter_mm: float = 0.0
@@ -97,9 +101,14 @@ class CoverDetector:
         # is drawn.
         use_shape = cfg.method == "shape" or (
             cfg.method == "auto" and cfg.pick_roi is not None)
-        region = cfg.pick_roi if (use_shape and cfg.pick_roi is not None) else cfg.roi
+        confined = cfg.method in ("shape", "hough") or use_shape
+        region = cfg.pick_roi if (confined and cfg.pick_roi is not None) else cfg.roi
         sub, ox, oy = crop_roi(frame, region)
-        if use_shape:
+        if cfg.method == "hough":
+            found = find_hough_circles(
+                sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
+                param2=cfg.hough_param2)
+        elif use_shape:
             found = find_round_objects(
                 sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
                 cfg.shape_min_circularity, cfg.shape_min_solidity,
