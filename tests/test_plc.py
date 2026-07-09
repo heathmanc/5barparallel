@@ -207,10 +207,10 @@ def test_heartbeat_marks_pc_alive_and_ticks_beats():
 def test_set_driver_reconciles_reference_from_homed_plc():
     from bung_cover_robot.robot.driver import DryRunRobotDriver
 
-    sim = SimulatedPlcClient(home_angles=(135.85, 44.15)).connect()
+    sim = SimulatedPlcClient(home_angles=(140.54, 39.46)).connect()
     sim.write(tags.Status.HOMED, True)
-    sim.write(tags.Status.ACTUAL_LEFT_DEG, 135.85)
-    sim.write(tags.Status.ACTUAL_RIGHT_DEG, 44.15)
+    sim.write(tags.Status.ACTUAL_LEFT_DEG, 140.54)
+    sim.write(tags.Status.ACTUAL_RIGHT_DEG, 39.46)
 
     c = RobotTestController(DryRunRobotDriver())
     assert not c.is_referenced

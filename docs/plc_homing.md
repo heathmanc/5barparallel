@@ -50,8 +50,8 @@ values come from the `homing:` block in `config/robot_config.yaml`.
 | `HOME_VEL` | DINT | `800` | homing-move speed toward the switch, steps/s (~30°/s) |
 | `HOME_ACC` | DINT | `20000` | homing accel, steps/s² |
 | `HOME_TIMEOUT` | DINT | `10000` | homing-move timeout, ms |
-| `HOME_OFFSET_L` | DINT | `ROUND(135.8504*26.66667)` | switch angle → steps, left |
-| `HOME_OFFSET_R` | DINT | `ROUND(44.1496*26.66667)` | switch angle → steps, right |
+| `HOME_OFFSET_L` | DINT | `ROUND(140.5406*26.66667)` | switch angle → steps, left |
+| `HOME_OFFSET_R` | DINT | `ROUND(39.4594*26.66667)` | switch angle → steps, right |
 
 > **`HOME_VEL` sets repeatability.** The ClearLink zeroes position when the home
 > sensor trips during a homing move; a slower approach = a more repeatable datum.
@@ -87,7 +87,7 @@ Motor 1 is `Motor1_*`):
 > *commanded* step count, not encoder feedback. The ClearLink homing move
 > establishes the datum (position 0 **at the switch**); step integrity is assumed
 > thereafter. The home *angle* is applied by `HOME_OFFSET_*` when publishing
-> `ActualDeg`, since position 0 = the prox trip point, not 135.85°/44.15°.
+> `ActualDeg`, since position 0 = the prox trip point, not 140.54°/39.46°.
 
 ---
 
@@ -289,7 +289,7 @@ runs both axes, and sets `Status.Homed` + `ActualLeft/RightDeg` on success
 4. Tune `HOME_VEL`: slower approach = more repeatable datum. Re-home a few times
    and confirm the switch trip (`Has Homed`) repeats to your tolerance.
 5. Set `HOME_OFFSET_L`/`HOME_OFFSET_R` so that after homing
-   `Status.ActualLeftDeg ≈ 135.85`, `Status.ActualRightDeg ≈ 44.15` (position 0
+   `Status.ActualLeftDeg ≈ 140.54`, `Status.ActualRightDeg ≈ 39.46` (position 0
    is the prox trip point, not the home angle — the offset bridges the two).
 6. Block a prox so the switch never trips to confirm `HOME_TIMEOUT` →
    `FaultCode 4`.

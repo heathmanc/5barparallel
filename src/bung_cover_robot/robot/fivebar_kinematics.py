@@ -43,9 +43,9 @@ class FiveBarConfig:
     fields from ``config/robot_config.yaml``.
     """
 
-    l1_mm: float = 220.0
+    l1_mm: float = 200.0
     l2_mm: float = 230.0
-    base_spacing_mm: float = 101.6
+    base_spacing_mm: float = 80.0
     left_elbow: str = "up"
     right_elbow: str = "down"
     joint_min_deg: float = -20.0

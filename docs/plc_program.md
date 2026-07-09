@@ -342,7 +342,7 @@ OUTPUT  Fault         BOOL     // timeout / not ready
 //    Homed := Ax.HasHomed                             (Motor0_Status_Has_Homed)
 ```
 **Home-offset gotcha:** ClearLink zeroes position **at the switch trip point**,
-so `Commanded Position = 0` means "at the home prox", *not* 135.85°/44.15°. Apply
+so `Commanded Position = 0` means "at the home prox", *not* 140.54°/39.46°. Apply
 the mechanical offset in the PLC's step↔degree mapping — define
 `HOME_OFFSET_STEPS` per axis (= switch angle × `STEPS_PER_DEG`) and report
 `ActualDeg := (Commanded Position + HOME_OFFSET_STEPS) / STEPS_PER_DEG`. (See
@@ -501,7 +501,7 @@ Soft Limit 1/2), set Status.Homed := TRUE, and publish
 
 **Home-offset:** the ClearLink datum is the switch trip point (position 0), not
 the home angle — apply `HOME_OFFSET_STEPS` per axis so the published angle reads
-135.85° (left) / 44.15° (right). See §5 and `docs/homing.md`.
+140.54° (left) / 39.46° (right). See §5 and `docs/homing.md`.
 
 Home is **mid-travel**, so the flag passes the sensor during normal motion. The
 ClearLink only consults the home sensor during a homing move (a move with the
@@ -513,8 +513,8 @@ Config source (read/mirror these; single source is `config/robot_config.yaml`):
 
 ```yaml
 homing:
-  home_left_deg: 135.8504
-  home_right_deg: 44.1496
+  home_left_deg: 140.5406
+  home_right_deg: 39.4594
   flag_radius_mm: 40.0
   limit_min_deg: -20.0
   limit_max_deg: 200.0
@@ -663,8 +663,8 @@ validate the sequence logic against the GUI before touching hardware.
    `Home Sensor` connector; hard limits (−20/+200) in the drive fault chain (and
    optionally as `Positive/Negative Limit` connectors); EM806 ALM read as a fault.
 3. Homing: `Homing Enable` set, `HOME_VEL`/approach direction tuned, and
-   `HOME_OFFSET_STEPS` set so after homing `ActualLeftDeg ≈ 135.85`,
-   `ActualRightDeg ≈ 44.15`. Confirm `Has Homed` asserts.
+   `HOME_OFFSET_STEPS` set so after homing `ActualLeftDeg ≈ 140.54`,
+   `ActualRightDeg ≈ 39.46`. Confirm `Has Homed` asserts.
 4. Soft limits enforced; a move past −20/+200 is refused with `FaultCode 7`.
 5. Manual handshake: from the app's **PLC tab → Connect PLC**, then **Robot
    Test → Enable → Home (find ref) → jog**. Confirm `CompleteCommandID` tracks

@@ -67,13 +67,13 @@ it.
    inertia. (Original draft said "motors across the conveyor" — that is wrong
    for this battery.)
 
-2. **Arm links are L1 = 220 mm (proximal), L2 = 230 mm (distal).**
+2. **Arm links are L1 = 200 mm (proximal), L2 = 230 mm (distal).**
    Not 305 + 305. Shorter links because inline mounting only needs ~350 mm of
    reach. This drops arm inertia to **~40 % of the 305 + 305 design**, which is
    the main lever for hitting 5 s/cover, and it stiffens the arm.
 
-3. **Base spacing is 101.6 mm (4 in), symmetric**: left base (−50.8, 0), right
-   base (+50.8, 0) in robot frame. Not 14 in, not the asymmetric
+3. **Base spacing is 80 mm (3.15 in), symmetric**: left base (−40, 0), right
+   base (+40, 0) in robot frame. Not 14 in, not the asymmetric
    (−127, 228.6) from the draft. Narrower spacing gives larger singularity
    margin here.
 
@@ -132,11 +132,11 @@ design nominal.
 
 | Parameter | Value |
 |---|---|
-| Proximal link L1 | 220 mm |
+| Proximal link L1 | 200 mm |
 | Distal link L2 | 230 mm |
-| Max reach per arm (L1+L2) | 450 mm |
-| Base spacing | 101.6 mm (4 in), symmetric |
-| Left base / right base (robot frame) | (−50.8, 0) / (+50.8, 0) |
+| Max reach per arm (L1+L2) | 430 mm |
+| Base spacing | 80 mm (3.15 in), symmetric |
+| Left base / right base (robot frame) | (−40, 0) / (+40, 0) |
 | Assembly branch | left up, right down |
 | Belt reduction | 3:1 GT3 (20T motor → 60T shoulder) |
 | Drive pulses / motor rev | 3200 |
@@ -159,7 +159,7 @@ Overhead camera
   -> Leadshine EM806 drives x2          (Axis0 = left shoulder, Axis1 = right shoulder)
   -> Leadshine 57HS22-07 NEMA 23 x2     (bipolar parallel)
   -> 3:1 GT3 belt reduction
-  -> 5-bar linkage (L1=220 / L2=230 mm) mounted inline beside the conveyor
+  -> 5-bar linkage (L1=200 / L2=230 mm) mounted inline beside the conveyor
   -> centered pneumatic Z cylinder + vacuum cup (+ optional blowoff)
 ```
 

@@ -21,12 +21,12 @@ from bung_cover_robot.robot import (
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "robot_config.yaml"
 
-# Work zone in the robot frame (Claude.md §4): every nominal target sits at
-# Y_robot = 250; X_robot spans -175 (pick) to +175 (far hole). The +/-2 in
-# (50.8 mm) cross-conveyor tolerance moves Y over [199.2, 300.8].
-Y_NOM = 250.0
-TOL = 50.8  # 2 inches
-WORK_X = [-175.0, -125.0, -75.0, 0.0, 75.0, 125.0, 175.0]
+# Work zone in the robot frame (Claude.md §4): the 13 in-wide part footprint
+# centered on X = 0 (X spans -160..+160), nominal Y_robot = 240; the +/-2 in
+# (50 mm) cross-conveyor tolerance moves Y over [190, 290].
+Y_NOM = 240.0
+TOL = 50.0  # ~2 inches
+WORK_X = [-160.0, -105.0, -55.0, 0.0, 55.0, 105.0, 160.0]
 WORK_Y = [Y_NOM - TOL, Y_NOM, Y_NOM + TOL]
 WORK_ZONE = [(x, y) for y in WORK_Y for x in WORK_X]
 
@@ -36,16 +36,16 @@ WORK_ZONE = [(x, y) for y in WORK_Y for x in WORK_X]
 # --------------------------------------------------------------------------- #
 def test_default_config_is_the_verified_design_point():
     cfg = FiveBarConfig()
-    assert cfg.l1_mm == 220.0
+    assert cfg.l1_mm == 200.0
     assert cfg.l2_mm == 230.0
-    assert cfg.base_spacing_mm == 101.6
+    assert cfg.base_spacing_mm == 80.0
     assert cfg.left_elbow == "up"
     assert cfg.right_elbow == "down"
     assert cfg.joint_min_deg == -20.0
     assert cfg.joint_max_deg == 200.0
-    assert cfg.max_reach_mm == 450.0
-    assert cfg.left_base == (-50.8, 0.0)
-    assert cfg.right_base == (50.8, 0.0)
+    assert cfg.max_reach_mm == 430.0
+    assert cfg.left_base == (-40.0, 0.0)
+    assert cfg.right_base == (40.0, 0.0)
 
 
 def test_pulses_per_degree():
@@ -111,7 +111,7 @@ def test_assembly_branch_is_left_up_right_down():
 def test_is_reachable_true_in_zone_false_far_away():
     kin = FiveBarKinematics()
     assert kin.is_reachable(0.0, Y_NOM)
-    assert not kin.is_reachable(0.0, 900.0)  # beyond 450 mm arms
+    assert not kin.is_reachable(0.0, 900.0)  # beyond 430 mm arms
 
 
 def test_inverse_raises_outside_envelope():
@@ -131,8 +131,8 @@ def test_entire_work_zone_passes_the_guard():
 
 
 def test_work_zone_meets_verified_thresholds():
-    # Claude.md §3: worst case ~31 deg parallel margin, ~53 deg serial margin,
-    # <= 84% reach. Assert the guaranteed thresholds hold everywhere in-zone.
+    # Claude.md §3: worst case ~45 deg parallel margin, ~52 deg serial margin,
+    # <= 82% reach. Assert the guaranteed thresholds hold everywhere in-zone.
     validator = WorkspaceValidator()
     limits = SingularityLimits()
     worst_parallel = 999.0
@@ -148,7 +148,7 @@ def test_work_zone_meets_verified_thresholds():
     assert worst_serial >= limits.serial_min_deg
     assert worst_reach <= limits.reach_fraction_max
     # Sanity against the design-review figures.
-    assert worst_parallel >= 30.0
+    assert worst_parallel >= 40.0
     assert worst_reach <= 0.85
 
 
@@ -168,7 +168,7 @@ def test_guard_rejects_unreachable_target():
 def test_guard_rejects_overextended_target():
     # Reachable geometrically but past the 85% stiffness cap.
     validator = WorkspaceValidator()
-    res = validator.validate(0.0, 430.0)
+    res = validator.validate(0.0, 400.0)
     assert not res.ok
     assert "reach fraction" in res.reason
 

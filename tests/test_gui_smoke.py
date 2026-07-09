@@ -584,7 +584,7 @@ def test_adding_recipe_refreshes_vision_dropdown(qapp, tmp_path):
 def test_settings_loads_current_geometry(qapp):
     win = MainWindow()
     st = win.settings_tab
-    assert st._floats["l1_mm"].value() == pytest.approx(220.0)
+    assert st._floats["l1_mm"].value() == pytest.approx(200.0)
     assert st._floats["l2_mm"].value() == pytest.approx(230.0)
 
 

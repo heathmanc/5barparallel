@@ -57,7 +57,7 @@ def test_disable_blocks_further_motion():
 # --------------------------------------------------------------------------- #
 def test_homing_config_defaults():
     h = HomingConfig()
-    assert h.home_angles == (135.8504, 44.1496)
+    assert h.home_angles == (140.5406, 39.4594)
     assert h.flag_radius_mm == 40.0
     assert h.limit_min_deg == -20.0 and h.limit_max_deg == 200.0
     assert h.home_tcp_mm == (0.0, 250.0)
@@ -65,8 +65,8 @@ def test_homing_config_defaults():
 
 def test_homing_config_from_yaml():
     h = HomingConfig.from_yaml(CONFIG)
-    assert h.home_left_deg == pytest.approx(135.8504)
-    assert h.home_right_deg == pytest.approx(44.1496)
+    assert h.home_left_deg == pytest.approx(140.5406)
+    assert h.home_right_deg == pytest.approx(39.4594)
     assert h.flag_radius_mm == 40.0
     assert h.home_tcp_mm == (0.0, 250.0)
 

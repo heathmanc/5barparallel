@@ -37,18 +37,18 @@ position at `base + r·(cos θ, sin θ)` with `r = 40 mm`.
 
 | Switch | Trip angle | Left L1 flag | Right L1 flag |
 |---|---|---|---|
-| Min hard limit | −20° | (−13.2, −13.7) | (+88.4, −13.7) |
-| **Home reference** | L 135.85° / R 44.15° | (−79.5, +27.9) | (+79.5, +27.9) |
-| Max hard limit | +200° | (−88.4, −13.7) | (+13.2, −13.7) |
+| Min hard limit | −20° | (−2.4, −13.7) | (+77.6, −13.7) |
+| **Home reference** | L 140.54° / R 39.46° | (−70.9, +25.4) | (+70.9, +25.4) |
+| Max hard limit | +200° | (−77.6, −13.7) | (+2.4, −13.7) |
 
-Pivots: left base (−50.8, 0), right base (+50.8, 0). Home reference pose is the
+Pivots: left base (−40, 0), right base (+40, 0). Home reference pose is the
 centred, well-conditioned TCP **(0, 250)** (arms splayed left-up/right-down,
 clear of the parallel-singularity band).
 
 ## Home is mid-travel — read it only during homing
 
-Across the work zone the **left shoulder sweeps ~87°→183°** and the **right
-~−3°→93°**, so the home angle (135.85° / 44.15°) sits mid-travel and the flag
+Across the work zone the **left shoulder sweeps ~93°→188°** and the **right
+~−8°→87°**, so the home angle (140.54° / 39.46°) sits mid-travel and the flag
 **passes the sensor during normal motion**. That is fine: the PLC reads the home
 switch **only during the homing routine** and ignores it otherwise. (If you later
 want the home switch to double as a live position check, move the home pose
@@ -59,7 +59,7 @@ outside the working band instead.)
 1. Enable drives.
 2. Drive each shoulder toward its home switch from one consistent direction.
 3. On trigger, back off and re-approach slowly for repeatability.
-4. Set the reference to the home angle (L 135.85° / R 44.15°); report it in
+4. Set the reference to the home angle (L 140.54° / R 39.46°); report it in
    `VisionRobot.Status.ActualLeft/RightDeg`, set `VisionRobot.Status.Homed`.
 5. Soft limits (−20°…+200°) become active.
 
@@ -81,8 +81,8 @@ waits for `Homed` (Claude.md §11).
 
 ```yaml
 homing:
-  home_left_deg: 135.8504
-  home_right_deg: 44.1496
+  home_left_deg: 140.5406
+  home_right_deg: 39.4594
   home_tcp_mm: [0.0, 250.0]
   flag_radius_mm: 40.0
   limit_min_deg: -20.0

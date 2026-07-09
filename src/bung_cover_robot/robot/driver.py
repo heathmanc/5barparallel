@@ -40,8 +40,8 @@ class HomingConfig:
     hard-coding them.
     """
 
-    home_left_deg: float = 135.8504
-    home_right_deg: float = 44.1496
+    home_left_deg: float = 140.5406
+    home_right_deg: float = 39.4594
     home_tcp_mm: Tuple[float, float] = (0.0, 250.0)
     flag_radius_mm: float = 40.0
     limit_min_deg: float = -20.0

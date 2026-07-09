@@ -765,10 +765,10 @@ def _glue_tags() -> List[Tag]:
         desc="Homing timeout, ms (loaded into Home*_Tmr.PRE). Homing beyond this faults.",
         unit="ms", hand=True)
     add("HOME_OFFSET_L", "DINT", "0",
-        desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning.",
+        desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~140.54). Set at commissioning.",
         unit="steps", hand=True)
     add("HOME_OFFSET_R", "DINT", "0",
-        desc="Right switch angle * STEPS_PER_DEG (ActualRightDeg ~44.15). Set at commissioning.",
+        desc="Right switch angle * STEPS_PER_DEG (ActualRightDeg ~39.46). Set at commissioning.",
         unit="steps", hand=True)
     add("VAC_SETTLE", "DINT", "300", desc="Vacuum settle time, ms (VacTmr preset). Tune.",
         unit="ms", hand=True)
@@ -895,9 +895,9 @@ def _glue_tags() -> List[Tag]:
     add("DriveClearActive1", "BOOL",
         desc="R20: Motor 1 counterpart of DriveClearActive0.")
     add("HRB_ons", "BOOL", desc="ONS storage for the R30 bypass-home rung.")
-    add("HOME_ANGLE_L", "REAL", "135.8504", desc="Left home angle published on a "
+    add("HOME_ANGLE_L", "REAL", "140.5406", desc="Left home angle published on a "
         "bypass home, deg (nominal reference).", unit="deg", hand=True)
-    add("HOME_ANGLE_R", "REAL", "44.1496", desc="Right home angle published on a "
+    add("HOME_ANGLE_R", "REAL", "39.4594", desc="Right home angle published on a "
         "bypass home, deg (nominal reference).", unit="deg", hand=True)
 
     # --- the vision handshake surface (import the UDT files first) ---

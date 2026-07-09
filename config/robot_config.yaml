@@ -3,9 +3,9 @@
 # kinematic design review and supersede the original spec draft.
 
 geometry:
-  l1_mm: 220.0            # proximal link (shoulder -> elbow)
+  l1_mm: 200.0            # proximal link (shoulder -> elbow)
   l2_mm: 230.0            # distal link   (elbow -> TCP)
-  base_spacing_mm: 101.6  # 4 in, symmetric about the robot-frame origin
+  base_spacing_mm: 80.0   # 3.15 in, symmetric (narrowed by inverting L motor)
 
 assembly:
   # Best-conditioned branch (Claude.md §3.4): left elbow "up", right "down".
@@ -34,8 +34,8 @@ homing:
   # bracket at the home trip angle. Both shoulders share the same trip angles.
   # Mid-travel centre home (TCP = home_tcp_mm); the flag passes the sensor during
   # normal motion, so the PLC reads it only during the homing routine.
-  home_left_deg: 135.8504   # left shoulder angle at the home reference pose
-  home_right_deg: 44.1496   # right shoulder angle at the home reference pose
+  home_left_deg: 140.5406   # left shoulder angle at the home reference pose
+  home_right_deg: 39.4594   # right shoulder angle at the home reference pose
   home_tcp_mm: [0.0, 250.0] # TCP these angles correspond to (informational)
   flag_radius_mm: 40.0      # tab radius on L1 (sensor bracket reaches to this)
   # Hard travel limits — mirror joint_limits above; document the switch angles

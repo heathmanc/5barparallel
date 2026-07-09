@@ -28,8 +28,8 @@ points you refine at commissioning; `STEPS_PER_DEG` is fixed and
 
 | Tag | Type | Value to set | Unit | Notes |
 |---|---|---|---|---|
-| `HOME_OFFSET_L` | DINT | `0` | steps | Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~135.85). Set at commissioning. |
-| `HOME_OFFSET_R` | DINT | `0` | steps | Right switch angle * STEPS_PER_DEG (ActualRightDeg ~44.15). Set at commissioning. |
+| `HOME_OFFSET_L` | DINT | `0` | steps | Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~140.54). Set at commissioning. |
+| `HOME_OFFSET_R` | DINT | `0` | steps | Right switch angle * STEPS_PER_DEG (ActualRightDeg ~39.46). Set at commissioning. |
 
 ## Auto pick/place process timers (R50_Auto)
 

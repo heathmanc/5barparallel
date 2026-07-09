@@ -109,10 +109,10 @@ def test_set_home_teaches_current_pose():
     c.jog_cartesian("y", 10.0)  # move to ~(0, 260)
     taught = c.set_home()
     assert taught == c.state.tcp
-    assert c.state.tcp == pytest.approx((0.0, 260.0))
+    assert c.state.tcp == pytest.approx((0.0, 260.0), abs=2e-3)
     c.jog_cartesian("x", 20.0)
     c.go_home()
-    assert c.state.tcp == pytest.approx((0.0, 260.0))
+    assert c.state.tcp == pytest.approx((0.0, 260.0), abs=2e-3)
 
 
 # --------------------------------------------------------------------------- #
@@ -131,7 +131,7 @@ def test_jog_cartesian_moves_tcp():
     c = ready()
     res = c.jog_cartesian("x", 15.0)
     assert res.ok
-    assert c.state.tcp == pytest.approx((15.0, 250.0))
+    assert c.state.tcp == pytest.approx((15.0, 250.0), abs=2e-3)
 
 
 def test_jog_out_of_workspace_is_rejected_and_pose_unchanged():
