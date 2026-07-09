@@ -66,7 +66,8 @@ class VisionTab(QWidget):
         # Covers are detected with Hough circles (robust for a round cover on
         # grainy wood); size defaults fit a large cover. Tunable live in the sidebar.
         self.cover_detector = CoverDetector(
-            CoverDetectorConfig(method="hough", min_diameter_px=250, max_diameter_px=400))
+            CoverDetectorConfig(method="hough", min_diameter_px=250, max_diameter_px=400,
+                                reject_crowded=False))   # chute feeds one cover at a time
         self._pick_roi = None           # (x, y, w, h) px — covers must be inside
         self._frame = None
         self._display = None            # last rendered image (raw or overlay), for Save
@@ -409,6 +410,7 @@ class VisionTab(QWidget):
                 method="hough",
                 min_diameter_px=250,
                 max_diameter_px=400,
+                reject_crowded=False,          # chute feeds one cover at a time
                 expected_diameter_mm=diameter_mm,
                 diameter_tolerance=tolerance,
                 pick_roi=self._pick_roi,

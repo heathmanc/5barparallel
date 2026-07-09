@@ -36,6 +36,7 @@ class CoverDetectorConfig:
     threshold: Optional[int] = None       # None => Otsu
     edge_margin_px: float = 8.0           # reject covers this close to the frame border
     min_gap_px: float = 6.0               # min clear gap to a neighbour (else "crowded")
+    reject_crowded: bool = True           # reject a cover touching a neighbour (off for a chute)
     roi: Optional[ROI] = None
     # Operator-drawn pick region (x, y, w, h in pixels): covers centred outside it
     # are rejected ("outside pick region"). None => pick anywhere reachable.
@@ -159,12 +160,13 @@ class CoverDetector:
         m = cfg.edge_margin_px
         if c.cx - c.radius < m or c.cy - c.radius < m or c.cx + c.radius > w - m or c.cy + c.radius > h - m:
             return "near edge"
-        for o in others:
-            if o is c:
-                continue
-            dist = float(np.hypot(c.cx - o.cx, c.cy - o.cy))
-            if dist < c.radius + o.radius + cfg.min_gap_px:
-                return "crowded (touching neighbour)"
+        if cfg.reject_crowded:
+            for o in others:
+                if o is c:
+                    continue
+                dist = float(np.hypot(c.cx - o.cx, c.cy - o.cy))
+                if dist < c.radius + o.radius + cfg.min_gap_px:
+                    return "crowded (touching neighbour)"
         if cfg.expected_diameter_mm > 0 and diameter_mm is not None:
             lo = cfg.expected_diameter_mm * (1.0 - cfg.diameter_tolerance)
             hi = cfg.expected_diameter_mm * (1.0 + cfg.diameter_tolerance)
