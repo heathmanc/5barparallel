@@ -386,10 +386,19 @@ def annotate(
             else:
                 cv2.circle(out, ctr, int(circle.radius), color, 4)
             cv2.drawMarker(out, ctr, color, cv2.MARKER_CROSS, 20, 2)  # pickup point
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            left, top = ctr[0] - int(circle.radius), ctr[1] - int(circle.radius)
             reason = getattr(cd, "reason", "")
             if not ok and reason:                                # why it was rejected
-                cv2.putText(out, reason, (ctr[0] - int(circle.radius), ctr[1] - int(circle.radius) - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
+                cv2.putText(out, reason, (left, top - 30), font, 0.7, color, 2, cv2.LINE_AA)
+            # pixel center, and the robot-frame (x, y) the calibration maps it to
+            cv2.putText(out, f"px ({ctr[0]}, {ctr[1]})", (left, top - 8),
+                        font, 0.6, color, 2, cv2.LINE_AA)
+            robot_xy = getattr(cd, "robot_xy", None)
+            if robot_xy is not None:
+                cv2.putText(out, f"robot ({robot_xy[0]:.1f}, {robot_xy[1]:.1f}) mm",
+                            (left, ctr[1] + int(circle.radius) + 26),
+                            font, 0.7, color, 2, cv2.LINE_AA)
     return out
 
 
