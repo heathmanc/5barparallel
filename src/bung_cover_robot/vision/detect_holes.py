@@ -18,6 +18,7 @@ from .detection import (
     crop_roi,
     find_battery_roi,
     find_blobs,
+    find_round_objects,
     offset_circles,
 )
 
@@ -33,6 +34,12 @@ class HoleDetectorConfig:
     collinear_tol_px: float = 6.0         # max perpendicular residual to the fit line
     roi: Optional[ROI] = None
     auto_battery_roi: bool = True         # confine to the battery when no roi is set
+    # Finder: "shape" = region outline (color-agnostic — a hole may be dark OR
+    # bright-centered); "blob" = dark fill; "auto" = shape when confined to a
+    # battery/ROI, else blob.
+    method: str = "auto"
+    shape_min_circularity: float = 0.6
+    shape_min_solidity: float = 0.9
 
 
 @dataclass
@@ -57,12 +64,19 @@ class HoleDetector:
         roi = cfg.roi
         if roi is None and cfg.auto_battery_roi:
             roi = find_battery_roi(frame)
+        # Region outlines are color-agnostic; use them once confined to a region.
+        use_shape = cfg.method == "shape" or (
+            cfg.method == "auto" and roi is not None)
         sub, ox, oy = crop_roi(frame, roi)
-        circles = find_blobs(
-            sub, True, cfg.min_diameter_px, cfg.max_diameter_px,
-            cfg.min_circularity, cfg.blur,
-        )
-        circles = offset_circles(circles, ox, oy)
+        if use_shape:
+            found = find_round_objects(
+                sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
+                cfg.shape_min_circularity, cfg.shape_min_solidity)
+        else:
+            found = find_blobs(
+                sub, True, cfg.min_diameter_px, cfg.max_diameter_px,
+                cfg.min_circularity, cfg.blur)
+        circles = offset_circles(found, ox, oy)
 
         if len(circles) < 2:
             return HoleDetectionResult(circles, None, float("inf"), False,

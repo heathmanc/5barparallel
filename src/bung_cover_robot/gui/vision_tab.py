@@ -191,6 +191,7 @@ class VisionTab(QWidget):
             return
         self._frame = frame
         self.view.set_pixmap(ndarray_to_qpixmap(frame))
+        self._update_roi_buttons()      # a frame is enough to draw a pick region
 
     def _on_detect(self) -> None:
         if self._frame is None:
@@ -234,13 +235,13 @@ class VisionTab(QWidget):
         self.view.set_roi(roi)
 
     def _on_draw_roi(self) -> None:
-        if self.calibration is None:
-            self._set_status(
-                "Calibrate this recipe before drawing a pick region.", theme.WARN
-            )
-            return
+        # Drawing a pixel box needs a frame, not a calibration — a pick region is
+        # useful (and now the color-agnostic cover search area) with no cal at all.
         if self._frame is None:
             self._capture()
+        if self._frame is None:
+            self._set_status("Grab a frame first (connect the camera).", theme.WARN)
+            return
         self.view.set_draw_enabled(True)
         self._set_status("Drag a rectangle around the covers to pick.", theme.INFO)
 
@@ -273,12 +274,13 @@ class VisionTab(QWidget):
         )
 
     def _update_roi_buttons(self) -> None:
-        calibrated = self.calibration is not None
-        self.draw_roi_btn.setEnabled(calibrated)
+        can_draw = self._frame is not None or (
+            self.camera is not None and self.camera.is_open)
+        self.draw_roi_btn.setEnabled(can_draw)
         self.draw_roi_btn.setToolTip(
             "Drag a rectangle around where the covers are; covers outside it are "
-            "ignored." if calibrated
-            else "Calibrate this recipe first (Calibration tab)."
+            "ignored." if can_draw
+            else "Connect a camera or grab a frame first."
         )
         self.clear_roi_btn.setEnabled(self._pick_roi is not None)
 

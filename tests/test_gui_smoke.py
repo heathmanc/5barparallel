@@ -734,14 +734,15 @@ def test_vision_pick_roi_gates_and_persists(qapp, tmp_path):
     assert not vt.clear_roi_btn.isEnabled()
 
 
-def test_vision_pick_roi_draw_gated_on_calibration(qapp):
+def test_vision_pick_roi_draw_without_calibration(qapp):
     win = MainWindow()
     vt = win.vision_tab
-    vt.set_calibration(None)             # no calibration -> can't draw
-    assert not vt.draw_roi_btn.isEnabled()
+    vt.set_calibration(None)             # a pixel box needs no calibration
+    vt._update_roi_buttons()
+    assert vt.draw_roi_btn.isEnabled()   # camera is open -> can draw
     vt._on_draw_roi()
-    assert not vt.view.is_drawing()
-    assert "Calibrate" in vt.status_label.text()
+    assert vt.view.is_drawing()
+    assert vt._frame is not None
 
 
 def test_roi_image_view_set_and_clear(qapp):

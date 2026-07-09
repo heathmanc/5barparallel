@@ -85,16 +85,61 @@ def test_cover_near_edge_rejected():
     assert any("edge" in r for cx, r in reasons.items() if cx < 40)
 
 
-def test_cover_outside_pick_roi_rejected():
+def test_cover_search_confined_to_pick_region():
+    # method "auto" + a pick region => color-agnostic shape search, cropped to it.
     img = np.full((300, 300, 3), 20, np.uint8)
     cv2.circle(img, (100, 150), 18, (180, 180, 180), -1)   # inside the region
     cv2.circle(img, (240, 150), 18, (180, 180, 180), -1)   # outside the region
     cfg = CoverDetectorConfig(pick_roi=(60, 100, 100, 100))  # x 60..160, y 100..200
     res = CoverDetector(cfg).detect(img)
+    xs = sorted(round(c.circle.cx) for c in res.covers)
+    assert xs and all(abs(x - 100) <= 5 for x in xs)   # only the in-region cover
+    assert res.accepted and res.accepted[0].accepted
+
+
+def test_cover_outside_pick_roi_rejected_blob():
+    # legacy blob path still detects everywhere and rejects outside-region covers.
+    img = np.full((300, 300, 3), 20, np.uint8)
+    cv2.circle(img, (100, 150), 18, (180, 180, 180), -1)
+    cv2.circle(img, (240, 150), 18, (180, 180, 180), -1)
+    cfg = CoverDetectorConfig(pick_roi=(60, 100, 100, 100), method="blob")
+    res = CoverDetector(cfg).detect(img)
     by_x = {round(c.circle.cx): c for c in res.covers}
     assert by_x[100].accepted
     assert not by_x[240].accepted
     assert by_x[240].reason == "outside pick region"
+
+
+def test_shape_finder_is_color_and_shape_agnostic():
+    # a D-shaped DARK cover and a D-shaped BRIGHT cover (the two color extremes) —
+    # both found by their outline regardless of fill, flat side included (solidity
+    # tolerates a D). A dark-fill blob detector would miss the bright one, and a
+    # bright-fill one would miss the dark one.
+    from bung_cover_robot.vision.detection import find_round_objects
+
+    img = np.full((240, 420, 3), 128, np.uint8)
+    specs = [(110, 120, (20, 20, 20)), (300, 120, (235, 235, 235))]
+    for cx, cy, col in specs:
+        cv2.circle(img, (cx, cy), 42, col, -1)
+        cv2.rectangle(img, (cx + 28, cy - 42), (cx + 64, cy + 42), (128, 128, 128), -1)  # flat side (D)
+    found = find_round_objects(img, 55, 110)
+    xs = sorted(round(c.cx) for c in found)
+    for cx, _, _ in specs:
+        assert any(abs(fx - cx) <= 14 for fx in xs), f"missed object near {cx}: {xs}"
+
+
+def test_hole_detector_finds_bright_centered_holes():
+    # the real failure case: dark RING + BRIGHT center. Blob(dark) chokes; shape wins.
+    img = np.full((200, 460, 3), 70, np.uint8)
+    for x in (90, 200, 310):                                    # >= 2, collinear
+        cv2.circle(img, (x, 100), 26, (15, 15, 15), 5)          # dark ring
+        cv2.circle(img, (x, 100), 18, (240, 240, 240), -1)      # bright center
+    cfg = HoleDetectorConfig(
+        expected_count=3, roi=(50, 55, 320, 90),
+        min_diameter_px=30, max_diameter_px=70, collinear_tol_px=8.0,
+    )
+    res = HoleDetector(cfg).detect(img)
+    assert res.count == 3 and res.ok
 
 
 def test_cover_reachability_filter():

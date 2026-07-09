@@ -175,6 +175,71 @@ def find_blobs(
     return out
 
 
+def find_round_objects(
+    frame: np.ndarray,
+    min_diameter: float,
+    max_diameter: float,
+    blur: int = 5,
+    min_circularity: float = 0.6,
+    min_solidity: float = 0.9,
+) -> List[Circle]:
+    """Round-ish objects by their outline — color- and (partly) shape-agnostic.
+
+    Segments the region (Otsu, tried BOTH polarities so it finds an object that
+    is darker *or* brighter than its background), closes internal features (a
+    bright center, small holes/vents, a flat spot), then keeps blobs that are the
+    right size and **convex** (``solidity`` = area / convex-hull area). Solidity
+    tolerates a D-shaped (flat-sided) cover — which is still convex — while
+    rejecting wood grain and clutter, and the reported centre is the region
+    centroid (the right vacuum-pickup point for a D), not a circle centre.
+
+    ``min_circularity`` is relaxed (0.6) so a flat-sided disk still passes.
+    """
+    import cv2
+
+    gray = _gray_blur(frame, blur)
+    # Edge gradient is polarity-independent: a boundary shows up whether the object
+    # is darker OR brighter than its background. Median-seeded Canny + a close to
+    # bridge small gaps (and the flat side of a D) into a shut outline.
+    med = float(np.median(gray))
+    lo = int(max(0.0, 0.50 * med))
+    hi = int(min(255.0, max(lo + 1.0, 1.30 * med)))
+    edges = cv2.Canny(gray, lo, hi)
+    ksz = max(3, (int(min_diameter / 4) | 1))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz))
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+    height, width = gray.shape[:2]
+    out: List[Circle] = []
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area <= 0.0:
+            continue
+        x, y, w, h = cv2.boundingRect(cnt)
+        if x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1:
+            continue                          # touches the border => background, not an object
+        (_, _), r = cv2.minEnclosingCircle(cnt)
+        if not (min_diameter <= 2.0 * r <= max_diameter):
+            continue
+        peri = cv2.arcLength(cnt, True)
+        if peri <= 0.0:
+            continue
+        circ = 4.0 * math.pi * area / (peri * peri)
+        hull_area = cv2.contourArea(cv2.convexHull(cnt))
+        solidity = area / hull_area if hull_area > 0.0 else 0.0
+        if circ < min_circularity or solidity < min_solidity:
+            continue
+        m = cv2.moments(cnt)
+        if m["m00"] == 0.0:
+            continue
+        cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+        if any(math.hypot(cx - o.cx, cy - o.cy) < min_diameter * 0.5 for o in out):
+            continue
+        out.append(Circle(float(cx), float(cy), float(r), float(area), float(circ)))
+    return out
+
+
 def offset_circles(circles: Sequence[Circle], ox: int, oy: int) -> List[Circle]:
     if ox == 0 and oy == 0:
         return list(circles)

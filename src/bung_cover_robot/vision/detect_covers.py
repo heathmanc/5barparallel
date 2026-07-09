@@ -13,7 +13,14 @@ from typing import Callable, List, Optional, Tuple
 import numpy as np
 
 from ..robot.workspace import WorkspaceValidator
-from .detection import ROI, Circle, crop_roi, find_blobs, offset_circles
+from .detection import (
+    ROI,
+    Circle,
+    crop_roi,
+    find_blobs,
+    find_round_objects,
+    offset_circles,
+)
 
 # pixel (cx, cy) -> robot-frame (x, y) mm; supplied by calibration when available.
 PixelToRobot = Callable[[float, float], Tuple[float, float]]
@@ -22,7 +29,7 @@ PixelToRobot = Callable[[float, float], Tuple[float, float]]
 @dataclass
 class CoverDetectorConfig:
     min_diameter_px: float = 15.0
-    max_diameter_px: float = 80.0
+    max_diameter_px: float = 160.0        # covers can be large in a close overhead view
     min_circularity: float = 0.75
     blur: int = 5
     threshold: Optional[int] = None       # None => Otsu
@@ -32,6 +39,12 @@ class CoverDetectorConfig:
     # Operator-drawn pick region (x, y, w, h in pixels): covers centred outside it
     # are rejected ("outside pick region"). None => pick anywhere reachable.
     pick_roi: Optional[ROI] = None
+    # Finder: "shape" = region outline (color-agnostic, D-shape tolerant); "blob" =
+    # dark/bright fill; "auto" = shape when a pick region is drawn (search confined
+    # to it), else blob. Covers vary in color AND are D-shaped, so shape-in-region.
+    method: str = "auto"
+    shape_min_circularity: float = 0.6    # relaxed so a flat-sided (D) cover passes
+    shape_min_solidity: float = 0.9       # convexity: rejects grain, keeps a D
     # Physical-size gate (per recipe): reject blobs whose real diameter is off the
     # expected cover size. Needs a calibration (to_robot); 0 disables the check.
     expected_diameter_mm: float = 0.0
@@ -77,12 +90,21 @@ class CoverDetector:
         """
         cfg = self.config
         h, w = frame.shape[:2]
-        sub, ox, oy = crop_roi(frame, cfg.roi)
-        circles = offset_circles(
-            find_blobs(sub, False, cfg.min_diameter_px, cfg.max_diameter_px,
-                       cfg.min_circularity, cfg.blur),
-            ox, oy,
-        )
+        # Region (outline) finding is color- and D-shape-agnostic; confine it to the
+        # pick region so clutter can't accumulate. "auto" uses it once a pick region
+        # is drawn.
+        use_shape = cfg.method == "shape" or (
+            cfg.method == "auto" and cfg.pick_roi is not None)
+        region = cfg.pick_roi if (use_shape and cfg.pick_roi is not None) else cfg.roi
+        sub, ox, oy = crop_roi(frame, region)
+        if use_shape:
+            found = find_round_objects(
+                sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
+                cfg.shape_min_circularity, cfg.shape_min_solidity)
+        else:
+            found = find_blobs(sub, False, cfg.min_diameter_px, cfg.max_diameter_px,
+                               cfg.min_circularity, cfg.blur)
+        circles = offset_circles(found, ox, oy)
 
         covers: List[CoverDetection] = []
         for c in circles:
