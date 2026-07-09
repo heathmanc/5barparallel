@@ -209,6 +209,14 @@ class VisionTab(QWidget):
         self.tune_votes = self._tune_row(grid, 3, "Votes", 20, 90, int(cfg.hough_param2))
         for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_votes):
             s.valueChanged.connect(self._on_tuning_changed)
+        self.show_holes_chk = QCheckBox("Show drop holes")
+        self.show_holes_chk.setChecked(True)
+        self.show_holes_chk.setToolTip(
+            "Overlay the detected drop holes (where the bungs go) — gated on the "
+            "recipe's hole diameter, separate from the cover size."
+        )
+        self.show_holes_chk.toggled.connect(self._on_tuning_changed)
+        grid.addWidget(self.show_holes_chk, 4, 0, 1, 3)
         return box
 
     def _tune_row(self, grid: QGridLayout, row: int, label: str,
@@ -287,6 +295,8 @@ class VisionTab(QWidget):
         to_robot = self.calibration.pixel_to_robot if self.calibration else None
         validator = self.controller.validator if self.calibration else None
         covers = self.cover_detector.detect(self._frame, to_robot, validator)
+        show_holes = getattr(self, "show_holes_chk", None) and self.show_holes_chk.isChecked()
+        holes = self.hole_detector.detect(self._frame, to_robot) if show_holes else None
         base = self._frame
         if self.calibration is not None:
             def _r2p(x, y):
@@ -295,17 +305,16 @@ class VisionTab(QWidget):
             base = draw_robot_grid(
                 self._frame, self.calibration.pixel_to_robot, _r2p, 25.0)
             base = draw_reachable_zone(base, self._reachable_contours(), _r2p)
-        overlay = annotate(base, None, covers.covers)
+        overlay = annotate(base, holes.holes if holes else None, covers.covers)
         self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         reach = " reachable" if self.calibration else " pickable"
         why = ""
         if covers.count and not covers.accepted:
             why = f" — rejected: {covers.covers[0].reason}"
+        holes_txt = f"{holes.count} holes · " if holes else ""
         self._set_status(
-            f"{covers.count} covers, {len(covers.accepted)}{reach} "
-            f"(Ø {int(self.cover_detector.config.min_diameter_px)}–"
-            f"{int(self.cover_detector.config.max_diameter_px)} px){why}.",
+            f"{holes_txt}{covers.count} covers, {len(covers.accepted)}{reach}{why}.",
             theme.SUCCESS if covers.accepted else theme.WARN,
         )
 
@@ -419,9 +428,13 @@ class VisionTab(QWidget):
             self.recipe_combo.setCurrentIndex(idx)
         self.recipe_combo.blockSignals(False)
 
-    def set_hole_count(self, count: int) -> None:
-        """Apply the active recipe's expected vent-hole count to the detector."""
-        self.hole_detector = HoleDetector(HoleDetectorConfig(expected_count=count))
+    def set_hole_count(self, count: int, diameter_mm: float = 0.0,
+                       tolerance: float = 0.25) -> None:
+        """Apply the recipe's vent-hole count and drop-hole diameter (a separate
+        size from the cover — a shouldered bung is wider than its hole)."""
+        self.hole_detector = HoleDetector(HoleDetectorConfig(
+            expected_count=count, expected_diameter_mm=diameter_mm,
+            diameter_tolerance=tolerance))
 
     def set_cover_diameter_mm(self, diameter_mm: float, tolerance: float = 0.25) -> None:
         """Apply the active recipe's nominal cover (bung) size + size tolerance as a

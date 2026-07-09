@@ -40,6 +40,10 @@ class HoleDetectorConfig:
     method: str = "auto"
     shape_min_circularity: float = 0.6
     shape_min_solidity: float = 0.9
+    # Physical-size gate (per recipe): reject blobs whose real diameter is off the
+    # expected drop-hole size. Needs a calibration (to_robot); 0 disables.
+    expected_diameter_mm: float = 0.0
+    diameter_tolerance: float = 0.25
 
 
 @dataclass
@@ -59,7 +63,7 @@ class HoleDetector:
     def __init__(self, config: Optional[HoleDetectorConfig] = None) -> None:
         self.config = config or HoleDetectorConfig()
 
-    def detect(self, frame: np.ndarray) -> HoleDetectionResult:
+    def detect(self, frame: np.ndarray, to_robot=None) -> HoleDetectionResult:
         cfg = self.config
         roi = cfg.roi
         if roi is None and cfg.auto_battery_roi:
@@ -78,6 +82,13 @@ class HoleDetector:
                 cfg.min_circularity, cfg.blur)
         circles = offset_circles(found, ox, oy)
 
+        # Physical-size gate: keep only blobs the right real diameter (drop-hole).
+        if cfg.expected_diameter_mm > 0 and to_robot is not None:
+            lo = cfg.expected_diameter_mm * (1.0 - cfg.diameter_tolerance)
+            hi = cfg.expected_diameter_mm * (1.0 + cfg.diameter_tolerance)
+            circles = [c for c in circles
+                       if lo <= _diameter_mm(c, to_robot) <= hi]
+
         if len(circles) < 2:
             return HoleDetectionResult(circles, None, float("inf"), False,
                                        f"found {len(circles)} holes (need >= 2 to fit)")
@@ -92,6 +103,15 @@ class HoleDetector:
         else:
             reason = "ok"
         return HoleDetectionResult(holes, line, residual, ok, reason)
+
+
+def _diameter_mm(c: Circle, to_robot) -> float:
+    """Real diameter (mm) via the calibration — mean of the x- and y-spans."""
+    ax, bx = to_robot(c.cx - c.radius, c.cy), to_robot(c.cx + c.radius, c.cy)
+    ay, by = to_robot(c.cx, c.cy - c.radius), to_robot(c.cx, c.cy + c.radius)
+    dx = float(np.hypot(bx[0] - ax[0], bx[1] - ax[1]))
+    dy = float(np.hypot(by[0] - ay[0], by[1] - ay[1]))
+    return 0.5 * (dx + dy)
 
 
 def _fit_line(circles: List[Circle]):

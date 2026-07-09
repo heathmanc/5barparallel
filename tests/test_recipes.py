@@ -34,11 +34,20 @@ def test_recipe_diameter_tolerance_default_and_validation():
 def test_recipe_params_roundtrip():
     r = Recipe(
         key="g65-8", name="Group 65", hole_count=8,
-        cover_diameter_mm=22.5, diameter_tolerance=0.15,
+        cover_diameter_mm=22.5, hole_diameter_mm=16.0, diameter_tolerance=0.15,
     )
     d = r.to_dict()
     assert d["diameter_tolerance"] == pytest.approx(0.15)
+    assert d["hole_diameter_mm"] == pytest.approx(16.0)
     assert Recipe.from_dict(d) == r
+
+
+def test_recipe_hole_diameter_separate_from_cover():
+    r = Recipe(key="g31-6", name="G31", cover_diameter_mm=25.0, hole_diameter_mm=18.0)
+    assert r.cover_diameter_mm == 25.0 and r.hole_diameter_mm == 18.0
+    assert Recipe.from_dict({"key": "x", "name": "x"}).hole_diameter_mm == 0.0
+    with pytest.raises(RecipeError):
+        Recipe(key="x", name="x", hole_diameter_mm=-1.0)
 
 
 def test_slugify_key():

@@ -36,8 +36,11 @@ class Recipe:
     name: str                      # human-readable label
     hole_count: int = 6            # expected vent holes (feeds the hole detector)
     cover_diameter_mm: float = 0.0  # nominal cover (bung) size (0 = size gate off)
-    # Physical-size gate half-width: a detected cover is accepted only if its real
-    # diameter is cover_diameter_mm * (1 +/- diameter_tolerance). 0.2 = +/-20%.
+    # A shouldered bung cover is wider than the hole it seats in, so the pick target
+    # (cover) and the drop target (hole) are gated on separate diameters.
+    hole_diameter_mm: float = 0.0   # nominal drop-hole size (0 = size gate off)
+    # Physical-size gate half-width: a detected cover/hole is accepted only if its
+    # real diameter is nominal * (1 +/- diameter_tolerance). 0.2 = +/-20%.
     diameter_tolerance: float = 0.2
 
     def __post_init__(self) -> None:
@@ -49,6 +52,8 @@ class Recipe:
             raise RecipeError("hole_count must be >= 1")
         if self.cover_diameter_mm < 0:
             raise RecipeError("cover_diameter_mm must be >= 0")
+        if self.hole_diameter_mm < 0:
+            raise RecipeError("hole_diameter_mm must be >= 0")
         if not 0.0 < self.diameter_tolerance <= 1.0:
             raise RecipeError("diameter_tolerance must be in (0, 1]")
 
@@ -59,6 +64,7 @@ class Recipe:
             name=str(data.get("name", data["key"])),
             hole_count=int(data.get("hole_count", 6)),
             cover_diameter_mm=float(data.get("cover_diameter_mm", 0.0)),
+            hole_diameter_mm=float(data.get("hole_diameter_mm", 0.0)),
             diameter_tolerance=float(data.get("diameter_tolerance", 0.2)),
         )
 
@@ -68,6 +74,7 @@ class Recipe:
             "name": self.name,
             "hole_count": self.hole_count,
             "cover_diameter_mm": self.cover_diameter_mm,
+            "hole_diameter_mm": self.hole_diameter_mm,
             "diameter_tolerance": self.diameter_tolerance,
         }
 

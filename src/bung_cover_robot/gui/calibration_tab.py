@@ -255,8 +255,17 @@ class CalibrationTab(QWidget):
         self.bung_dia_spin.setSingleStep(0.5)
         self.bung_dia_spin.setSuffix(" mm")
         self.bung_dia_spin.setToolTip(
-            "Nominal cover/bung diameter. 0 = no size gate. Needs a calibration to "
-            "measure real size."
+            "Nominal cover/bung diameter (the picked part, incl. shoulder). 0 = no "
+            "size gate. Needs a calibration to measure real size."
+        )
+        self.hole_dia_spin = QDoubleSpinBox()
+        self.hole_dia_spin.setRange(0.0, 200.0)
+        self.hole_dia_spin.setDecimals(1)
+        self.hole_dia_spin.setSingleStep(0.5)
+        self.hole_dia_spin.setSuffix(" mm")
+        self.hole_dia_spin.setToolTip(
+            "Nominal drop-hole diameter (where the bung seats — smaller than the "
+            "cover). 0 = no size gate."
         )
         self.tol_spin = QDoubleSpinBox()
         self.tol_spin.setRange(1.0, 100.0)
@@ -268,6 +277,7 @@ class CalibrationTab(QWidget):
         )
         form.addRow("Vent holes", self.hole_count_spin)
         form.addRow("Bung diameter", self.bung_dia_spin)
+        form.addRow("Hole diameter", self.hole_dia_spin)
         form.addRow("Size tolerance", self.tol_spin)
         self.save_params_btn = QPushButton("Save recipe settings")
         self.save_params_btn.clicked.connect(self._on_save_recipe_params)
@@ -499,6 +509,7 @@ class CalibrationTab(QWidget):
         for spin, val in (
             (self.hole_count_spin, r.hole_count),
             (self.bung_dia_spin, r.cover_diameter_mm),
+            (self.hole_dia_spin, r.hole_diameter_mm),
             (self.tol_spin, round(r.diameter_tolerance * 100.0)),
         ):
             spin.blockSignals(True)
@@ -519,6 +530,7 @@ class CalibrationTab(QWidget):
                     name=name,
                     hole_count=int(self.hole_count_spin.value()),
                     cover_diameter_mm=float(self.bung_dia_spin.value()),
+                    hole_diameter_mm=float(self.hole_dia_spin.value()),
                     diameter_tolerance=max(0.01, self.tol_spin.value() / 100.0),
                 )
             )
@@ -550,6 +562,7 @@ class CalibrationTab(QWidget):
                     name=name,
                     hole_count=int(self.hole_count_spin.value()),
                     cover_diameter_mm=float(self.bung_dia_spin.value()),
+                    hole_diameter_mm=float(self.hole_dia_spin.value()),
                     diameter_tolerance=max(0.01, self.tol_spin.value() / 100.0),
                 )
             )
