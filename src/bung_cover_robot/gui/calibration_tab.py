@@ -15,6 +15,7 @@ it up live when it's the active recipe.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, Signal
@@ -522,12 +523,13 @@ class CalibrationTab(QWidget):
         if not key or not self.recipes.has(key):
             self._set_status("Select a recipe first.", theme.WARN)
             return
-        name = self.recipes.get(key).name
         try:
+            # Update only the editor's fields — preserve everything else on the
+            # recipe (notably the Vision-tab pixel-slider tuning) so saving the
+            # diameters/count here doesn't reset the detection sliders.
             self.recipes.add(
-                Recipe(
-                    key=key,
-                    name=name,
+                replace(
+                    self.recipes.get(key),
                     hole_count=int(self.hole_count_spin.value()),
                     cover_diameter_mm=float(self.bung_dia_spin.value()),
                     hole_diameter_mm=float(self.hole_dia_spin.value()),

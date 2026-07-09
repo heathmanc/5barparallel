@@ -876,6 +876,27 @@ def test_detection_sliders_save_and_load_per_recipe(qapp, tmp_path):
     assert vt.hole_detector.config.max_diameter_px == pytest.approx(180)
 
 
+def test_calibration_param_save_preserves_detection_tuning(qapp, tmp_path):
+    win = MainWindow(config_dir=tmp_path)
+    vt, ct = win.vision_tab, win.calibration_tab
+    key = win.recipes.list()[0].key
+    vt.select_recipe(key)
+    win._apply_recipe(key)
+
+    # dial a custom cover window on the Vision sliders and save it to the recipe
+    vt.tune_min.setValue(310)
+    vt._save_tuning_to_recipe()
+    assert win.recipes.get(key).cover_min_px == 310
+
+    # editing the diameters/count in the Calibration tab must NOT reset the px tuning
+    ct.recipe_combo.setCurrentIndex(ct.recipe_combo.findData(key))
+    ct.bung_dia_spin.setValue(20.0)
+    ct._on_save_recipe_params()
+    assert win.recipes.get(key).cover_min_px == 310          # tuning preserved
+    assert win.recipes.get(key).cover_diameter_mm == 20.0    # edit applied
+    assert vt.tune_min.value() == 310                        # slider didn't revert
+
+
 def test_hole_size_sliders_drive_hole_detector(qapp):
     win = MainWindow()
     vt = win.vision_tab
