@@ -226,6 +226,12 @@ class VisionTab(QWidget):
         )
         self.show_holes_chk.toggled.connect(self._on_tuning_changed)
         grid.addWidget(self.show_holes_chk, 4, 0, 1, 3)
+        # Drop holes are a SEPARATE (smaller) size from the covers, so they get
+        # their own pixel-Ø window — the cover window (250-400) would miss them.
+        self.tune_hole_min = self._tune_row(grid, 5, "Hole min Ø", 15, 500, 30)
+        self.tune_hole_max = self._tune_row(grid, 6, "Hole max Ø", 15, 500, 220)
+        for s in (self.tune_hole_min, self.tune_hole_max):
+            s.valueChanged.connect(self._on_tuning_changed)
         return box
 
     def _tune_row(self, grid: QGridLayout, row: int, label: str,
@@ -254,8 +260,23 @@ class VisionTab(QWidget):
         cfg.hough_param1 = max(20.0, 170.0 - 1.4 * s)   # more sens -> softer edges
         cfg.hough_param2 = float(self.tune_votes.value())
 
+    def _hole_size_window(self) -> tuple:
+        """Drop-hole (min, max) pixel Ø from the sliders, or a broad default."""
+        if not hasattr(self, "tune_hole_min"):
+            return 15.0, 220.0
+        lo = float(self.tune_hole_min.value())
+        hi = float(max(self.tune_hole_max.value(), lo + 1))
+        return lo, hi
+
+    def _apply_hole_tuning(self) -> None:
+        """Push the drop-hole pixel-Ø window into the current hole detector."""
+        lo, hi = self._hole_size_window()
+        self.hole_detector.config.min_diameter_px = lo
+        self.hole_detector.config.max_diameter_px = hi
+
     def _on_tuning_changed(self) -> None:
         self._apply_tuning()
+        self._apply_hole_tuning()
         if self._frame is not None:
             self._on_detect()
 
@@ -316,7 +337,8 @@ class VisionTab(QWidget):
 
         hc = self.hole_detector.config
         lines += ["Hole detector:",
-                  f"  method={hc.method}  expected_count={hc.expected_count}"
+                  f"  method={hc.method}  Ø {hc.min_diameter_px:.0f}-{hc.max_diameter_px:.0f} px"
+                  f"  expected_count={hc.expected_count}"
                   f"  expected {hc.expected_diameter_mm:.1f} mm ± {hc.diameter_tolerance*100:.0f}%",
                   f"  exclude_roi(px)={hc.exclude_roi}  subset={hc.select_collinear_subset}"
                   f"  auto_battery_roi={hc.auto_battery_roi}"]
@@ -528,10 +550,12 @@ class VisionTab(QWidget):
         Drop holes are searched across the whole frame (not confined to a bright
         battery blob, which would lock onto the covers) and the pick region is
         excluded; the straight row is kept via collinear-subset selection."""
+        lo, hi = self._hole_size_window()
         self.hole_detector = HoleDetector(HoleDetectorConfig(
             expected_count=count, expected_diameter_mm=diameter_mm,
             diameter_tolerance=tolerance, method="shape", auto_battery_roi=False,
-            select_collinear_subset=True, exclude_roi=self._pick_roi))
+            select_collinear_subset=True, exclude_roi=self._pick_roi,
+            min_diameter_px=lo, max_diameter_px=hi))
 
     def set_cover_diameter_mm(self, diameter_mm: float, tolerance: float = 0.25) -> None:
         """Apply the active recipe's nominal cover (bung) size + size tolerance as a

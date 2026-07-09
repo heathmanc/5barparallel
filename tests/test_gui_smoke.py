@@ -790,6 +790,20 @@ def test_holes_searched_full_frame_outside_pick_region(qapp):
     assert vt.hole_detector.config.exclude_roi == (10, 20, 100, 80)
 
 
+def test_hole_size_sliders_drive_hole_detector(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    vt._capture()
+    # Drop holes have their own pixel-Ø window, independent of the cover size.
+    vt.tune_hole_min.setValue(40)
+    vt.tune_hole_max.setValue(180)
+    assert vt.hole_detector.config.min_diameter_px == pytest.approx(40)
+    assert vt.hole_detector.config.max_diameter_px == pytest.approx(180)
+    # a recipe re-apply rebuilds the detector but keeps the slider window
+    vt.set_hole_count(6, diameter_mm=0.0)
+    assert vt.hole_detector.config.max_diameter_px == pytest.approx(180)
+
+
 def test_recipe_save_propagates_bung_size_to_detector(qapp):
     win = MainWindow()
     ct, vt = win.calibration_tab, win.vision_tab
