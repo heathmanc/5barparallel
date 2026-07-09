@@ -273,6 +273,14 @@ values — so all of these start at 0/false):
 > `ActualDeg = (Motor*_CommandedPosn + HOME_OFFSET) / STEPS_PER_DEG` reads the
 > true shoulder angle (`plc_program.md` §5, `plc_homing.md`).
 
+> **Back up / restore the commissioning constants (disaster recovery).** Studio
+> 5000 does **not** restore the set-by-hand tuning tags (`HOME_OFFSET_L/R`,
+> `HOME_ANGLE_L/R`, `HOME_VEL_*`, `MOVE_*`, `VAC_SETTLE`, timeouts, …) on a
+> program download. Once they're dialed in, open **PLC tab → Commissioning
+> constants** and click **Read from PLC (snapshot)** — it saves the live set to
+> `config/plc_constants.yaml`. If the controller is later reloaded or cleared,
+> **Push to PLC** writes the whole saved set back in one shot.
+
 ---
 
 ## 7. Commission (in this order)

@@ -17,3 +17,6 @@ calibration/*.roi.json
 # Diagnostic images
 diagnostics/
 *.diag.png
+
+# Operator-specific PLC commissioning values (HOME_OFFSET, tuned speeds, ...)
+config/plc_constants.yaml

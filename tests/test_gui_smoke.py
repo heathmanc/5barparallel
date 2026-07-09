@@ -260,6 +260,47 @@ def test_plc_tab_connect_simulated_and_disconnect(qapp):
     assert "dry-run" in plc.status_label.text()
 
 
+def test_plc_tab_push_constants_to_simulated_plc(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from bung_cover_robot.plc import (
+        COMMISSIONING_CONSTANTS,
+        PlcConstantStore,
+        read_constants,
+    )
+
+    win = MainWindow()
+    plc = win.plc_tab
+    assert plc.const_table.rowCount() == len(COMMISSIONING_CONSTANTS)
+    # read/push are disabled until a PLC is connected
+    assert not plc.const_push_btn.isEnabled()
+    assert not plc.const_read_btn.isEnabled()
+
+    # isolate persistence to a tmp file and reseed from it
+    plc.const_store = PlcConstantStore.load(tmp_path / "plc_constants.yaml")
+    plc._seed_constants_table()
+
+    plc._on_connect_sim()
+    assert plc.const_push_btn.isEnabled()
+
+    idx = [c.name for c in COMMISSIONING_CONSTANTS].index("HOME_OFFSET_L")
+    plc.const_table.item(idx, 1).setText("3748")
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    plc._on_const_push()
+    assert "Pushed all" in plc.const_status.text()
+
+    client = win.controller.driver.client
+    assert read_constants(client)["HOME_OFFSET_L"] == 3748
+
+    # a snapshot reads them back and persists the backup file
+    plc._on_const_read()
+    assert (tmp_path / "plc_constants.yaml").exists()
+    reloaded = PlcConstantStore.load(tmp_path / "plc_constants.yaml")
+    assert reloaded.get("HOME_OFFSET_L") == 3748
+
+
 def test_plc_tab_connect_real_without_pycomm3_shows_error(qapp):
     from bung_cover_robot.robot.driver import DryRunRobotDriver
 

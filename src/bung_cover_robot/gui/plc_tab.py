@@ -11,9 +11,10 @@ generated from plc.tags.TAG_SPECS so it can't drift from the code.
 
 from __future__ import annotations
 
-from typing import Optional
+from pathlib import Path
+from typing import Dict, Optional
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -32,10 +34,14 @@ from PySide6.QtWidgets import (
 
 from ..app.robot_test_controller import RobotTestController
 from ..plc import (
+    COMMISSIONING_CONSTANTS,
     CompactLogixClient,
+    PlcConstantStore,
     PlcError,
     PlcRobotDriver,
     SimulatedPlcClient,
+    push_constants,
+    read_constants,
 )
 from ..plc import tags as T
 from ..robot.driver import DryRunRobotDriver
@@ -43,6 +49,10 @@ from ..robot.driver import DryRunRobotDriver
 _COLUMNS = ["Group", "Tag", "Type", "Direction", "Description"]
 _CMD_TINT = QColor("#1e2b3d")     # PC → PLC
 _STATUS_TINT = QColor("#1d2e22")  # PLC → PC
+_OK_TINT = QColor("#1d2e22")
+_FAIL_TINT = QColor("#3d1e22")
+# Operator-specific machine values (HOME_OFFSET, tuned speeds, ...); git-ignored.
+_CONST_PATH = Path(__file__).resolve().parents[3] / "config" / "plc_constants.yaml"
 
 
 class PlcTab(QWidget):
@@ -55,9 +65,11 @@ class PlcTab(QWidget):
     ) -> None:
         super().__init__(parent)
         self.controller = controller
+        self.const_store = PlcConstantStore.load(_CONST_PATH)
 
         root = QVBoxLayout(self)
         root.addWidget(self._build_connection_group())
+        root.addWidget(self._build_constants_group())
         root.addWidget(self._build_contract_header())
         self.table = self._build_table(T.TAG_SPECS)
         root.addWidget(self.table)
@@ -148,6 +160,174 @@ class PlcTab(QWidget):
             if ok
             else "color: #f85149; font-weight: bold;"
         )
+
+    # --- commissioning constants (disaster recovery) ------------------------
+    def _build_constants_group(self) -> QGroupBox:
+        box = QGroupBox("Commissioning constants — push to PLC (disaster recovery)")
+        v = QVBoxLayout(box)
+        v.addWidget(QLabel(
+            "Set-by-hand tuning/home values Studio 5000 does NOT restore on a "
+            "download. Snapshot the live set after commissioning, then Push to "
+            "restore it if the controller is reloaded or cleared. Needs a "
+            "connected PLC (simulated or real)."
+        ))
+        cols = ["Tag", "Value", "Unit", "Live PLC"]
+        self.const_table = QTableWidget(len(COMMISSIONING_CONSTANTS), len(cols))
+        self.const_table.setHorizontalHeaderLabels(cols)
+        self.const_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.const_table.verticalHeader().setVisible(False)
+        self.const_table.setAlternatingRowColors(True)
+        self.const_table.setMaximumHeight(230)
+        self._seed_constants_table()
+        header = self.const_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        v.addWidget(self.const_table)
+
+        row = QHBoxLayout()
+        self.const_read_btn = QPushButton("Read from PLC (snapshot)")
+        self.const_push_btn = QPushButton("Push to PLC…")
+        save_btn = QPushButton("Save values")
+        self.const_read_btn.clicked.connect(self._on_const_read)
+        self.const_push_btn.clicked.connect(self._on_const_push)
+        save_btn.clicked.connect(self._on_const_save)
+        for b in (self.const_read_btn, self.const_push_btn, save_btn):
+            row.addWidget(b)
+        row.addStretch(1)
+        v.addLayout(row)
+
+        self.const_status = QLabel()
+        v.addWidget(self.const_status)
+
+        self.connectionChanged.connect(self._refresh_const_enabled)
+        self._refresh_const_enabled()
+        return box
+
+    def _seed_constants_table(self) -> None:
+        ro = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        for r, c in enumerate(COMMISSIONING_CONSTANTS):
+            name = QTableWidgetItem(c.name)
+            name.setFlags(ro)
+            name.setToolTip(c.desc)
+            val = QTableWidgetItem(self._fmt(c, self.const_store.get(c.name)))
+            val.setFlags(ro | Qt.ItemFlag.ItemIsEditable)
+            unit = QTableWidgetItem(c.unit)
+            unit.setFlags(ro)
+            live = QTableWidgetItem("")
+            live.setFlags(ro)
+            for col, item in enumerate((name, val, unit, live)):
+                self.const_table.setItem(r, col, item)
+
+    @staticmethod
+    def _fmt(constant, value) -> str:
+        return str(int(round(value))) if constant.dtype == "DINT" else f"{float(value):g}"
+
+    def _constants_client(self):
+        """The live PLC client if one is connected, else None."""
+        client = getattr(self.controller.driver, "client", None)
+        if client is not None and client.is_connected:
+            return client
+        return None
+
+    def _refresh_const_enabled(self) -> None:
+        client = self._constants_client()
+        for b in (self.const_read_btn, self.const_push_btn):
+            b.setEnabled(client is not None)
+        if client is None:
+            self.const_status.setText("Connect a PLC (simulated or real) to read/push.")
+            self.const_status.setStyleSheet("color: #8b949e;")
+
+    def _table_values(self) -> Dict[str, float]:
+        """Parse the editable Value column; raises ValueError on a bad cell."""
+        out: Dict[str, float] = {}
+        for r, c in enumerate(COMMISSIONING_CONSTANTS):
+            text = self.const_table.item(r, 1).text().strip()
+            try:
+                out[c.name] = float(text)
+            except ValueError:
+                raise ValueError(f"{c.name}: '{text}' is not a number")
+        return out
+
+    def _set_live_column(self, values: Dict[str, float]) -> None:
+        for r, c in enumerate(COMMISSIONING_CONSTANTS):
+            if c.name in values:
+                self.const_table.item(r, 3).setText(self._fmt(c, values[c.name]))
+
+    def _on_const_save(self) -> None:
+        try:
+            values = self._table_values()
+        except ValueError as exc:
+            self._set_const_status(str(exc), ok=False)
+            return
+        self.const_store.update(values)
+        if self.const_store.path is not None:
+            self.const_store.save()
+        self._set_const_status(
+            f"Saved {len(values)} values to {self.const_store.path}", ok=True)
+
+    def _on_const_read(self) -> None:
+        client = self._constants_client()
+        if client is None:
+            self._set_const_status("No PLC connected.", ok=False)
+            return
+        values = read_constants(client)
+        self._set_live_column(values)
+        # A snapshot also seeds the editable values and persists them (backup).
+        for r, c in enumerate(COMMISSIONING_CONSTANTS):
+            if c.name in values:
+                self.const_table.item(r, 1).setText(self._fmt(c, values[c.name]))
+        self.const_store.update(values)
+        if self.const_store.path is not None:
+            self.const_store.save()
+        self._set_const_status(
+            f"Snapshot: read {len(values)} values from the PLC and saved them.",
+            ok=True)
+
+    def _on_const_push(self) -> None:
+        client = self._constants_client()
+        if client is None:
+            self._set_const_status("No PLC connected.", ok=False)
+            return
+        try:
+            values = self._table_values()
+        except ValueError as exc:
+            self._set_const_status(str(exc), ok=False)
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Push constants to PLC",
+            f"Write {len(values)} commissioning constants to the PLC?\n\n"
+            "This overwrites the live values (HOME_OFFSET, home angles, speeds, "
+            "timeouts). Use only to restore a known-good set.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        results = push_constants(client, values)
+        by_name = {res.name: res for res in results}
+        for r, c in enumerate(COMMISSIONING_CONSTANTS):
+            res = by_name.get(c.name)
+            tint = _OK_TINT if (res and res.ok) else _FAIL_TINT
+            self.const_table.item(r, 3).setBackground(tint)
+        self._set_live_column(read_constants(client))
+        ok = sum(1 for res in results if res.ok)
+        failed = [res.name for res in results if not res.ok]
+        if failed:
+            self._set_const_status(
+                f"Pushed {ok}/{len(results)}. Failed: {', '.join(failed)}", ok=False)
+        else:
+            self._set_const_status(
+                f"Pushed all {ok} constants to the PLC.", ok=True)
+
+    def _set_const_status(self, text: str, *, ok: bool) -> None:
+        self.const_status.setText(text)
+        self.const_status.setStyleSheet(
+            "color: #3fb950; font-weight: bold;" if ok
+            else "color: #f85149; font-weight: bold;")
 
     # --- tag contract -------------------------------------------------------
     def _build_contract_header(self) -> QLabel:
