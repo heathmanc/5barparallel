@@ -764,11 +764,11 @@ def _glue_tags() -> List[Tag]:
     add("HOME_TMO_MS", "DINT", "15000",
         desc="Homing timeout, ms (loaded into Home*_Tmr.PRE). Homing beyond this faults.",
         unit="ms", hand=True)
-    add("HOME_OFFSET_L", "DINT", "0",
-        desc="Left switch angle * STEPS_PER_DEG (ActualLeftDeg ~140.54). Set at commissioning.",
+    add("HOME_OFFSET_L", "DINT", "3748",
+        desc="Left switch angle * STEPS_PER_DEG (nominal 3748 -> ActualLeftDeg ~140.54). Refine at commissioning.",
         unit="steps", hand=True)
-    add("HOME_OFFSET_R", "DINT", "0",
-        desc="Right switch angle * STEPS_PER_DEG (ActualRightDeg ~39.46). Set at commissioning.",
+    add("HOME_OFFSET_R", "DINT", "1052",
+        desc="Right switch angle * STEPS_PER_DEG (nominal 1052 -> ActualRightDeg ~39.46). Refine at commissioning.",
         unit="steps", hand=True)
     add("VAC_SETTLE", "DINT", "300", desc="Vacuum settle time, ms (VacTmr preset). Tune.",
         unit="ms", hand=True)
