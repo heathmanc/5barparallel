@@ -36,7 +36,12 @@ from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
 from ..vision.detect_covers import CoverDetector, CoverDetectorConfig
 from ..vision.detect_holes import HoleDetector, HoleDetectorConfig
-from ..vision.detection import annotate, draw_robot_grid
+from ..vision.detection import (
+    annotate,
+    draw_reachable_zone,
+    draw_robot_grid,
+    reachable_zone_contours,
+)
 from . import theme
 from .cycle_worker import CycleWorker
 from .imaging import ndarray_to_qpixmap
@@ -71,6 +76,7 @@ class VisionTab(QWidget):
         self._pick_roi = None           # (x, y, w, h) px — covers must be inside
         self._frame = None
         self._display = None            # last rendered image (raw or overlay), for Save
+        self._reach_cache = None        # safe-zone outline in robot mm (computed once)
         self._running = False
         self._thread: Optional[QThread] = None
         self._worker: Optional[CycleWorker] = None
@@ -288,6 +294,7 @@ class VisionTab(QWidget):
                 return (float(p[0]), float(p[1]))
             base = draw_robot_grid(
                 self._frame, self.calibration.pixel_to_robot, _r2p, 25.0)
+            base = draw_reachable_zone(base, self._reachable_contours(), _r2p)
         overlay = annotate(base, None, covers.covers)
         self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
@@ -301,6 +308,13 @@ class VisionTab(QWidget):
             f"{int(self.cover_detector.config.max_diameter_px)} px){why}.",
             theme.SUCCESS if covers.accepted else theme.WARN,
         )
+
+    def _reachable_contours(self):
+        """Safe-zone outline in robot mm — computed once (geometry is fixed)."""
+        if self._reach_cache is None:
+            self._reach_cache = reachable_zone_contours(
+                self.controller.validator.is_safe, -300.0, 300.0, 40.0, 430.0, 4.0)
+        return self._reach_cache
 
     def set_calibration(self, calibration) -> None:
         self.calibration = calibration

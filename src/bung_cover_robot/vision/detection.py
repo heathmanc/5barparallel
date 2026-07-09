@@ -426,6 +426,58 @@ def annotate_candidates(
     return out
 
 
+def reachable_zone_contours(
+    is_safe, x_min: float, x_max: float, y_min: float, y_max: float,
+    step: float = 4.0,
+) -> List[List[Point]]:
+    """Trace the safe-zone boundary in robot mm.
+
+    Samples ``is_safe(x, y) -> bool`` on a grid, then contours the mask. Returns
+    a list of closed polygons, each a list of robot-frame ``(x, y)`` points. This
+    depends only on the robot geometry, so compute it once and re-map to pixels
+    per frame.
+    """
+    import cv2
+
+    nx = int((x_max - x_min) / step) + 1
+    ny = int((y_max - y_min) / step) + 1
+    mask = np.zeros((ny, nx), np.uint8)
+    for iy in range(ny):
+        y = y_min + iy * step
+        for ix in range(nx):
+            if is_safe(x_min + ix * step, y):
+                mask[iy, ix] = 255
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out: List[List[Point]] = []
+    for c in contours:
+        if cv2.contourArea(c) < 4.0:
+            continue
+        out.append([(x_min + p[0][0] * step, y_min + p[0][1] * step) for p in c])
+    return out
+
+
+def draw_reachable_zone(
+    frame: np.ndarray, contours_robot: Sequence[Sequence[Point]], robot_to_pixel,
+    color=(0, 0, 255), thickness: int = 3,
+) -> np.ndarray:
+    """Draw the safe-zone outline (default bold red) — robot-mm polygons mapped to
+    pixels via ``robot_to_pixel(x, y) -> (px, py)``."""
+    import cv2
+
+    out = _ensure_bgr(frame)
+    for poly in contours_robot:
+        pts = []
+        for x, y in poly:
+            px, py = robot_to_pixel(x, y)
+            if not (math.isfinite(px) and math.isfinite(py)):
+                pts = []
+                break
+            pts.append([int(round(px)), int(round(py))])
+        if len(pts) >= 3:
+            cv2.polylines(out, [np.array(pts, np.int32)], True, color, thickness, cv2.LINE_AA)
+    return out
+
+
 def _dashed_line(img, p1, p2, color, dash=14, gap=9, thickness=1) -> None:
     import cv2
 

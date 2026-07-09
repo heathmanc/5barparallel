@@ -145,6 +145,29 @@ def test_annotate_draws_color_on_a_mono_frame():
     assert green.any()                                 # real green pixels were drawn
 
 
+def test_reachable_zone_outline_renders():
+    from bung_cover_robot.gui.imaging import demo_frame, demo_transform
+    from bung_cover_robot.robot import WorkspaceValidator
+    from bung_cover_robot.vision.detection import (
+        draw_reachable_zone,
+        reachable_zone_contours,
+    )
+
+    cons = reachable_zone_contours(WorkspaceValidator().is_safe, -300, 300, 40, 430, 6.0)
+    assert cons and sum(len(c) for c in cons) > 20     # a real boundary polygon
+
+    cal = demo_transform()
+
+    def r2p(x, y):
+        p = cal.robot_to_pixel_many([[x, y]])[0]
+        return (float(p[0]), float(p[1]))
+
+    img = demo_frame(760, 520)
+    out = draw_reachable_zone(img, cons, r2p)
+    assert out.shape == (520, 760, 3)
+    assert np.any(out != img, axis=2).sum() > 500      # bold outline drawn
+
+
 def test_draw_robot_grid_overlays_a_grid():
     from bung_cover_robot.gui.imaging import demo_frame, demo_transform
     from bung_cover_robot.vision.detection import draw_robot_grid
