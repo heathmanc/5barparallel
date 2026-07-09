@@ -145,6 +145,23 @@ def test_annotate_draws_color_on_a_mono_frame():
     assert green.any()                                 # real green pixels were drawn
 
 
+def test_draw_robot_grid_overlays_a_grid():
+    from bung_cover_robot.gui.imaging import demo_frame, demo_transform
+    from bung_cover_robot.vision.detection import draw_robot_grid
+
+    cal = demo_transform()
+
+    def r2p(x, y):
+        p = cal.robot_to_pixel_many([[x, y]])[0]
+        return (float(p[0]), float(p[1]))
+
+    img = demo_frame(760, 520)
+    out = draw_robot_grid(img, cal.pixel_to_robot, r2p, 25.0)
+    assert out.shape == (520, 760, 3)
+    changed = np.any(out != img, axis=2)
+    assert changed.sum() > 1000          # a full 25 mm grid touches many pixels
+
+
 def test_hough_finds_a_clean_disk():
     from bung_cover_robot.vision.detection import find_hough_circles
 

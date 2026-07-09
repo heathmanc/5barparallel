@@ -424,3 +424,81 @@ def annotate_candidates(
                     (ctr[0] + int(circle.radius) + 4, ctr[1] + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
     return out
+
+
+def _dashed_line(img, p1, p2, color, dash=14, gap=9, thickness=1) -> None:
+    import cv2
+
+    x1, y1 = p1
+    x2, y2 = p2
+    dist = math.hypot(x2 - x1, y2 - y1)
+    if dist == 0.0 or not math.isfinite(dist):
+        return
+    step = dash + gap
+    n = int(dist // step) + 1
+    for i in range(n):
+        s = (i * step) / dist
+        e = min((i * step + dash) / dist, 1.0)
+        a = (int(round(x1 + (x2 - x1) * s)), int(round(y1 + (y2 - y1) * s)))
+        b = (int(round(x1 + (x2 - x1) * e)), int(round(y1 + (y2 - y1) * e)))
+        cv2.line(img, a, b, color, thickness, cv2.LINE_AA)
+
+
+def draw_robot_grid(
+    frame: np.ndarray,
+    pixel_to_robot,
+    robot_to_pixel,
+    spacing_mm: float = 25.0,
+    color=(170, 170, 170),
+    label_every_mm: float = 100.0,
+) -> np.ndarray:
+    """Overlay a robot-frame coordinate grid (dashed) over the whole image.
+
+    ``pixel_to_robot(px, py) -> (x, y)`` sets the visible robot range from the
+    image corners; ``robot_to_pixel(x, y) -> (px, py)`` places each grid line (a
+    homography maps a straight robot line to a straight pixel line, so two
+    endpoints suffice). Axes (x=0, y=0) are drawn brighter and major lines are
+    labelled in mm.
+    """
+    import cv2
+
+    out = _ensure_bgr(frame)
+    h, w = out.shape[:2]
+    corners = [pixel_to_robot(0, 0), pixel_to_robot(w, 0),
+               pixel_to_robot(0, h), pixel_to_robot(w, h)]
+    xs = [c[0] for c in corners]
+    ys = [c[1] for c in corners]
+    if not all(math.isfinite(v) for v in xs + ys):
+        return out
+    x0 = math.floor(min(xs) / spacing_mm) * spacing_mm
+    x1 = math.ceil(max(xs) / spacing_mm) * spacing_mm
+    y0 = math.floor(min(ys) / spacing_mm) * spacing_mm
+    y1 = math.ceil(max(ys) / spacing_mm) * spacing_mm
+    # cap the line count so a wildly-off calibration can't spin forever
+    if (x1 - x0) / spacing_mm > 400 or (y1 - y0) / spacing_mm > 400:
+        return out
+    axis = (215, 215, 215)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    def clamp(p):
+        return (min(max(int(p[0]), 4), w - 44), min(max(int(p[1]), 14), h - 6))
+
+    x = x0
+    while x <= x1 + 1e-6:
+        is_axis = abs(x) < 1e-6
+        _dashed_line(out, robot_to_pixel(x, y0), robot_to_pixel(x, y1),
+                     axis if is_axis else color, thickness=2 if is_axis else 1)
+        if abs((x / label_every_mm) - round(x / label_every_mm)) < 1e-6:
+            cv2.putText(out, f"{int(x)}", clamp(robot_to_pixel(x, y0)),
+                        font, 0.5, color, 1, cv2.LINE_AA)
+        x += spacing_mm
+    y = y0
+    while y <= y1 + 1e-6:
+        is_axis = abs(y) < 1e-6
+        _dashed_line(out, robot_to_pixel(x0, y), robot_to_pixel(x1, y),
+                     axis if is_axis else color, thickness=2 if is_axis else 1)
+        if abs((y / label_every_mm) - round(y / label_every_mm)) < 1e-6:
+            cv2.putText(out, f"{int(y)}", clamp(robot_to_pixel(x0, y)),
+                        font, 0.5, color, 1, cv2.LINE_AA)
+        y += spacing_mm
+    return out

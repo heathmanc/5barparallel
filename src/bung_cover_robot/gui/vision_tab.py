@@ -36,7 +36,7 @@ from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
 from ..vision.detect_covers import CoverDetector, CoverDetectorConfig
 from ..vision.detect_holes import HoleDetector, HoleDetectorConfig
-from ..vision.detection import annotate
+from ..vision.detection import annotate, draw_robot_grid
 from . import theme
 from .cycle_worker import CycleWorker
 from .imaging import ndarray_to_qpixmap
@@ -280,7 +280,14 @@ class VisionTab(QWidget):
         to_robot = self.calibration.pixel_to_robot if self.calibration else None
         validator = self.controller.validator if self.calibration else None
         covers = self.cover_detector.detect(self._frame, to_robot, validator)
-        overlay = annotate(self._frame, None, covers.covers)
+        base = self._frame
+        if self.calibration is not None:
+            def _r2p(x, y):
+                p = self.calibration.robot_to_pixel_many([[x, y]])[0]
+                return (float(p[0]), float(p[1]))
+            base = draw_robot_grid(
+                self._frame, self.calibration.pixel_to_robot, _r2p, 25.0)
+        overlay = annotate(base, None, covers.covers)
         self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         reach = " reachable" if self.calibration else " pickable"
