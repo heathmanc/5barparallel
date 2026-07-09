@@ -12,6 +12,7 @@ from .fivebar_kinematics import (
     JointTarget,
     KinematicsError,
 )
+from .home_offset import HomeOffsetSolution, solve_home_offsets
 from .planner import (
     PickPlaceJob,
     PlanningError,
@@ -24,9 +25,11 @@ __all__ = [
     "DryRunRobotDriver",
     "FiveBarConfig",
     "FiveBarKinematics",
+    "HomeOffsetSolution",
     "HomingConfig",
     "JointTarget",
     "KinematicsError",
+    "solve_home_offsets",
     "PickPlaceJob",
     "PlanningError",
     "RobotDriver",

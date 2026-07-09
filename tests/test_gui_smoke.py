@@ -301,6 +301,34 @@ def test_plc_tab_push_constants_to_simulated_plc(qapp, tmp_path, monkeypatch):
     assert reloaded.get("HOME_OFFSET_L") == 3748
 
 
+def test_plc_tab_home_offset_calculator(qapp):
+    from bung_cover_robot.plc import COMMISSIONING_CONSTANTS
+
+    win = MainWindow()
+    plc = win.plc_tab
+    plc._on_connect_sim()
+    client = win.controller.driver.client
+    # arm seated on the jig: commanded step counts from home (open-loop)
+    client.write("ClearLink:I1.Motor0_CommandedPosn", 42)
+    client.write("ClearLink:I1.Motor1_CommandedPosn", -33)
+
+    plc.cal_x.setValue(0.0)
+    plc.cal_y.setValue(250.0)
+    plc._on_offset_compute()
+    assert plc.cal_apply_btn.isEnabled()
+    assert "HOME_OFFSET_L=" in plc.cal_result.text()
+
+    plc._on_offset_apply()
+    kin = win.controller.kin
+    jt = kin.inverse(0.0, 250.0)
+    spd = kin.config.pulses_per_degree
+    names = [c.name for c in COMMISSIONING_CONSTANTS]
+    assert plc.const_table.item(names.index("HOME_OFFSET_L"), 1).text() == str(
+        round(jt.left_deg * spd - 42))
+    assert plc.const_table.item(names.index("HOME_OFFSET_R"), 1).text() == str(
+        round(jt.right_deg * spd + 33))
+
+
 def test_plc_tab_connect_real_without_pycomm3_shows_error(qapp):
     from bung_cover_robot.robot.driver import DryRunRobotDriver
 

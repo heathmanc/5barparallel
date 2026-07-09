@@ -3,7 +3,8 @@
 How to measure and set the two home-offset constants so the PLC reports the
 **true** shoulder angles after homing. Do this once per machine at
 commissioning (and again only if you move a home switch or change the homing
-approach). Backed up and restored with the **PLC tab → Commissioning
+approach). The app does the math — you build a simple jig, seat the tool on it,
+and click **Compute**. Backed up/restored with the **PLC tab → Commissioning
 constants** panel (see `plc_setup.md`).
 
 ---
@@ -11,9 +12,9 @@ constants** panel (see `plc_setup.md`).
 ## 1. What the offset is, and why it exists
 
 The ClearLink zeroes each motor's position **at the home-switch (prox) trip
-point**, not at a meaningful shoulder angle. So right after homing,
-`Motor0/1_CommandedPosn = 0` even though the arm is sitting at some real angle.
-The PLC converts commanded steps to a published angle with:
+point**, not at a meaningful shoulder angle. Right after homing,
+`Motor0/1_CommandedPosn = 0` even though the arm sits at some real angle. The
+PLC converts commanded steps to a published angle with:
 
 ```
 ActualLeftDeg  = (Motor0_CommandedPosn + HOME_OFFSET_L) / STEPS_PER_DEG
@@ -29,10 +30,36 @@ steps**. If the switch tripped exactly at the design home pose
 **3748 / 1052**. In practice the switch is a few tenths off, so you measure the
 real value.
 
+> **You don't measure the home angle directly — you derive it.** Homing tells
+> you nothing about the absolute angle, and you never find out. What the
+> ClearLink *does* give you after homing is a **running count of steps commanded
+> away from the trip point** (`CommandedPosn`, zeroed at home). So: jog to a
+> point whose true angle you know from its coordinate; the count is how far the
+> arm moved to get there. A known endpoint minus the counted move gives the
+> start:
+>
+> ```
+> angle_at_home = θ_jig − CommandedPosn / STEPS_PER_DEG
+> HOME_OFFSET   = angle_at_home × STEPS_PER_DEG
+>               = θ_jig × STEPS_PER_DEG − CommandedPosn
+> ```
+>
+> Like pacing off the distance from a labeled mark: you don't need to know where
+> you started, only the known endpoint and the steps you counted getting there.
+> The jig supplies that one absolute reference — without it you'd have only
+> relative motion and no way to anchor it.
+
+> **Open-loop steppers — no encoder.** The EM806 drives are open-loop; the
+> ClearLink's `CommandedPosn` is the **commanded step count** from the home
+> datum, not an encoder reading. That's exactly what we want here: right after
+> homing there are no lost steps, so the commanded count *is* the arm's position
+> relative to the trip point. Jog gently to the jig (don't stall) so no steps
+> are dropped between home and the measurement.
+
 > **Why not a digital level?** This is a horizontal-plane SCARA — the arms sweep
 > in a plane parallel to the floor. A gravity inclinometer reads 0° everywhere
 > in that plane, so it can't measure the in-plane shoulder angle. The offset is
-> calibrated from a **known TCP position** instead (Method 1).
+> calibrated from a **known TCP position** instead.
 
 ---
 
@@ -46,95 +73,69 @@ drifting or mis-scaled axis is worthless:
    trip point (watch `M0/M1 CommandedPosn` return to 0 consistently).
 2. **`STEPS_PER_DEG` is verified.** Command a 90° shoulder jog and measure the
    real sweep; fix step wiring / microstepping until it matches 26.66667.
-3. You have a **locating fixture** that seats the tool at one known robot-frame
-   coordinate (a dowel/pin the gripper mates, or a hard stop at a measured
-   point).
-
-Open the app: **Diagnostics tab** (shows `M0 CommandedPosn`, `M1
-CommandedPosn`, `ActualLeftDeg`, `ActualRightDeg`) and the **PLC tab →
-Commissioning constants** panel (to enter/push the values).
 
 ---
 
-## 3. Method 1 — locating fixture at a known TCP (recommended)
+## 3. Build the jig (establish one known point)
 
-Each axis is independent, so **one** known TCP position gives you both offsets.
+You need **one point whose robot-frame (X, Y) you know**. The robot frame origin
+is the **midpoint between the two shoulder pivots**; +X runs along the line
+joining them (toward the right pivot), +Y is perpendicular, into the work area.
+The two pivots sit at **(−40, 0)** and **(+40, 0)** mm (80 mm base spacing).
 
-1. **Home** the robot (Robot Test → Home). Confirm `Has Homed` and that both
+The easy, accurate point is **on the centerline (X = 0)** — the locus
+equidistant from both pivots. Build it like this:
+
+1. **Mark the two shoulder-pivot centers** (the motor output-shaft axes). These
+   define the frame; measure them carefully.
+2. **Mount a vertical dowel pin** on the base plate, out in the work zone
+   (~250 mm from the pivot line is ideal — that's in the stiff part of the
+   envelope).
+3. **Slide/adjust the pin until it is equidistant from both pivots.** Measure
+   pin-center → left-pivot and pin-center → right-pivot with a caliper or tape;
+   make them equal. Call that equal distance **d**. The pin is now at **X = 0**,
+   and:
+
+   ```
+   Y = sqrt(d² − 40²)          # 40 mm = half the 80 mm base spacing
+   ```
+
+   (e.g. d = 253.2 mm → Y = √(253.2² − 40²) = 250.0 mm.) No perpendicular
+   measurement needed — one equal-distance reading gives you the coordinate.
+4. **Fit a self-centering tool tip.** Swap the vacuum cup for a pointed probe or
+   a bushing that mates the dowel (cone-into-hole or pin-into-bushing). It
+   removes the guesswork of "is it seated" and repeats to a few thousandths.
+
+> **Cross-check (recommended):** add a second pin at a different Y on the same
+> centerline. Calibrating from each should give offsets that agree within a step
+> or two. A big disagreement means the trip point isn't repeatable (§2.1) or
+> `STEPS_PER_DEG` is off (§2.2).
+
+---
+
+## 4. Run the calibration (in the app)
+
+No calculator, no command line — the program reads the counts and solves it.
+
+1. **Home** the robot (Robot Test → Home). Confirm `Has Homed`; both
    `CommandedPosn` read ~0.
-2. **Seat the tool** on the fixture at a known robot-frame point `(x, y)` mm.
-   Jog there in small steps — you do **not** need correct angles yet; drive
-   until the gripper physically mates the pin/stop. Pick a point well inside the
-   work envelope (e.g. the fixture near `(0, 250)`).
-3. **Read** `M0 CommandedPosn` and `M1 CommandedPosn` from the Diagnostics tab
-   at that seated pose. Call them `posn_L`, `posn_R` (steps).
-4. **Compute the true angles** for that TCP with the project kinematics:
-
-   ```
-   python -c "from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics as K; \
-   jt=K().inverse(0.0, 250.0); print(jt.left_deg, jt.right_deg)"
-   ```
-
-   Call the results `theta_L`, `theta_R` (deg).
-5. **Solve the offsets** (from `ActualDeg = (posn + OFFSET)/STEPS_PER_DEG = theta`):
-
-   ```
-   HOME_OFFSET_L = round(theta_L * 26.66667 - posn_L)
-   HOME_OFFSET_R = round(theta_R * 26.66667 - posn_R)
-   ```
-
-### Worked example
-
-Fixture at `(0, 250)` → `theta_L = 140.5406°`, `theta_R = 39.4594°`, so
-`theta*STEPS_PER_DEG` = **3747.75 / 1052.25 steps**. Suppose at the seated pose
-the Diagnostics tab shows `posn_L = +42`, `posn_R = −33`:
-
-```
-HOME_OFFSET_L = round(3747.75 - 42)   = 3706
-HOME_OFFSET_R = round(1052.25 - (-33)) = 1085
-```
-
-Check: `ActualLeftDeg = (42 + 3706)/26.66667 = 140.55°`,
-`ActualRightDeg = (-33 + 1085)/26.66667 = 39.45°` — both match the fixture
-angles. ✔
-
-> **Cross-check (optional):** repeat at a second fixture point and confirm the
-> two offset solves agree within a step or two. A large disagreement means the
-> homing trip point isn't repeatable (go back to §2.1) or `STEPS_PER_DEG` is off
-> (§2.2).
+2. **Seat the tool** on the jig pin (jog there gently in small steps).
+3. Open **PLC tab → Commissioning constants → "Calibrate HOME_OFFSET from a
+   known point."**
+4. Enter the jig's **X** and **Y** (e.g. `0` and your computed `Y`).
+5. Click **Compute from PLC.** The app reads both `Motor*_CommandedPosn`, solves
+   `HOME_OFFSET = round(θ·STEPS_PER_DEG − CommandedPosn)` per axis, and shows the
+   angles, the counts, and the resulting offsets.
+6. Click **Apply to table** to drop the two values into the `HOME_OFFSET_L/R`
+   rows, then **Push to PLC…** to write them live.
 
 ---
 
-## 4. Method 2 — geometric measurement of the home pose (alternative)
+## 5. Verify
 
-If you can't fixture a TCP point but can measure the arm geometry directly:
-
-1. Home the robot (so `CommandedPosn = 0` — you're measuring *at the trip
-   point*).
-2. With calipers/CMM, measure each **elbow** position relative to its shoulder
-   pivot in the robot frame, or the TCP relative to the base, and back out the
-   true shoulder angle `theta` from `+X`.
-3. Because `CommandedPosn = 0` at home, the offset is simply:
-
-   ```
-   HOME_OFFSET_L = round(theta_L_home * 26.66667)
-   HOME_OFFSET_R = round(theta_R_home * 26.66667)
-   ```
-
-This is less convenient than Method 1 and only as good as the physical
-measurement; prefer Method 1 when you have a fixture.
-
----
-
-## 5. Set, push, and verify
-
-1. **PLC tab → Commissioning constants.** Type the two values into the
-   `HOME_OFFSET_L` / `HOME_OFFSET_R` rows.
-2. Click **Push to PLC…** (confirm). The panel writes them live.
-3. **Verify:** re-home, then jog the tool back onto the fixture and confirm the
-   Diagnostics tab now reads `ActualLeftDeg ≈ theta_L`,
-   `ActualRightDeg ≈ theta_R`. Move to a second known point and confirm it
-   tracks there too.
+Re-home, jog the tool back onto the jig, and confirm the Diagnostics tab now
+reads `ActualLeftDeg ≈ θL`, `ActualRightDeg ≈ θR` for that point. If you built a
+second pin, check it tracks there too.
 
 ---
 
@@ -144,8 +145,8 @@ Once verified, click **Read from PLC (snapshot)** in the same panel. It saves
 the whole set-by-hand set — including your calibrated offsets — to
 `config/plc_constants.yaml`. If the controller is ever reloaded or cleared,
 **Push to PLC** restores it in one shot. (Studio 5000 does not restore these on
-a program download; the snapshot file is your backup. It is git-ignored because
-the values are specific to your physical machine.)
+a program download; the snapshot file is your backup, and it is git-ignored
+because the values are specific to your physical machine.)
 
 ---
 
@@ -158,6 +159,5 @@ Re-run this procedure if you:
 * rebuild an arm (new links, re-set the elbow assembly), or
 * change `STEPS_PER_DEG` (microstepping or belt ratio).
 
-A stale offset shows up as the robot reaching poses that are consistently
-rotated from the commanded angle, or the two arms disagreeing about where the
-TCP is.
+A stale offset shows up as the robot reaching poses consistently rotated from
+the commanded angle, or the two arms disagreeing about where the TCP is.

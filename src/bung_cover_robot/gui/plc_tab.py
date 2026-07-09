@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -44,7 +45,14 @@ from ..plc import (
     read_constants,
 )
 from ..plc import tags as T
+from ..robot import KinematicsError, solve_home_offsets
 from ..robot.driver import DryRunRobotDriver
+
+# ClearLink commanded-position tags (steps, zeroed at the prox trip point).
+_CMD_POSN = {
+    "HOME_OFFSET_L": "ClearLink:I1.Motor0_CommandedPosn",   # Motor0 = left
+    "HOME_OFFSET_R": "ClearLink:I1.Motor1_CommandedPosn",   # Motor1 = right
+}
 
 _COLUMNS = ["Group", "Tag", "Type", "Direction", "Description"]
 _CMD_TINT = QColor("#1e2b3d")     # PC → PLC
@@ -199,12 +207,97 @@ class PlcTab(QWidget):
         row.addStretch(1)
         v.addLayout(row)
 
+        v.addWidget(self._build_offset_calibrator())
+
         self.const_status = QLabel()
         v.addWidget(self.const_status)
 
         self.connectionChanged.connect(self._refresh_const_enabled)
         self._refresh_const_enabled()
         return box
+
+    def _build_offset_calibrator(self) -> QGroupBox:
+        self._cal_solution = None
+        box = QGroupBox("Calibrate HOME_OFFSET from a known point")
+        v = QVBoxLayout(box)
+        v.addWidget(QLabel(
+            "Home the robot, seat the tool on a jig at a measured robot-frame "
+            "(X, Y) mm, then Compute — the app reads the ClearLink commanded "
+            "step count (open-loop, zeroed at home) and solves both offsets. "
+            "See docs/home_offset_calibration.md."
+        ))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("X:"))
+        self.cal_x = QDoubleSpinBox()
+        self.cal_x.setRange(-400.0, 400.0)
+        self.cal_x.setDecimals(1)
+        self.cal_x.setSuffix(" mm")
+        row.addWidget(self.cal_x)
+        row.addWidget(QLabel("Y:"))
+        self.cal_y = QDoubleSpinBox()
+        self.cal_y.setRange(0.0, 500.0)
+        self.cal_y.setDecimals(1)
+        self.cal_y.setValue(250.0)
+        self.cal_y.setSuffix(" mm")
+        row.addWidget(self.cal_y)
+        self.cal_compute_btn = QPushButton("Compute from PLC")
+        self.cal_compute_btn.clicked.connect(self._on_offset_compute)
+        row.addWidget(self.cal_compute_btn)
+        self.cal_apply_btn = QPushButton("Apply to table")
+        self.cal_apply_btn.setEnabled(False)
+        self.cal_apply_btn.clicked.connect(self._on_offset_apply)
+        row.addWidget(self.cal_apply_btn)
+        row.addStretch(1)
+        v.addLayout(row)
+        self.cal_result = QLabel()
+        self.cal_result.setWordWrap(True)
+        v.addWidget(self.cal_result)
+        return box
+
+    def _on_offset_compute(self) -> None:
+        client = self._constants_client()
+        if client is None:
+            self._set_cal_result("No PLC connected.", ok=False)
+            return
+        try:
+            posn_l = int(client.read(_CMD_POSN["HOME_OFFSET_L"]))
+            posn_r = int(client.read(_CMD_POSN["HOME_OFFSET_R"]))
+        except (PlcError, Exception) as exc:  # noqa: BLE001
+            self._set_cal_result(f"Could not read CommandedPosn: {exc}", ok=False)
+            return
+        try:
+            sol = solve_home_offsets(
+                self.controller.kin, self.cal_x.value(), self.cal_y.value(),
+                posn_l, posn_r)
+        except KinematicsError as exc:
+            self._set_cal_result(f"Unreachable point — check X/Y: {exc}", ok=False)
+            return
+        self._cal_solution = sol
+        self.cal_apply_btn.setEnabled(True)
+        self._set_cal_result(
+            f"At ({sol.x:g}, {sol.y:g}) mm:  θL={sol.theta_left_deg:.3f}°  "
+            f"θR={sol.theta_right_deg:.3f}°  |  posn L={sol.posn_left} "
+            f"R={sol.posn_right}  →  HOME_OFFSET_L={sol.offset_left}, "
+            f"HOME_OFFSET_R={sol.offset_right}.  Apply, then Push to PLC.",
+            ok=True)
+
+    def _on_offset_apply(self) -> None:
+        sol = self._cal_solution
+        if sol is None:
+            return
+        names = [c.name for c in COMMISSIONING_CONSTANTS]
+        self.const_table.item(names.index("HOME_OFFSET_L"), 1).setText(
+            str(sol.offset_left))
+        self.const_table.item(names.index("HOME_OFFSET_R"), 1).setText(
+            str(sol.offset_right))
+        self._set_const_status(
+            "Applied computed offsets to the table — review, then Push to PLC.",
+            ok=True)
+
+    def _set_cal_result(self, text: str, *, ok: bool) -> None:
+        self.cal_result.setText(text)
+        self.cal_result.setStyleSheet(
+            "color: #3fb950;" if ok else "color: #f85149;")
 
     def _seed_constants_table(self) -> None:
         ro = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
