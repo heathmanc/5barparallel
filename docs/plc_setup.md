@@ -149,7 +149,7 @@ the UDT exists — the file is a Rockwell tag CSV, not L5X). These are all
 
 | `docs/l5x/…` | Creates (controller scope) |
 |---|---|
-| `RobotTags.csv` | **every internal tag the whole program uses** — not just the motion glue. The `VisionRobot` tag; per-axis move/home glue (`Move*/Home*/Ax*`, `EM806_*_ALM`); homing coordinator (`HomeStep`, `HR_ons`, `SoftLimitsEnable`); safety (`EStop_*`, `Guard_Closed`, `Ax*_Limit*`, `SafetyOK`, `EnableReq`); manual (`AutoMode`, `WithinLimits`, `MoveActive`, `MTT_prev`); the auto pick/place state machine (`State`, `VacTmr`/`BlowTmr`, `Cmd*`/`At*`, poses `PickL/R`, `DropL/R`, pneumatics `CylinderDown`/`VacuumOn`/`Blowoff`, Z sensors `PickDown/Up`, `DropDown/Up`, `VacuumSensor`); and the tuning values |
+| `RobotTags.csv` | **every internal tag the whole program uses** — not just the motion glue. The `VisionRobot` tag; per-axis move/home glue (`Move*/Home*/Ax*`, `EM806_*_ALM`); homing coordinator (`HomeStep`, `HR_ons`, `SoftLimitsEnable`); safety (`EStop_*`, `Guard_Closed`, `Ax*_Limit*`, `SafetyOK`, `EnableReq`); manual (`WithinLimits`, `MoveActive`, `MTT_prev`); the auto pick/place state machine (`State`, `VacTmr`/`BlowTmr`, `Cmd*`/`At*`, poses `PickL/R`, `DropL/R`, pneumatics `CylinderDown`/`VacuumOn`/`Blowoff`, Z sensors `PickDown/Up`, `DropDown/Up`, `VacuumSensor`); and the tuning values |
 
 > ⚠️ **Two things the CSV can't do for you:**
 > 1. **Values.** CSV import creates *definitions* only — every tag comes in at
@@ -169,7 +169,7 @@ rest each scan:
 
 | `docs/l5x/…` | Routine | Role |
 |---|---|---|
-| `R00_Main.L5X` | scan dispatcher | `JSR`s everything in order; picks Manual vs Auto on the `AutoMode` tag. **Set as Main.** |
+| `R00_Main.L5X` | scan dispatcher | `JSR`s everything in order; picks Manual vs Auto on `VisionRobot.Cmd.AutoMode`. **Set as Main.** |
 | `R10_Safety.L5X` | safety | E-stop / guard / limits / drive alarm → `Status.Faulted` + `FaultCode`; `SafetyOK`; reset |
 | `R20_Drives.L5X` | drives | **owns the axis Enable outputs**; publishes `Status.Enabled` |
 | `R30_Homing.L5X` | homing coordinator | `JSR`s `R_HomeMotor0/1`; offset-aware angle publish |
@@ -179,9 +179,13 @@ rest each scan:
 | `R_MoveMotor0.L5X` / `R_MoveMotor1.L5X` | move engine, per axis | mirrors `SD_Position_Move`, `Abs_Flag` set |
 | `R_HomeMotor0.L5X` / `R_HomeMotor1.L5X` | ClearLink homing, per axis | mirrors `SD_Homing`; `JSR`'d by `R30` |
 
-Manual vs Auto: with `AutoMode = 0` the operator jogs/homes via `R40`; set
-`AutoMode = 1` (after enabling + homing) to hand the machine to `R50_Auto`, which
-runs the pick/place cycle against the `VisionRobot.Cmd`/`Target` handshake.
+Manual vs Auto: mode is now a PC→PLC command, `VisionRobot.Cmd.AutoMode` (driven by
+the HMI **Manual/Auto** buttons on the Vision tab). With `Cmd.AutoMode = 0` the
+operator jogs/homes via `R40`; the app sets `Cmd.AutoMode = 1` (after enabling +
+homing) to hand the machine to `R50_Auto`, which runs the pick/place cycle against
+the `VisionRobot.Cmd`/`Target` handshake. The automatic cycle is inhibited unless
+Auto is selected — without it, `R50_Auto` isn't scanned and a pick/place request is
+never serviced.
 
 > ⚠️ **`R50_Auto`, `R10_Safety` and `R20_Drives` command real motion, the Z
 > cylinder and vacuum — REVIEW every rung before running.** The hardware E-stop

@@ -141,6 +141,24 @@ class VisionTab(QWidget):
             grid.addWidget(pill, row, 1, Qt.AlignmentFlag.AlignRight)
         v.addWidget(status_box)
 
+        # Mode select — like an HMI Manual/Auto selector. Auto is required before
+        # the cycle can start (only in Auto does the PLC scan the pick/place
+        # routine); the checked button shows the live mode.
+        mode_box = QGroupBox("Mode")
+        mh = QHBoxLayout(mode_box)
+        self.manual_btn = QPushButton("Manual")
+        self.manual_btn.setCheckable(True)
+        self.manual_btn.setToolTip("Manual mode — jog/home; the auto cycle is inhibited.")
+        self.manual_btn.clicked.connect(lambda: self._set_mode(False))
+        self.auto_btn = QPushButton("Auto")
+        self.auto_btn.setCheckable(True)
+        self.auto_btn.setToolTip("Auto mode — the PLC scans the pick/place routine; "
+                                 "required to run the cycle.")
+        self.auto_btn.clicked.connect(lambda: self._set_mode(True))
+        mh.addWidget(self.manual_btn)
+        mh.addWidget(self.auto_btn)
+        v.addWidget(mode_box)
+
         run_box = QGroupBox("Run")
         rb = QVBoxLayout(run_box)
         self.capture_btn = QPushButton("Capture frame")
@@ -159,10 +177,12 @@ class VisionTab(QWidget):
         self.save_diag_btn.clicked.connect(self._on_save_diag)
         self.detect_btn = QPushButton("Detect")
         self.detect_btn.clicked.connect(self._on_detect)
-        self.start_btn = QPushButton("Start cycle")
+        self.start_btn = QPushButton("Cycle Start")
         self.start_btn.setProperty("accent", "primary")
+        self.start_btn.setToolTip("Run the automatic pick/place cycle (Auto mode, "
+                                  "drives enabled + referenced).")
         self.start_btn.clicked.connect(self._on_start)
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Cycle Stop")
         self.stop_btn.setProperty("accent", "danger")
         self.stop_btn.clicked.connect(self._on_stop)
         for b in (self.capture_btn, self.save_frame_btn, self.save_diag_btn,
@@ -575,9 +595,34 @@ class VisionTab(QWidget):
         if hasattr(self, "tune_min"):    # keep any live-tuned Hough settings
             self._apply_tuning()
 
+    # --- mode (Manual / Auto) ----------------------------------------------
+    def _set_mode(self, auto: bool) -> None:
+        try:
+            self.controller.set_auto_mode(auto)
+        except Exception as exc:                       # noqa: BLE001 - surface any driver error
+            self._set_status(f"Mode change failed: {exc}", theme.DANGER)
+            self._sync_mode_buttons()
+            return
+        if not auto and self._running:
+            self._on_stop()                            # leaving Auto stops the cycle
+        self._sync_mode_buttons()
+        self._set_status(f"{'AUTO' if auto else 'MANUAL'} mode selected.", theme.INFO)
+
+    def _sync_mode_buttons(self) -> None:
+        auto = self.controller.is_auto_mode
+        self.auto_btn.setChecked(auto)
+        self.manual_btn.setChecked(not auto)
+        # Cycle Start only lives in Auto (and when idle); Stop only while running.
+        self.start_btn.setEnabled(auto and not self._running)
+        self.stop_btn.setEnabled(self._running)
+
     # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:
         if self._running:
+            return
+        if not self.controller.is_auto_mode:
+            self._set_status(
+                "Switch to AUTO mode before starting the cycle.", theme.WARN)
             return
         self.refresh()
         # Vision bypass: run the cycle against fixed, reachable targets so the
@@ -599,7 +644,7 @@ class VisionTab(QWidget):
 
         # Run off the GUI thread — a real PLC handshake takes seconds per hole.
         self._running = True
-        self.start_btn.setEnabled(False)
+        self._sync_mode_buttons()
         mode = "scripted (vision bypass)" if source else "automatic"
         if self.single_step_chk.isChecked():
             mode += ", single step"
@@ -623,7 +668,7 @@ class VisionTab(QWidget):
     def _on_cycle_finished(self, result) -> None:
         self._teardown_thread()
         self._running = False
-        self.start_btn.setEnabled(True)
+        self._sync_mode_buttons()
         self._show_overlay()
         self.refresh()
         placed = len(result.placed)
@@ -684,6 +729,7 @@ class VisionTab(QWidget):
             "ok" if self.camera.is_open else "bad",
         )
         self._update_roi_buttons()
+        self._sync_mode_buttons()
 
     def _set_status(self, text: str, color: str) -> None:
         self.status_label.setText(text)

@@ -25,7 +25,7 @@ Three kinds of file, imported **in this order**:
     docs/l5x/R_HomeMotor0.L5X   ClearLink homing, Motor 0 (JSR by R30)       |  UDT +
     docs/l5x/R_HomeMotor1.L5X   ClearLink homing, Motor 1 (JSR by R30)       /  tags)
 
-R00_Main JSRs the others each scan (Manual vs Auto by the AutoMode tag), so this
+R00_Main JSRs the others each scan (Manual vs Auto by VisionRobot.Cmd.AutoMode), so this
 is a complete program, not just the motion pieces. These command real motion, the
 Z cylinder and vacuum — REVIEW before running; the hardware E-stop safety relay
 is primary and the PLC bits only mirror it.
@@ -323,13 +323,14 @@ COORD: List[Rung] = [
 # --------------------------------------------------------------------------- #
 MAIN: List[Rung] = [
     ("R00_Main: scan dispatcher — calls every routine in order each scan. Manual "
-     "and Auto are mutually exclusive on AutoMode (RobotTags.csv). Put this routine "
+     "and Auto are mutually exclusive on VisionRobot.Cmd.AutoMode. Put this routine "
      "as the Program's Main; import all the other routines first.",
      "JSR(R10_Safety,0)JSR(R20_Drives,0)JSR(R30_Homing,0);"),
-    ("Auto mode runs the pick/place sequence; manual mode runs the jog/home surface.",
-     "XIC(AutoMode)JSR(R50_Auto,0);"),
+    ("Auto mode runs the pick/place sequence; manual mode runs the jog/home surface. "
+     "The PC selects the mode via VisionRobot.Cmd.AutoMode (HMI Manual/Auto buttons).",
+     "XIC(VisionRobot.Cmd.AutoMode)JSR(R50_Auto,0);"),
     ("(Manual when not in auto.)",
-     "XIO(AutoMode)JSR(R40_Manual,0);"),
+     "XIO(VisionRobot.Cmd.AutoMode)JSR(R40_Manual,0);"),
     ("Service the per-axis move engines after the commanding routine, then publish "
      "status.",
      "JSR(R_MoveMotor0,0)JSR(R_MoveMotor1,0)JSR(R60_Status,0);"),
@@ -641,6 +642,7 @@ def _pack_members(udt: str, members: List[Member]) -> str:
 
 UDT_CMD: List[Member] = [
     ("RequestPickPlace", "BOOL"), ("Abort", "BOOL"), ("Reset", "BOOL"),
+    ("AutoMode", "BOOL"),    # PC mode select: 1 = Auto (R50), 0 = Manual (R40)
     ("CommandID", "DINT"),
     ("Heartbeat", "DINT"),   # PC increments continuously; PLC watchdogs it
 ]
@@ -839,7 +841,8 @@ def _glue_tags() -> List[Tag]:
         unit="ms", hand=True)
 
     # --- manual jog/home (R40_Manual) + mode selector ---
-    add("AutoMode", "BOOL", desc="Mode: 1 = auto (R50) owns motion, 0 = manual (R40).")
+    # Mode select now lives in the VisionRobot UDT (VisionRobot.Cmd.AutoMode) so the
+    # PC/HMI owns it directly; R00_Main gates R50_Auto/R40_Manual on that bit.
     add("WithinLimits", "BOOL", desc="Manual target within -20..+200 deg soft limits.")
     add("MoveActive", "BOOL", desc="A manual coordinated move is in progress.")
     add("MTT_prev", "BOOL", desc="Edge storage for VisionRobot.Manual.MoveToTarget.")

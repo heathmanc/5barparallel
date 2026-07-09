@@ -29,6 +29,7 @@ class Cmd:
     RESET = f"{ROOT}.Cmd.Reset"
     COMMAND_ID = f"{ROOT}.Cmd.CommandID"
     HEARTBEAT = f"{ROOT}.Cmd.Heartbeat"  # DINT: PC increments continuously (watchdog)
+    AUTO_MODE = f"{ROOT}.Cmd.AutoMode"   # BOOL: 1 = Auto (R50 owns motion), 0 = Manual (R40)
 
 
 class Target:
@@ -107,6 +108,9 @@ TAG_SPECS: List[TagSpec] = [
             "Monotonic id for the current job; rejects stale/duplicate commands."),
     TagSpec(Cmd.HEARTBEAT, "DINT", PC_TO_PLC, "Cmd",
             "PC increments continuously while connected; PLC watchdogs it (code 10)."),
+    TagSpec(Cmd.AUTO_MODE, "BOOL", PC_TO_PLC, "Cmd",
+            "Mode select: 1 = Auto (R00_Main scans R50_Auto pick/place), 0 = Manual "
+            "(R40_Manual jog/home). The automatic cycle requires this true."),
     # --- automatic pick/place targets ---
     TagSpec(Target.PICK_LEFT_DEG, "REAL", PC_TO_PLC, "Target",
             "Left shoulder angle at the pick pose (deg)."),

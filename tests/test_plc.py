@@ -90,6 +90,27 @@ def make_driver(home=(135.0, 45.0)) -> PlcRobotDriver:
     return PlcRobotDriver(client, command_timeout_s=2.0, pulse_hold_s=0.0)
 
 
+def test_driver_set_auto_mode_writes_tag():
+    from bung_cover_robot.plc import tags as T
+
+    d = make_driver()
+    assert d.is_auto_mode is False
+    d.set_auto_mode(True)
+    assert d.client.read(T.Cmd.AUTO_MODE) is True
+    assert d.is_auto_mode is True
+    d.set_auto_mode(False)
+    assert d.is_auto_mode is False
+
+
+def test_dry_run_driver_tracks_auto_mode():
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    d = DryRunRobotDriver()
+    assert d.is_auto_mode is False
+    d.set_auto_mode(True)
+    assert d.is_auto_mode is True
+
+
 def test_pulse_holds_command_bit_true_for_the_plc(monkeypatch):
     """A real PLC (10-20 ms scan) must see the rising edge, so a pulsed command
     bit is held true for pulse_hold_s between the True and False writes — not

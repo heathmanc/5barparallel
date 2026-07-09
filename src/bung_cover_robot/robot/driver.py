@@ -108,6 +108,15 @@ class RobotDriver(ABC):
     def reset(self) -> None:
         """Clear a latched fault so the drives can be enabled/homed again."""
 
+    def set_auto_mode(self, on: bool) -> None:
+        """Select Auto (automatic pick/place owns motion) vs Manual (jog/home)
+        mode. No-op for drivers with no mode concept."""
+
+    @property
+    def is_auto_mode(self) -> bool:
+        """True when the machine is in Auto mode. Default False (manual)."""
+        return False
+
     @property
     def is_referenced(self) -> bool:
         """True if a home reference is currently established. Default: we know a
@@ -135,11 +144,20 @@ class DryRunRobotDriver(RobotDriver):
         self._enabled = False
         self._angles: Optional[Angles] = None  # unknown until homed/moved
         self._home_angles = home_angles
+        self._auto = False
         self.command_log: List[Angles] = []
 
     @property
     def is_enabled(self) -> bool:
         return self._enabled
+
+    def set_auto_mode(self, on: bool) -> None:
+        self._auto = bool(on)
+        logger.info("[dry-run] mode = %s", "AUTO" if on else "MANUAL")
+
+    @property
+    def is_auto_mode(self) -> bool:
+        return self._auto
 
     def enable(self) -> None:
         self._enabled = True

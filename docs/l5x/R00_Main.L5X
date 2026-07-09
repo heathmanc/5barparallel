@@ -7,16 +7,16 @@
 <Routine Use="Target" Name="R00_Main" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R00_Main: scan dispatcher — calls every routine in order each scan. Manual and Auto are mutually exclusive on AutoMode (RobotTags.csv). Put this routine as the Program's Main; import all the other routines first.]]></Comment>
+<Comment><![CDATA[R00_Main: scan dispatcher — calls every routine in order each scan. Manual and Auto are mutually exclusive on VisionRobot.Cmd.AutoMode. Put this routine as the Program's Main; import all the other routines first.]]></Comment>
 <Text><![CDATA[JSR(R10_Safety,0)JSR(R20_Drives,0)JSR(R30_Homing,0);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
-<Comment><![CDATA[Auto mode runs the pick/place sequence; manual mode runs the jog/home surface.]]></Comment>
-<Text><![CDATA[XIC(AutoMode)JSR(R50_Auto,0);]]></Text>
+<Comment><![CDATA[Auto mode runs the pick/place sequence; manual mode runs the jog/home surface. The PC selects the mode via VisionRobot.Cmd.AutoMode (HMI Manual/Auto buttons).]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Cmd.AutoMode)JSR(R50_Auto,0);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
 <Comment><![CDATA[(Manual when not in auto.)]]></Comment>
-<Text><![CDATA[XIO(AutoMode)JSR(R40_Manual,0);]]></Text>
+<Text><![CDATA[XIO(VisionRobot.Cmd.AutoMode)JSR(R40_Manual,0);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
 <Comment><![CDATA[Service the per-axis move engines after the commanding routine, then publish status.]]></Comment>

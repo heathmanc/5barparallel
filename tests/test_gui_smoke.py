@@ -96,10 +96,22 @@ def test_vision_tab_detect_overlay(qapp):
     assert vt.cover_detector.config.method == "hough"
 
 
+def test_vision_tab_start_requires_auto_mode(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    win.controller.enable()
+    win.controller.home_reference()
+    vt._set_mode(False)                       # Manual
+    vt._on_start()
+    assert "AUTO mode" in vt.status_label.text()   # gated before anything runs
+    assert not vt.start_btn.isEnabled()            # Cycle Start inert in Manual
+
+
 def test_vision_tab_start_requires_enable_and_home(qapp):
     win = MainWindow()
     vt = win.vision_tab
-    vt._on_start()  # not enabled/referenced yet
+    vt._set_mode(True)                        # Auto, but not enabled/referenced yet
+    vt._on_start()
     assert "Cannot start" in vt.status_label.text()
 
 
@@ -112,11 +124,30 @@ def _wait_until(qapp, predicate, timeout_s=5.0):
     return predicate()
 
 
+def test_vision_mode_buttons_drive_controller(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    # default Manual: Auto button not checked, Cycle Start inert
+    assert not win.controller.is_auto_mode
+    assert not vt.auto_btn.isChecked() and vt.manual_btn.isChecked()
+    assert not vt.start_btn.isEnabled()
+    # click Auto -> controller in auto, Cycle Start becomes available
+    vt._set_mode(True)
+    assert win.controller.is_auto_mode
+    assert vt.auto_btn.isChecked() and not vt.manual_btn.isChecked()
+    assert vt.start_btn.isEnabled()
+    # back to Manual
+    vt._set_mode(False)
+    assert not win.controller.is_auto_mode
+    assert vt.manual_btn.isChecked() and not vt.start_btn.isEnabled()
+
+
 def test_vision_tab_start_runs_cycle(qapp):
     win = MainWindow()
     vt = win.vision_tab
     win.controller.enable()
     win.controller.home_reference()
+    vt._set_mode(True)                        # Auto
     vt._on_start()
     # The cycle runs on a worker thread; wait for it to finish.
     assert _wait_until(qapp, lambda: not vt._running)
@@ -132,6 +163,7 @@ def test_vision_tab_bypass_runs_without_calibration(qapp):
     win.controller.home_reference()
     vt.set_calibration(None)          # no calibration at all
     vt.bypass_chk.setChecked(True)    # scripted targets
+    vt._set_mode(True)                # Auto
     vt._on_start()
     assert _wait_until(qapp, lambda: not vt._running)
     # cycle ran and placed covers despite no calibration/detection

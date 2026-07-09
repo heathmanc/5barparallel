@@ -135,6 +135,19 @@ class PlcRobotDriver(RobotDriver):
         except (TypeError, ValueError):
             return None
 
+    def set_auto_mode(self, on: bool) -> None:
+        """Write Cmd.AutoMode — R00_Main scans R50_Auto (pick/place) when true,
+        R40_Manual (jog/home) when false. A level, not a pulse."""
+        try:
+            self._write(T.Cmd.AUTO_MODE, bool(on))
+        except PlcError as exc:
+            raise RobotDriverError(f"set auto mode: PLC comms error: {exc}") from exc
+        logger.info("mode -> %s", "AUTO" if on else "MANUAL")
+
+    @property
+    def is_auto_mode(self) -> bool:
+        return bool(self._read_safe(T.Cmd.AUTO_MODE))
+
     def reset(self) -> None:
         """Hold Cmd.Reset until the fault actually clears, then drop it.
 
