@@ -23,6 +23,7 @@ class Circle:
     radius: float
     area: float
     circularity: float
+    contour: Optional[np.ndarray] = None   # detected outline (px), for overlays
 
     @property
     def diameter(self) -> float:
@@ -182,6 +183,8 @@ def find_round_objects(
     blur: int = 5,
     min_circularity: float = 0.6,
     min_solidity: float = 0.9,
+    canny_lo_frac: float = 0.33,
+    canny_hi_frac: float = 0.66,
 ) -> List[Circle]:
     """Round-ish objects by their outline — color- and (partly) shape-agnostic.
 
@@ -198,52 +201,66 @@ def find_round_objects(
     import cv2
 
     gray = _gray_blur(frame, blur)
-    # Edge gradient is polarity-independent: a boundary shows up whether the object
-    # is darker OR brighter than its background. Median-seeded Canny + a close to
-    # bridge small gaps (and the flat side of a D) into a shut outline.
-    med = float(np.median(gray))
-    lo = int(max(0.0, 0.50 * med))
-    hi = int(min(255.0, max(lo + 1.0, 1.30 * med)))
-    edges = cv2.Canny(gray, lo, hi)
+    height, width = gray.shape[:2]
     ksz = max(3, (int(min_diameter / 4) | 1))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz))
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
-    height, width = gray.shape[:2]
+    # Two complementary sources of the object outline, then merge:
+    #  * Canny edges — polarity-independent; catches ring/bright-centered shapes.
+    #  * Otsu region (both polarities) — relative, so it catches a low-contrast
+    #    solid object an edge threshold would miss.
+    med = float(np.median(gray))
+    lo = int(max(0.0, canny_lo_frac * med))
+    hi = int(min(255.0, max(lo + 1.0, canny_hi_frac * med)))
+    masks = [cv2.morphologyEx(cv2.Canny(gray, lo, hi), cv2.MORPH_CLOSE, kernel)]
+    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    masks.append(cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, kernel))
+    masks.append(cv2.morphologyEx(cv2.bitwise_not(otsu), cv2.MORPH_CLOSE, kernel))
+
     out: List[Circle] = []
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area <= 0.0:
-            continue
-        x, y, w, h = cv2.boundingRect(cnt)
-        if x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1:
-            continue                          # touches the border => background, not an object
-        (_, _), r = cv2.minEnclosingCircle(cnt)
-        if not (min_diameter <= 2.0 * r <= max_diameter):
-            continue
-        peri = cv2.arcLength(cnt, True)
-        if peri <= 0.0:
-            continue
-        circ = 4.0 * math.pi * area / (peri * peri)
-        hull_area = cv2.contourArea(cv2.convexHull(cnt))
-        solidity = area / hull_area if hull_area > 0.0 else 0.0
-        if circ < min_circularity or solidity < min_solidity:
-            continue
-        m = cv2.moments(cnt)
-        if m["m00"] == 0.0:
-            continue
-        cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
-        if any(math.hypot(cx - o.cx, cy - o.cy) < min_diameter * 0.5 for o in out):
-            continue
-        out.append(Circle(float(cx), float(cy), float(r), float(area), float(circ)))
+    for mask in masks:
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area <= 0.0:
+                continue
+            x, y, w, h = cv2.boundingRect(cnt)
+            # Reject only a crop-spanning blob (the background), not an object that
+            # merely sits near an edge of the (already cropped) pick region.
+            if (x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1) and (
+                    w >= 0.9 * width or h >= 0.9 * height):
+                continue
+            (_, _), r = cv2.minEnclosingCircle(cnt)
+            if not (min_diameter <= 2.0 * r <= max_diameter):
+                continue
+            peri = cv2.arcLength(cnt, True)
+            if peri <= 0.0:
+                continue
+            circ = 4.0 * math.pi * area / (peri * peri)
+            hull_area = cv2.contourArea(cv2.convexHull(cnt))
+            solidity = area / hull_area if hull_area > 0.0 else 0.0
+            if circ < min_circularity or solidity < min_solidity:
+                continue
+            m = cv2.moments(cnt)
+            if m["m00"] == 0.0:
+                continue
+            cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+            if any(math.hypot(cx - o.cx, cy - o.cy) < min_diameter * 0.5 for o in out):
+                continue
+            out.append(Circle(float(cx), float(cy), float(r),
+                              float(area), float(circ), cnt))
     return out
 
 
 def offset_circles(circles: Sequence[Circle], ox: int, oy: int) -> List[Circle]:
     if ox == 0 and oy == 0:
         return list(circles)
-    return [Circle(c.cx + ox, c.cy + oy, c.radius, c.area, c.circularity) for c in circles]
+    out: List[Circle] = []
+    for c in circles:
+        cnt = None if c.contour is None else c.contour + [ox, oy]
+        out.append(Circle(c.cx + ox, c.cy + oy, c.radius, c.area, c.circularity, cnt))
+    return out
 
 
 def annotate(
@@ -270,6 +287,11 @@ def annotate(
         for cd in covers:
             circle = cd.circle
             ok = getattr(cd, "accepted", True)
-            color = (0, 200, 0) if ok else (60, 60, 235)
-            cv2.circle(out, (int(circle.cx), int(circle.cy)), int(circle.radius), color, 2)
+            color = (0, 220, 0) if ok else (60, 60, 235)
+            ctr = (int(circle.cx), int(circle.cy))
+            if circle.contour is not None:                       # true detected outline
+                cv2.drawContours(out, [circle.contour.astype(int)], -1, color, 3)
+            else:
+                cv2.circle(out, ctr, int(circle.radius), color, 3)
+            cv2.drawMarker(out, ctr, color, cv2.MARKER_CROSS, 14, 2)  # pickup point
     return out

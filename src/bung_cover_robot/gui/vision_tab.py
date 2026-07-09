@@ -13,11 +13,13 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -130,6 +132,11 @@ class VisionTab(QWidget):
         rb = QVBoxLayout(run_box)
         self.capture_btn = QPushButton("Capture frame")
         self.capture_btn.clicked.connect(self._on_capture)
+        self.save_frame_btn = QPushButton("Save frame…")
+        self.save_frame_btn.setToolTip(
+            "Write the current raw frame to a PNG (for tuning / sharing)."
+        )
+        self.save_frame_btn.clicked.connect(self._on_save_frame)
         self.detect_btn = QPushButton("Detect")
         self.detect_btn.clicked.connect(self._on_detect)
         self.start_btn = QPushButton("Start cycle")
@@ -138,7 +145,8 @@ class VisionTab(QWidget):
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setProperty("accent", "danger")
         self.stop_btn.clicked.connect(self._on_stop)
-        for b in (self.capture_btn, self.detect_btn, self.start_btn, self.stop_btn):
+        for b in (self.capture_btn, self.save_frame_btn, self.detect_btn,
+                  self.start_btn, self.stop_btn):
             rb.addWidget(b)
         self.bypass_chk = QCheckBox("Bypass vision (scripted)")
         self.bypass_chk.setToolTip(
@@ -170,8 +178,71 @@ class VisionTab(QWidget):
         rob.addWidget(self.clear_roi_btn)
         v.addWidget(roi_box)
 
+        v.addWidget(self._build_tuning_group())
+
         v.addStretch(1)
         return panel
+
+    # --- live detection tuning ---------------------------------------------
+    def _build_tuning_group(self) -> QGroupBox:
+        box = QGroupBox("Cover detection tuning")
+        box.setToolTip(
+            "Live-tune the color-agnostic shape detector on the current frame. "
+            "Draw a pick region first; each change re-detects immediately."
+        )
+        grid = QGridLayout(box)
+        cfg = self.cover_detector.config
+        self.tune_min = self._tune_row(grid, 0, "Min Ø px", 5, 200, int(cfg.min_diameter_px))
+        self.tune_max = self._tune_row(grid, 1, "Max Ø px", 20, 400, int(cfg.max_diameter_px))
+        self.tune_edge = self._tune_row(grid, 2, "Edge sens", 0, 100, 70)
+        self.tune_sol = self._tune_row(grid, 3, "Solidity %", 50, 100, int(cfg.shape_min_solidity * 100))
+        self.tune_circ = self._tune_row(grid, 4, "Round %", 0, 100, int(cfg.shape_min_circularity * 100))
+        for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_sol, self.tune_circ):
+            s.valueChanged.connect(self._on_tuning_changed)
+        return box
+
+    def _tune_row(self, grid: QGridLayout, row: int, label: str,
+                  lo: int, hi: int, val: int) -> QSlider:
+        grid.addWidget(QLabel(label), row, 0)
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setValue(val)
+        readout = QLabel(str(val))
+        readout.setFixedWidth(32)
+        slider.valueChanged.connect(lambda v, r=readout: r.setText(str(v)))
+        grid.addWidget(slider, row, 1)
+        grid.addWidget(readout, row, 2)
+        return slider
+
+    def _apply_tuning(self) -> None:
+        """Push the slider values into the cover detector's shape config."""
+        cfg = self.cover_detector.config
+        cfg.min_diameter_px = float(self.tune_min.value())
+        cfg.max_diameter_px = float(max(self.tune_max.value(), self.tune_min.value() + 1))
+        s = self.tune_edge.value()               # 0 (insensitive) .. 100 (sensitive)
+        hi = 1.5 - 0.012 * s                      # -> Canny hi fraction 1.5 .. 0.3
+        cfg.shape_canny_hi_frac = hi
+        cfg.shape_canny_lo_frac = 0.5 * hi
+        cfg.shape_min_solidity = self.tune_sol.value() / 100.0
+        cfg.shape_min_circularity = self.tune_circ.value() / 100.0
+
+    def _on_tuning_changed(self) -> None:
+        self._apply_tuning()
+        if self._frame is not None:
+            self._on_detect()
+
+    def _on_save_frame(self) -> None:
+        if self._frame is None:
+            self._capture()
+        if self._frame is None:
+            self._set_status("No frame to save (connect the camera).", theme.WARN)
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save frame", "frame.png", "PNG (*.png)")
+        if not path:
+            return
+        import cv2
+        cv2.imwrite(path, self._frame)
+        self._set_status(f"Saved frame to {path}", theme.SUCCESS)
 
     # --- camera -------------------------------------------------------------
     def set_camera(self, camera: Camera) -> None:
@@ -324,6 +395,8 @@ class VisionTab(QWidget):
                 pick_roi=self._pick_roi,
             )
         )
+        if hasattr(self, "tune_min"):    # keep any live-tuned shape/size settings
+            self._apply_tuning()
 
     # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:

@@ -734,6 +734,30 @@ def test_vision_pick_roi_gates_and_persists(qapp, tmp_path):
     assert not vt.clear_roi_btn.isEnabled()
 
 
+def test_vision_tuning_sliders_and_save_frame(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    win = MainWindow()
+    vt = win.vision_tab
+    vt._capture()
+    assert vt._frame is not None
+
+    # sliders push straight into the cover detector config and re-detect (no crash)
+    vt.tune_max.setValue(240)
+    assert vt.cover_detector.config.max_diameter_px == 240
+    vt.tune_edge.setValue(95)                     # more sensitive => lower Canny hi
+    assert vt.cover_detector.config.shape_canny_hi_frac < 0.66
+    vt.tune_sol.setValue(80)
+    assert vt.cover_detector.config.shape_min_solidity == pytest.approx(0.80)
+
+    # Save frame writes a PNG at the chosen path
+    out = tmp_path / "frame.png"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), "PNG (*.png)"))
+    vt._on_save_frame()
+    assert out.exists()
+
+
 def test_vision_pick_roi_draw_without_calibration(qapp):
     win = MainWindow()
     vt = win.vision_tab

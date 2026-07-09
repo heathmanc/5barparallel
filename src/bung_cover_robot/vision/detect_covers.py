@@ -29,7 +29,7 @@ PixelToRobot = Callable[[float, float], Tuple[float, float]]
 @dataclass
 class CoverDetectorConfig:
     min_diameter_px: float = 15.0
-    max_diameter_px: float = 160.0        # covers can be large in a close overhead view
+    max_diameter_px: float = 200.0        # covers can be large in a close overhead view
     min_circularity: float = 0.75
     blur: int = 5
     threshold: Optional[int] = None       # None => Otsu
@@ -45,6 +45,8 @@ class CoverDetectorConfig:
     method: str = "auto"
     shape_min_circularity: float = 0.6    # relaxed so a flat-sided (D) cover passes
     shape_min_solidity: float = 0.9       # convexity: rejects grain, keeps a D
+    shape_canny_lo_frac: float = 0.33     # edge sensitivity (of median): lower = more
+    shape_canny_hi_frac: float = 0.66
     # Physical-size gate (per recipe): reject blobs whose real diameter is off the
     # expected cover size. Needs a calibration (to_robot); 0 disables the check.
     expected_diameter_mm: float = 0.0
@@ -100,7 +102,8 @@ class CoverDetector:
         if use_shape:
             found = find_round_objects(
                 sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
-                cfg.shape_min_circularity, cfg.shape_min_solidity)
+                cfg.shape_min_circularity, cfg.shape_min_solidity,
+                cfg.shape_canny_lo_frac, cfg.shape_canny_hi_frac)
         else:
             found = find_blobs(sub, False, cfg.min_diameter_px, cfg.max_diameter_px,
                                cfg.min_circularity, cfg.blur)

@@ -128,6 +128,21 @@ def test_shape_finder_is_color_and_shape_agnostic():
         assert any(abs(fx - cx) <= 14 for fx in xs), f"missed object near {cx}: {xs}"
 
 
+def test_shape_finds_low_contrast_solid_cover():
+    # a dark-grey D cover on lighter wood with soft edges — the real failure case
+    # (edge-only detection missed it; the Otsu-region pass catches it).
+    from bung_cover_robot.vision.detection import find_round_objects
+
+    img = np.full((260, 340, 3), 165, np.uint8)                      # light background
+    cv2.circle(img, (170, 130), 70, (95, 95, 95), -1)               # dark-grey cover
+    cv2.rectangle(img, (216, 60), (260, 200), (165, 165, 165), -1)  # flat side (D)
+    img = cv2.GaussianBlur(img, (7, 7), 0)                           # soft edges
+    found = find_round_objects(img, 60, 200)
+    assert found and any(
+        abs(c.cx - 170) <= 20 and abs(c.cy - 130) <= 20 for c in found)
+    assert found[0].contour is not None    # outline is available for the overlay
+
+
 def test_hole_detector_finds_bright_centered_holes():
     # the real failure case: dark RING + BRIGHT center. Blob(dark) chokes; shape wins.
     img = np.full((200, 460, 3), 70, np.uint8)
