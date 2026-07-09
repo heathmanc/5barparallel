@@ -201,7 +201,11 @@ def find_hough_circles(
         maxRadius=int(round(max_diameter / 2.0)))
     out: List[Circle] = []
     if res is not None:
+        # res is strongest-first; drop concentric/overlapping duplicates (a rim +
+        # inner ring on one cover) so a single object yields a single circle.
         for x, y, r in res[0]:
+            if any(math.hypot(x - o.cx, y - o.cy) < 0.5 * o.radius for o in out):
+                continue
             out.append(Circle(float(x), float(y), float(r),
                               float(math.pi * r * r), 1.0))
     return out

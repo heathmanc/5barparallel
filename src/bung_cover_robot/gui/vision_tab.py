@@ -36,13 +36,7 @@ from ..robot.driver import DryRunRobotDriver
 from ..vision.camera import Camera, CameraError
 from ..vision.detect_covers import CoverDetector, CoverDetectorConfig
 from ..vision.detect_holes import HoleDetector, HoleDetectorConfig
-from ..vision.detection import (
-    analyze_round_objects,
-    annotate,
-    annotate_candidates,
-    crop_roi,
-    offset_circles,
-)
+from ..vision.detection import annotate
 from . import theme
 from .cycle_worker import CycleWorker
 from .imaging import ndarray_to_qpixmap
@@ -69,11 +63,10 @@ class VisionTab(QWidget):
         self.recipes = recipes
         self.calibration_manager = calibration_manager  # for per-recipe pick ROI
         self.hole_detector = HoleDetector()
-        # Real covers vary in color and are large in a close overhead view — always
-        # use the color-agnostic shape finder, with size defaults that fit a big
-        # cover and skip small grain / vent holes. Tunable live in the sidebar.
+        # Covers are detected with Hough circles (robust for a round cover on
+        # grainy wood); size defaults fit a large cover. Tunable live in the sidebar.
         self.cover_detector = CoverDetector(
-            CoverDetectorConfig(method="shape", min_diameter_px=40, max_diameter_px=400))
+            CoverDetectorConfig(method="hough", min_diameter_px=250, max_diameter_px=400))
         self._pick_roi = None           # (x, y, w, h) px — covers must be inside
         self._frame = None
         self._display = None            # last rendered image (raw or overlay), for Save
@@ -194,43 +187,21 @@ class VisionTab(QWidget):
         v.addStretch(1)
         return panel
 
-    # --- live detection tuning ---------------------------------------------
+    # --- live Hough tuning --------------------------------------------------
     def _build_tuning_group(self) -> QGroupBox:
-        box = QGroupBox("Cover detection tuning")
+        box = QGroupBox("Cover detection (Hough)")
         box.setToolTip(
-            "Live-tune the color-agnostic shape detector on the current frame. "
-            "Draw a pick region first; each change re-detects immediately."
+            "Live-tune the Hough circle detector on the current frame. Set Min/Max "
+            "Ø to your cover's pixel size; each change re-detects immediately."
         )
         grid = QGridLayout(box)
         cfg = self.cover_detector.config
-        self.tune_min = self._tune_row(grid, 0, "Min Ø px", 5, 400, int(cfg.min_diameter_px))
+        self.tune_min = self._tune_row(grid, 0, "Min Ø px", 20, 800, int(cfg.min_diameter_px))
         self.tune_max = self._tune_row(grid, 1, "Max Ø px", 20, 800, int(cfg.max_diameter_px))
         self.tune_edge = self._tune_row(grid, 2, "Edge sens", 0, 100, 70)
-        self.tune_sol = self._tune_row(grid, 3, "Solidity %", 50, 100, int(cfg.shape_min_solidity * 100))
-        self.tune_circ = self._tune_row(grid, 4, "Round %", 0, 100, int(cfg.shape_min_circularity * 100))
-        self.tune_votes = self._tune_row(grid, 5, "Votes (Hough)", 20, 90, int(cfg.hough_param2))
-        for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_sol,
-                  self.tune_circ, self.tune_votes):
+        self.tune_votes = self._tune_row(grid, 3, "Votes", 20, 90, int(cfg.hough_param2))
+        for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_votes):
             s.valueChanged.connect(self._on_tuning_changed)
-        self.debug_chk = QCheckBox("Show all candidates (why rejected)")
-        self.debug_chk.setToolTip(
-            "Overlay every right-sized blob the detector finds, green (kept) or "
-            "orange (rejected) with the reason — so you can see which slider to move."
-        )
-        self.debug_chk.toggled.connect(self._on_tuning_changed)
-        grid.addWidget(self.debug_chk, 6, 0, 1, 3)
-        self.show_holes_chk = QCheckBox("Show holes")
-        self.show_holes_chk.setToolTip("Overlay drop-hole detections too (off keeps the cover view clean).")
-        self.show_holes_chk.toggled.connect(self._on_tuning_changed)
-        grid.addWidget(self.show_holes_chk, 7, 0, 1, 3)
-        self.hough_chk = QCheckBox("Use Hough circles")
-        self.hough_chk.setToolTip(
-            "Detect circles by the Hough transform. 'Edge sens' softens the edge; "
-            "'Votes' sets selectivity (higher = fewer, stronger circles); set "
-            "Min/Max Ø to your cover's pixel size to reject grain."
-        )
-        self.hough_chk.toggled.connect(self._on_tuning_changed)
-        grid.addWidget(self.hough_chk, 8, 0, 1, 3)
         return box
 
     def _tune_row(self, grid: QGridLayout, row: int, label: str,
@@ -247,18 +218,12 @@ class VisionTab(QWidget):
         return slider
 
     def _apply_tuning(self) -> None:
-        """Push the slider values into the cover detector config."""
+        """Push the slider values into the Hough cover-detector config."""
         cfg = self.cover_detector.config
-        hough = getattr(self, "hough_chk", None) and self.hough_chk.isChecked()
-        cfg.method = "hough" if hough else "shape"
+        cfg.method = "hough"
         cfg.min_diameter_px = float(self.tune_min.value())
         cfg.max_diameter_px = float(max(self.tune_max.value(), self.tune_min.value() + 1))
         s = self.tune_edge.value()               # 0 (insensitive) .. 100 (sensitive)
-        hi = 1.5 - 0.012 * s                      # -> Canny hi fraction 1.5 .. 0.3
-        cfg.shape_canny_hi_frac = hi
-        cfg.shape_canny_lo_frac = 0.5 * hi
-        cfg.shape_min_solidity = self.tune_sol.value() / 100.0
-        cfg.shape_min_circularity = self.tune_circ.value() / 100.0
         # Edge sens softens only the edge detector; selectivity is a SEPARATE knob
         # (Votes) so cranking sensitivity for a soft edge can't flood the image
         # with weak grain circles.
@@ -310,50 +275,20 @@ class VisionTab(QWidget):
             self._capture()
         if self._frame is None:
             return
-        show_holes = getattr(self, "show_holes_chk", None) and self.show_holes_chk.isChecked()
-        holes = self.hole_detector.detect(self._frame) if show_holes else None
-        hough = getattr(self, "hough_chk", None) and self.hough_chk.isChecked()
-
-        if not hough and getattr(self, "debug_chk", None) and self.debug_chk.isChecked():
-            self._render_debug(holes)
-            return
-
         # With a calibration, covers are also filtered by real workspace
         # reachability (pixel -> robot -> WorkspaceValidator).
         to_robot = self.calibration.pixel_to_robot if self.calibration else None
         validator = self.controller.validator if self.calibration else None
         covers = self.cover_detector.detect(self._frame, to_robot, validator)
-        overlay = annotate(self._frame, holes.holes if holes else None, covers.covers)
+        overlay = annotate(self._frame, None, covers.covers)
         self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         reach = " reachable" if self.calibration else " pickable"
-        holes_txt = f"{holes.count} holes · " if holes else ""
         self._set_status(
-            f"{holes_txt}{covers.count} covers, {len(covers.accepted)}{reach}.",
+            f"{covers.count} covers, {len(covers.accepted)}{reach} "
+            f"(Ø {int(self.cover_detector.config.min_diameter_px)}–"
+            f"{int(self.cover_detector.config.max_diameter_px)} px).",
             theme.SUCCESS if covers.accepted else theme.WARN,
-        )
-
-    def _render_debug(self, holes) -> None:
-        """Overlay every size-passing candidate + its keep/reject reason."""
-        cfg = self.cover_detector.config
-        region = cfg.pick_roi if cfg.pick_roi is not None else cfg.roi
-        sub, ox, oy = crop_roi(self._frame, region)
-        cands = analyze_round_objects(
-            sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
-            cfg.shape_min_circularity, cfg.shape_min_solidity,
-            cfg.shape_canny_lo_frac, cfg.shape_canny_hi_frac)
-        circles = offset_circles([c for c, _ in cands], ox, oy)
-        cands = list(zip(circles, [r for _, r in cands]))
-        overlay = annotate_candidates(self._frame, cands)
-        if holes:
-            overlay = annotate(overlay, holes.holes, None)
-        self._display = overlay
-        self.view.set_pixmap(ndarray_to_qpixmap(overlay))
-        kept = sum(1 for _, r in cands if r == "ok")
-        self._set_status(
-            f"debug: {len(cands)} candidates, {kept} kept "
-            f"(Ø {int(cfg.min_diameter_px)}–{int(cfg.max_diameter_px)} px).",
-            theme.INFO,
         )
 
     def set_calibration(self, calibration) -> None:
@@ -461,15 +396,15 @@ class VisionTab(QWidget):
         on size). Preserves the current pick region."""
         self.cover_detector = CoverDetector(
             CoverDetectorConfig(
-                method="shape",
-                min_diameter_px=40,
+                method="hough",
+                min_diameter_px=250,
                 max_diameter_px=400,
                 expected_diameter_mm=diameter_mm,
                 diameter_tolerance=tolerance,
                 pick_roi=self._pick_roi,
             )
         )
-        if hasattr(self, "tune_min"):    # keep any live-tuned shape/size settings
+        if hasattr(self, "tune_min"):    # keep any live-tuned Hough settings
             self._apply_tuning()
 
     # --- automatic cycle ----------------------------------------------------

@@ -92,14 +92,8 @@ def test_vision_tab_detect_overlay(qapp):
     win = MainWindow()
     vt = win.vision_tab
     vt._on_detect()
-    assert "covers" in vt.status_label.text()      # cover-focused view by default
-    vt.show_holes_chk.setChecked(True)             # opt in to the hole overlay
-    vt._on_detect()
-    assert "6 holes" in vt.status_label.text()
-    # the debug view lists candidates with reasons
-    vt.debug_chk.setChecked(True)
-    vt._on_detect()
-    assert "candidates" in vt.status_label.text()
+    assert "covers" in vt.status_label.text()      # Hough cover detection
+    assert vt.cover_detector.config.method == "hough"
 
 
 def test_vision_tab_start_requires_enable_and_home(qapp):
@@ -748,13 +742,13 @@ def test_vision_tuning_sliders_and_save_frame(qapp, tmp_path, monkeypatch):
     vt._capture()
     assert vt._frame is not None
 
-    # sliders push straight into the cover detector config and re-detect (no crash)
-    vt.tune_max.setValue(240)
-    assert vt.cover_detector.config.max_diameter_px == 240
-    vt.tune_edge.setValue(95)                     # more sensitive => lower Canny hi
-    assert vt.cover_detector.config.shape_canny_hi_frac < 0.66
-    vt.tune_sol.setValue(80)
-    assert vt.cover_detector.config.shape_min_solidity == pytest.approx(0.80)
+    # sliders push straight into the Hough config and re-detect (no crash)
+    vt.tune_max.setValue(360)
+    assert vt.cover_detector.config.max_diameter_px == 360
+    vt.tune_edge.setValue(95)                     # more sensitive => softer edge
+    assert vt.cover_detector.config.hough_param1 < 60
+    vt.tune_votes.setValue(50)
+    assert vt.cover_detector.config.hough_param2 == pytest.approx(50)
 
     # Save frame writes a PNG at the chosen path
     out = tmp_path / "frame.png"
