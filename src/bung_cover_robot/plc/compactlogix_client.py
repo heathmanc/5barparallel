@@ -157,7 +157,8 @@ class SimulatedPlcClient(PlcClient):
     ``home_angles`` is what the (simulated) homing routine reports as the
     reference position. Manual moves complete instantly and echo Target ->
     Actual; an automatic pick/place request runs the whole §11 job in one step
-    (ending at the drop pose) and echoes CommandID -> CompleteCommandID.
+    (returning to the park/home pose at the end) and echoes CommandID ->
+    CompleteCommandID.
     """
 
     def __init__(self, home_angles: Tuple[float, float] = (0.0, 0.0)) -> None:
@@ -262,9 +263,10 @@ class SimulatedPlcClient(PlcClient):
         self._store[T.Status.ACTIVE_COMMAND_ID] = cid
         self._store[T.Status.BUSY] = True
         self._store[T.Status.READY] = False
-        # ... pick (vacuum on) -> place -> blow-off; ends at the drop pose.
-        self._store[T.Status.ACTUAL_LEFT_DEG] = self._store.get(T.Target.DROP_LEFT_DEG, 0.0)
-        self._store[T.Status.ACTUAL_RIGHT_DEG] = self._store.get(T.Target.DROP_RIGHT_DEG, 0.0)
+        # ... pick (vacuum on) -> place -> blow-off -> return to PARK (R50 State 192),
+        # so the job ends back at the fixed park/home pose, not left at the drop.
+        self._store[T.Status.ACTUAL_LEFT_DEG] = self._home_angles[0]
+        self._store[T.Status.ACTUAL_RIGHT_DEG] = self._home_angles[1]
         self._store[T.Status.VACUUM_OK] = False  # released after blow-off
         self._store[T.Status.COMPLETE_COMMAND_ID] = cid
         self._store[T.Status.DONE] = True

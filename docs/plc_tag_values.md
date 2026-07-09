@@ -44,6 +44,8 @@ points you refine at commissioning; `STEPS_PER_DEG` is fixed and
 |---|---|---|---|---|
 | `CAMERA_CLEAR_L` | REAL | `0.0` | deg | Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose. |
 | `CAMERA_CLEAR_R` | REAL | `0.0` | deg | Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose. |
+| `PARK_L` | REAL | `140.5406` | deg | End-of-cycle park pose, left shoulder deg. R50_Auto returns the arm here after each place so every cycle ends at the SAME fixed origin (defaults to the home angle; set to CAMERA_CLEAR_L for an out-of-view park instead). |
+| `PARK_R` | REAL | `39.4594` | deg | End-of-cycle park pose, right shoulder deg (see PARK_L). |
 
 ## Heartbeat watchdog + drop-out debounce (R10/R20)
 

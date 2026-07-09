@@ -60,6 +60,8 @@ COMMISSIONING_CONSTANTS: List[PlcConstant] = [
     PlcConstant("BLOWOFF_TIME", "DINT", 200, "ms", "Blowoff time (BlowTmr preset)."),
     PlcConstant("CAMERA_CLEAR_L", "REAL", 0.0, "deg", "Camera-clear pose, left shoulder deg."),
     PlcConstant("CAMERA_CLEAR_R", "REAL", 0.0, "deg", "Camera-clear pose, right shoulder deg."),
+    PlcConstant("PARK_L", "REAL", 140.5406, "deg", "End-of-cycle park pose, left shoulder deg (R50 returns here)."),
+    PlcConstant("PARK_R", "REAL", 39.4594, "deg", "End-of-cycle park pose, right shoulder deg."),
     PlcConstant("HB_TIMEOUT_MS", "DINT", 1000, "ms", "PC-heartbeat watchdog timeout."),
     PlcConstant("EN_DROP_TMO_MS", "DINT", 1000, "ms", "Enable drop-out (power-cycle) debounce."),
 ]

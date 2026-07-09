@@ -111,18 +111,26 @@
 <Text><![CDATA[EQU(State,180)OTU(CylinderDown)MOV(190,State);]]></Text>
 </Rung>
 <Rung Number="26" Type="N">
-<Comment><![CDATA[State 190: Z up at drop confirmed (or Bypass_Vision).]]></Comment>
-<Text><![CDATA[EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(200,State);]]></Text>
+<Comment><![CDATA[State 190: Z up at drop confirmed (or Bypass_Vision) -> return to park.]]></Comment>
+<Text><![CDATA[EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(192,State);]]></Text>
 </Rung>
 <Rung Number="27" Type="N">
+<Comment><![CDATA[State 192 MOVE_PARK: return the arm to the fixed PARK pose so every cycle ends at the SAME origin (not left sitting at the last drop). Absolute move; clear stale InPosition/Loaded first, then execute both axes.]]></Comment>
+<Text><![CDATA[EQU(State,192)MOV(PARK_L,Move0_Target_Deg)MOV(PARK_R,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(194,State);]]></Text>
+</Rung>
+<Rung Number="28" Type="N">
+<Comment><![CDATA[State 194: parked (both axes in position) -> drop execute, complete the job.]]></Comment>
+<Text><![CDATA[EQU(State,194)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(200,State);]]></Text>
+</Rung>
+<Rung Number="29" Type="N">
 <Comment><![CDATA[State 200 COMPLETE_JOB: publish CompleteCommandID + Done, back to idle.]]></Comment>
 <Text><![CDATA[EQU(State,200)MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.CompleteCommandID)OTL(VisionRobot.Status.Done)OTU(VisionRobot.Status.CameraClear)MOV(0,State);]]></Text>
 </Rung>
-<Rung Number="28" Type="N">
+<Rung Number="30" Type="N">
 <Comment><![CDATA[State 900 FAULT: on Cmd.Reset (edge) while safe, publish FailedCommandID and return to idle.]]></Comment>
 <Text><![CDATA[EQU(State,900)XIC(VisionRobot.Cmd.Reset)ONS(AR_prev)XIC(SafetyOK)MOV(VisionRobot.Status.ActiveCommandID,VisionRobot.Status.FailedCommandID)OTU(VisionRobot.Status.Faulted)MOV(0,State);]]></Text>
 </Rung>
-<Rung Number="29" Type="N">
+<Rung Number="31" Type="N">
 <Comment><![CDATA[Any state: Cmd.Abort or unsafe -> stop outputs and go to FAULT.]]></Comment>
 <Text><![CDATA[[XIC(VisionRobot.Cmd.Abort),XIO(SafetyOK)]OTU(Move0_Execute)OTU(Move1_Execute)OTU(VacuumOn)OTU(Blowoff)MOV(900,State);]]></Text>
 </Rung>

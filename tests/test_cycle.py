@@ -75,8 +75,8 @@ def test_handshake_completes_job():
     res = hs.send_job_and_wait((120.0, 60.0), (130.0, 50.0), hole_index=1, cover_id=3)
     assert res.ok and res.command_id == 1
     assert sim.read(tags.Status.COMPLETE_COMMAND_ID) == 1
-    # ends at the drop pose
-    assert sim.read(tags.Status.ACTUAL_LEFT_DEG) == 130.0
+    # returns to the park/home pose at the end of the job (not left at the drop)
+    assert sim.read(tags.Status.ACTUAL_LEFT_DEG) == 135.0   # _homed_sim home angle
 
 
 def test_handshake_faults_when_not_homed():
