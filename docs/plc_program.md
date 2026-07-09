@@ -430,6 +430,11 @@ CASE State OF
        IF ONS(Cmd.RequestPickPlace) THEN
            ActiveCmd := Cmd.CommandID;  State := 10;  Status.Ready := FALSE;
        END_IF;
+       // NOTE: the PC HOLDS Cmd.RequestPickPlace TRUE until it sees the command
+       // accepted (Status.ActiveCommandID echoes Cmd.CommandID, or Status.Busy),
+       // then drops it. So this ONS is guaranteed to see the level regardless of
+       // scan phase — a brief fire-and-forget pulse would be lost between scans
+       // and the job would silently never start.
   10:  MoveCameraClear();               State := 20;   // to camera-clear pose
   20:  IF AtCameraClear THEN Status.CameraClear := TRUE; State := 30; END_IF;
   30:  Status.ReadyForVision := TRUE;                  // (targets already written)

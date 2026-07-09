@@ -74,10 +74,25 @@ class PickPlaceHandshake:
             self._write(T.Target.HOLE_INDEX, int(hole_index))
             self._write(T.Target.COVER_ID, int(cover_id))
             self._write(T.Cmd.COMMAND_ID, cid)
-            self._pulse(T.Cmd.REQUEST_PICK_PLACE)
+            accepted = self._assert_request_until_accepted(cid)
         except PlcError as exc:
             return JobResult(False, f"tag write failed: {exc}", cid)
 
+        if not accepted:
+            # The PLC never picked up the request. The auto state machine
+            # edge-detects RequestPickPlace (a ladder ONS); a fire-and-forget
+            # pulse can fall between PLC scans and be lost, so the job silently
+            # never runs and the motors never move. We held the bit until the
+            # ack window elapsed with no acknowledgement — surface it plainly
+            # rather than waiting out the full command timeout.
+            self._abort()
+            return JobResult(
+                False,
+                f"PLC did not accept the request within {self.ready_timeout_s:.1f}s "
+                "(RequestPickPlace edge missed, or the auto pick/place routine "
+                "isn't scanning / Auto mode isn't engaged); aborted",
+                cid,
+            )
         return self._wait_complete(cid)
 
     # --- waits --------------------------------------------------------------
@@ -96,6 +111,45 @@ class PickPlaceHandshake:
                 return f"PLC not ready after {self.ready_timeout_s:.1f}s"
             time.sleep(self.poll_interval_s)
 
+    def _assert_request_until_accepted(self, cid: int) -> bool:
+        """Assert ``Cmd.RequestPickPlace`` and HOLD it until the PLC accepts the
+        command (echoes ``ActiveCommandID``/``CompleteCommandID`` or goes Busy),
+        then drop it. The PLC edge-detects this bit on its program scan; a
+        write-True-then-immediately-False pulse is usually missed *between* scans
+        (~10-20 ms), losing the request entirely. Holding the level until the
+        acknowledgement guarantees the edge is observed regardless of scan phase.
+
+        Returns True once accepted (or on a PLC fault — surfaced by the caller),
+        False if no acknowledgement arrives within ``ready_timeout_s``."""
+        self._write(T.Cmd.REQUEST_PICK_PLACE, True)
+        deadline = time.monotonic() + self.ready_timeout_s
+        try:
+            while True:
+                if bool(self._read_safe(T.Status.FAULTED)):
+                    return True                      # fault handled downstream
+                if self._request_accepted(cid):
+                    return True
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(self.poll_interval_s)
+        finally:
+            self._write(T.Cmd.REQUEST_PICK_PLACE, False)
+
+    def _request_accepted(self, cid: int) -> bool:
+        """True once the PLC has latched this command id — the auto state machine
+        sets ActiveCommandID and clears Ready on the accepting scan."""
+        if int(self._read_safe(T.Status.ACTIVE_COMMAND_ID)) == cid:
+            return True
+        if int(self._read_safe(T.Status.COMPLETE_COMMAND_ID)) == cid:
+            return True
+        return bool(self._read_safe(T.Status.BUSY))
+
+    def _abort(self) -> None:
+        try:
+            self._pulse(T.Cmd.ABORT)
+        except PlcError:
+            pass
+
     def _wait_complete(self, cid: int) -> JobResult:
         deadline = time.monotonic() + self.command_timeout_s
         while True:
@@ -109,10 +163,7 @@ class PickPlaceHandshake:
                 return JobResult(True, "ok", cid)
             if time.monotonic() >= deadline:
                 # Recovery: don't hang — abort the stuck job and surface it.
-                try:
-                    self._pulse(T.Cmd.ABORT)
-                except PlcError:
-                    pass
+                self._abort()
                 return JobResult(
                     False, f"timed out after {self.command_timeout_s:.1f}s (aborted)", cid
                 )

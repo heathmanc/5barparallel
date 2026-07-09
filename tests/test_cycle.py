@@ -88,7 +88,8 @@ def test_handshake_faults_when_not_homed():
 
 
 class _StuckClient(PlcClient):
-    """A PLC that is Ready but never completes a job — exercises the timeout."""
+    """A PLC that ACCEPTS the request (echoes ActiveCommandID) but never completes
+    the job — exercises the command-complete timeout + abort recovery."""
 
     def __init__(self):
         self._store = {tags.Status.READY: True}
@@ -109,6 +110,11 @@ class _StuckClient(PlcClient):
 
     def write(self, tag, value):
         self._store[tag] = value
+        if tag == tags.Cmd.REQUEST_PICK_PLACE and value:
+            # accept the command (latch ActiveCommandID, go Busy) but never finish
+            self._store[tags.Status.ACTIVE_COMMAND_ID] = self._store.get(
+                tags.Cmd.COMMAND_ID, 0)
+            self._store[tags.Status.BUSY] = True
         if tag == tags.Cmd.ABORT and value:
             self.aborted = True
 
@@ -119,6 +125,47 @@ def test_handshake_times_out_and_recovers():
     res = hs.send_job_and_wait((1, 2), (3, 4), hole_index=0, cover_id=0)
     assert not res.ok and "timed out" in res.reason
     assert client.aborted  # recovery pulsed Cmd.Abort instead of hanging
+
+
+class _DeafClient(PlcClient):
+    """Ready, but never acknowledges the request — models a real PLC whose auto
+    state machine isn't scanning, or a request edge that was missed."""
+
+    def __init__(self):
+        self._store = {tags.Status.READY: True}
+        self.aborted = False
+        self.request_high_reads = 0
+
+    def connect(self):
+        return self
+
+    def close(self):
+        pass
+
+    @property
+    def is_connected(self):
+        return True
+
+    def read(self, tag):
+        return self._store.get(tag, 0)
+
+    def write(self, tag, value):
+        self._store[tag] = value
+        if tag == tags.Cmd.REQUEST_PICK_PLACE and value:
+            self.request_high_reads += 1     # the request WAS asserted (held)
+        if tag == tags.Cmd.ABORT and value:
+            self.aborted = True
+
+
+def test_handshake_reports_request_not_accepted():
+    client = _DeafClient()
+    hs = PickPlaceHandshake(
+        client, command_timeout_s=5.0, ready_timeout_s=0.05, poll_interval_s=0.01)
+    res = hs.send_job_and_wait((1, 2), (3, 4), hole_index=0, cover_id=0)
+    assert not res.ok and "did not accept" in res.reason
+    assert client.aborted                    # aborted rather than hung
+    assert client.request_high_reads == 1    # request was asserted (held), then cleared
+    assert client.read(tags.Cmd.REQUEST_PICK_PLACE) is False  # and dropped after
 
 
 # --------------------------------------------------------------------------- #
