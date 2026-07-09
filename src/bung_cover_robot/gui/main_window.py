@@ -10,6 +10,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import QMainWindow, QTabWidget, QWidget
 
+from ..app.app_settings import AppSettings
 from ..app.recipes import RecipeStore
 from ..app.robot_test_controller import RobotTestController, build_dry_run_controller
 from ..vision.calibration import CalibrationManager, CameraIntrinsics
@@ -73,19 +74,21 @@ class MainWindow(QMainWindow):
         self.camera = camera or _demo_camera()
         self.calibration_manager = CalibrationManager(intrinsics=_load_intrinsics(cfg_dir))
         self.recipes = _load_recipes(cfg_dir)
+        self.app_settings = AppSettings.load(cfg_dir / "app_settings.yaml")
 
         self.tabs = QTabWidget()
         self.vision_tab = VisionTab(
             self.controller, self.camera, None, self.recipes,
             calibration_manager=self.calibration_manager,
         )
-        self.camera_tab = CameraTab(self.camera)
+        self.camera_tab = CameraTab(self.camera, settings=self.app_settings,
+                                    config_dir=cfg_dir)
         self.calibration_tab = CalibrationTab(
             self.camera, self.calibration_manager, self.recipes
         )
         self.robot_test_tab = RobotTestTab(self.controller)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
-        self.plc_tab = PlcTab(self.controller)
+        self.plc_tab = PlcTab(self.controller, settings=self.app_settings)
         self.bypass_tab = BypassTab(self.controller)
         self.diagnostics_tab = DiagnosticsTab(self.controller)
         self.tabs.addTab(self.vision_tab, "Vision")

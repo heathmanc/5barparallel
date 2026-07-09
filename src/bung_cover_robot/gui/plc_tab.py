@@ -69,10 +69,12 @@ class PlcTab(QWidget):
     def __init__(
         self,
         controller: RobotTestController,
+        settings=None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.controller = controller
+        self.settings = settings          # AppSettings: remembers the PLC IP/slot
         self.const_store = PlcConstantStore.load(_CONST_PATH)
 
         root = QVBoxLayout(self)
@@ -103,6 +105,8 @@ class PlcTab(QWidget):
         row.addWidget(QLabel("IP/slot:"))
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("192.168.1.10/0")
+        if self.settings is not None:                # restore the last-used IP/slot
+            self.path_edit.setText(str(self.settings.get("plc_ip", "")))
         row.addWidget(self.path_edit)
         connect_btn = QPushButton("Connect PLC")
         connect_btn.clicked.connect(self._on_connect_real)
@@ -120,6 +124,8 @@ class PlcTab(QWidget):
         if not path:
             self._set_status("Enter an IP/slot (e.g. 192.168.1.10/0).", ok=False)
             return
+        if self.settings is not None:                # remember it for next launch
+            self.settings.set("plc_ip", path)
         driver = PlcRobotDriver(CompactLogixClient(path))
         try:
             driver.connect()

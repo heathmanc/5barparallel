@@ -71,7 +71,15 @@ def build_camera(args: argparse.Namespace) -> Optional[Camera]:
     config_dir = _config_dir(args)
     cam_cfg = config_dir / "camera_config.yaml"
     config = CameraConfig.from_yaml(cam_cfg) if cam_cfg.exists() else CameraConfig()
-    controls = CameraControls.from_yaml(cam_cfg) if cam_cfg.exists() else None
+    controls = CameraControls.from_yaml(cam_cfg) if cam_cfg.exists() else CameraControls()
+    # Operator's saved runtime settings (from the Camera tab) overlay the tracked
+    # config defaults, so exposure/gain/etc. restore across launches.
+    settings_file = config_dir / "camera_settings.yaml"
+    if settings_file.exists():
+        controls = controls.merged_with(CameraControls.from_yaml(settings_file))
+        saved_serial = CameraConfig.from_yaml(settings_file).serial_number
+        if saved_serial:
+            config = replace(config, serial_number=saved_serial)
     if args.camera_serial:
         config = replace(config, serial_number=args.camera_serial)
     return open_camera(config, controls)

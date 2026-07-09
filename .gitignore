@@ -20,3 +20,7 @@ diagnostics/
 
 # Operator-specific PLC commissioning values (HOME_OFFSET, tuned speeds, ...)
 config/plc_constants.yaml
+
+# Operator/site prefs (PLC IP, camera serial) and saved camera runtime settings
+config/app_settings.yaml
+config/camera_settings.yaml

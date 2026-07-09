@@ -12,6 +12,7 @@ to the preview so the sliders have a visible effect against the mock camera.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, Signal, QThread
@@ -33,6 +34,7 @@ from ..vision.camera import (
     Camera,
     CameraConfig,
     CameraControlError,
+    CameraControls,
     CameraError,
     MockCamera,
 )
@@ -104,9 +106,17 @@ class _LiveGrabber(QThread):
 class CameraTab(QWidget):
     cameraChanged = Signal()
 
-    def __init__(self, camera: Camera, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        camera: Camera,
+        settings=None,
+        config_dir: Optional[str | Path] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.camera = camera
+        self.settings = settings           # AppSettings: remembers the camera serial
+        self._config_dir = Path(config_dir) if config_dir else None
         self._frame = None
         self._sliders: Dict[str, QSlider] = {}
         self._value_labels: Dict[str, QLabel] = {}
@@ -122,8 +132,79 @@ class CameraTab(QWidget):
         right.addWidget(self._build_preview_group(), 1)
         root.addLayout(right, 1)
 
+        self._load_saved_controls()        # restore last-saved sliders/serial
         self._apply_initial_controls()
         self._grab()
+
+    # --- persistence --------------------------------------------------------
+    def _settings_path(self) -> Optional[Path]:
+        """Where saved runtime controls live (git-ignored)."""
+        return self._config_dir / "camera_settings.yaml" if self._config_dir else None
+
+    def _saved_controls(self) -> Optional[CameraControls]:
+        """The operator's saved controls (camera_settings.yaml), if any. The
+        tracked camera_config.yaml is the device template main.py applies at
+        camera-open; the sliders otherwise keep their sensible GUI defaults."""
+        path = self._settings_path()
+        if path is None or not path.exists():
+            return None
+        try:
+            return CameraControls.from_yaml(path)
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def _load_saved_controls(self) -> None:
+        """Push saved control values into the sliders + Auto toggles (silently)."""
+        if self.settings is not None:
+            self.serial_edit.setText(str(self.settings.get("camera_serial", "")))
+        controls = self._saved_controls()
+        if controls is None:
+            return
+        for name, auto_ctrl in _AUTO.items():
+            auto_val = getattr(controls, auto_ctrl, None)
+            if auto_val is not None:
+                chk = self._auto_checks[name]
+                chk.blockSignals(True)
+                chk.setChecked(str(auto_val).lower() != "off")
+                chk.blockSignals(False)
+        for _, name, _lo, _hi, scale, _default in _CONTROLS:
+            val = getattr(controls, name, None)
+            if val is None:
+                continue
+            slider = self._sliders[name]
+            slider.blockSignals(True)
+            slider.setValue(int(round(float(val) * scale)))
+            slider.blockSignals(False)
+            self._value_labels[name].setText(
+                f"{self._value(name):.0f}" if name == "exposure_time_us"
+                else f"{self._value(name):.2f}"
+            )
+
+    def _on_save_settings(self) -> None:
+        path = self._settings_path()
+        if path is None:
+            self.info_label.setText("No config dir — cannot save settings.")
+            return
+        controls = {}
+        for name, auto_ctrl in _AUTO.items():
+            controls[auto_ctrl] = (
+                "Continuous" if self._auto_checks[name].isChecked() else "Off")
+        for _, name, *_ in _CONTROLS:
+            controls[name] = round(self._value(name), 4)
+        data = {"controls": controls}
+        serial = self.serial_edit.text().strip()
+        if serial:
+            data["camera"] = {"serial_number": serial}
+        import yaml
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(yaml.safe_dump(data, sort_keys=False))
+        except OSError as exc:
+            self.info_label.setText(f"Save failed: {exc}")
+            return
+        if self.settings is not None and serial:
+            self.settings.set("camera_serial", serial)
+        self.info_label.setText(f"Saved camera settings to {path.name}")
 
     # --- layout -------------------------------------------------------------
     def _build_controls_column(self) -> QWidget:
@@ -182,6 +263,15 @@ class CameraTab(QWidget):
                 self._auto_checks[name] = auto
                 grid.addWidget(auto, r, 3)
         v.addWidget(ctrl)
+
+        self.save_settings_btn = QPushButton("Save camera settings")
+        self.save_settings_btn.setToolTip(
+            "Persist exposure/gain/brightness/contrast/gamma (and serial) so they "
+            "restore on the next launch."
+        )
+        self.save_settings_btn.clicked.connect(self._on_save_settings)
+        v.addWidget(self.save_settings_btn)
+
         v.addStretch(1)
         self._refresh_conn_status()
         return col

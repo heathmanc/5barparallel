@@ -155,6 +155,25 @@ class CameraControls:
         extra = {k: v for k, v in data.items() if k not in known}
         return cls(extra=extra, **kwargs)
 
+    def merged_with(self, other: "CameraControls") -> "CameraControls":
+        """A copy with every set (non-None) field of ``other`` overriding self —
+        so a saved operator settings file overlays the tracked config defaults."""
+        import dataclasses
+
+        updates = {
+            f.name: getattr(other, f.name)
+            for f in dataclasses.fields(other)
+            if f.name != "extra" and getattr(other, f.name) is not None
+        }
+        merged = dataclasses.replace(self, **updates)
+        merged.extra = {**self.extra, **other.extra}
+        return merged
+
+    def to_settings_dict(self) -> Dict[str, Any]:
+        """The set fields as a plain dict for YAML persistence."""
+        items = {name: value for name, value in self.as_ordered_items()}
+        return items
+
     @classmethod
     def from_yaml(cls, path: str | Path) -> "CameraControls":
         import yaml

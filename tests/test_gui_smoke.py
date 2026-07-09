@@ -18,7 +18,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from bung_cover_robot.app.robot_test_controller import (  # noqa: E402
     build_dry_run_controller,
 )
+from bung_cover_robot.app.app_settings import AppSettings  # noqa: E402
+from bung_cover_robot.gui.camera_tab import CameraTab  # noqa: E402
 from bung_cover_robot.gui.main_window import MainWindow  # noqa: E402
+from bung_cover_robot.gui.plc_tab import PlcTab  # noqa: E402
 from bung_cover_robot.gui.robot_test_tab import RobotTestTab  # noqa: E402
 
 
@@ -122,6 +125,31 @@ def _wait_until(qapp, predicate, timeout_s=5.0):
     while time.monotonic() < deadline and not predicate():
         qapp.processEvents()
     return predicate()
+
+
+def test_plc_tab_remembers_ip(qapp, tmp_path):
+    s = AppSettings.load(tmp_path / "app_settings.yaml")
+    ctrl = build_dry_run_controller()
+    pt = PlcTab(ctrl, settings=s)
+    pt.path_edit.setText("10.0.0.5/0")
+    pt._on_connect_real()                     # connect fails w/o hardware, IP saved first
+    assert s.get("plc_ip") == "10.0.0.5/0"
+    # a fresh tab restores the saved IP into the field
+    pt2 = PlcTab(ctrl, settings=AppSettings.load(tmp_path / "app_settings.yaml"))
+    assert pt2.path_edit.text() == "10.0.0.5/0"
+
+
+def test_camera_settings_save_and_restore(qapp, tmp_path):
+    win = MainWindow(config_dir=tmp_path)
+    ct = win.camera_tab
+    ct._sliders["brightness"].setValue(40)     # 40/100 = 0.4
+    ct._sliders["contrast"].setValue(150)      # 150/100 = 1.5
+    ct._on_save_settings()
+    assert (tmp_path / "camera_settings.yaml").exists()
+    # a fresh Camera tab restores the saved slider values
+    ct2 = CameraTab(win.camera, settings=win.app_settings, config_dir=tmp_path)
+    assert ct2._sliders["brightness"].value() == 40
+    assert ct2._sliders["contrast"].value() == 150
 
 
 def test_vision_mode_buttons_drive_controller(qapp):
