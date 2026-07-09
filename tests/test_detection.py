@@ -128,6 +128,23 @@ def test_shape_finder_is_color_and_shape_agnostic():
         assert any(abs(fx - cx) <= 14 for fx in xs), f"missed object near {cx}: {xs}"
 
 
+def test_annotate_draws_color_on_a_mono_frame():
+    # a single-channel (mono camera) frame: overlays must render in real color,
+    # not black (drawing green on a 1-channel image would paint intensity 0).
+    from bung_cover_robot.vision.detection import Circle, annotate
+
+    class _Cover:
+        def __init__(self, c):
+            self.circle = c
+            self.accepted = True
+
+    gray = np.full((200, 200), 80, np.uint8)          # H×W, one channel
+    out = annotate(gray, covers=[_Cover(Circle(100, 100, 30, 2827.0, 1.0))])
+    assert out.ndim == 3 and out.shape[2] == 3
+    green = (out[:, :, 0] == 0) & (out[:, :, 1] == 255) & (out[:, :, 2] == 0)
+    assert green.any()                                 # real green pixels were drawn
+
+
 def test_hough_finds_a_clean_disk():
     from bung_cover_robot.vision.detection import find_hough_circles
 

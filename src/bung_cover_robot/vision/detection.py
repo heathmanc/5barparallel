@@ -331,6 +331,16 @@ def analyze_round_objects(
     return results
 
 
+def _ensure_bgr(frame: np.ndarray) -> np.ndarray:
+    """A 3-channel BGR copy — so colored overlays render on a mono/grayscale
+    camera frame (drawing green on a 1-channel image would paint black)."""
+    import cv2
+
+    if frame.ndim == 2 or frame.shape[2] == 1:
+        return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    return frame.copy()
+
+
 def offset_circles(circles: Sequence[Circle], ox: int, oy: int) -> List[Circle]:
     if ox == 0 and oy == 0:
         return list(circles)
@@ -353,7 +363,7 @@ def annotate(
     """
     import cv2
 
-    out = frame.copy()
+    out = _ensure_bgr(frame)
     if holes:
         for i, h in enumerate(holes):
             c = (int(h.cx), int(h.cy))
@@ -383,7 +393,7 @@ def annotate_candidates(
     see which slider to move."""
     import cv2
 
-    out = frame.copy()
+    out = _ensure_bgr(frame)
     for circle, reason in candidates:
         ok = reason == "ok"
         color = (0, 255, 0) if ok else (0, 165, 255)     # BGR: green / orange
