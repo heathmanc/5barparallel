@@ -137,6 +137,22 @@ def test_hough_finds_a_clean_disk():
     assert found and any(abs(c.cx - 130) <= 8 and abs(c.cy - 130) <= 8 for c in found)
 
 
+def test_hough_finds_low_contrast_large_cover():
+    # big low-contrast dark cover on grainy wood — Hough votes from the circular
+    # edge and ignores the linear grain (the real-scene case).
+    from bung_cover_robot.vision.detection import find_hough_circles
+
+    h, w = 700, 900
+    img = np.full((h, w, 3), 160, np.uint8)
+    for y in range(0, h, 3):
+        s = 150 + int(14 * np.sin(y * 0.2))
+        cv2.line(img, (0, y), (w, y), (s, s, s), 1)          # wood grain
+    cv2.circle(img, (450, 360), 150, (95, 95, 95), -1)       # r150 (~300 px) cover
+    img = cv2.GaussianBlur(img, (5, 5), 0)                    # soft edges
+    found = find_hough_circles(img, 270, 340, blur=5, param1=51, param2=18)
+    assert found and any(abs(c.cx - 450) <= 12 and abs(c.cy - 360) <= 12 for c in found)
+
+
 def test_cover_detector_hough_method():
     img = np.full((260, 260, 3), 60, np.uint8)
     cv2.circle(img, (130, 130), 58, (205, 205, 205), -1)

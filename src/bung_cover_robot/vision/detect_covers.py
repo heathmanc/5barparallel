@@ -50,6 +50,7 @@ class CoverDetectorConfig:
     shape_min_solidity: float = 0.9       # convexity: rejects grain, keeps a D
     shape_canny_lo_frac: float = 0.33     # edge sensitivity (of median): lower = more
     shape_canny_hi_frac: float = 0.66
+    hough_param1: float = 100.0           # Hough edge threshold: lower = softer edges
     hough_param2: float = 30.0            # Hough accumulator: lower = more circles
     # Physical-size gate (per recipe): reject blobs whose real diameter is off the
     # expected cover size. Needs a calibration (to_robot); 0 disables the check.
@@ -107,7 +108,7 @@ class CoverDetector:
         if cfg.method == "hough":
             found = find_hough_circles(
                 sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,
-                param2=cfg.hough_param2)
+                param1=cfg.hough_param1, param2=cfg.hough_param2)
         elif use_shape:
             found = find_round_objects(
                 sub, cfg.min_diameter_px, cfg.max_diameter_px, cfg.blur,

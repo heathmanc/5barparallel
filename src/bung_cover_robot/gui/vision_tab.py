@@ -257,7 +257,10 @@ class VisionTab(QWidget):
         cfg.shape_canny_lo_frac = 0.5 * hi
         cfg.shape_min_solidity = self.tune_sol.value() / 100.0
         cfg.shape_min_circularity = self.tune_circ.value() / 100.0
-        cfg.hough_param2 = max(8.0, 60.0 - 0.5 * s)   # more sens -> lower accumulator
+        # Edge sens drives BOTH Hough thresholds: the edge detector (so a soft
+        # cover edge still registers) and the accumulator (how many votes needed).
+        cfg.hough_param1 = max(20.0, 170.0 - 1.4 * s)   # more sens -> softer edges
+        cfg.hough_param2 = max(8.0, 60.0 - 0.5 * s)     # more sens -> lower accumulator
 
     def _on_tuning_changed(self) -> None:
         self._apply_tuning()
