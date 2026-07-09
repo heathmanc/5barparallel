@@ -49,11 +49,16 @@ class PickPlaceHandshake:
         command_timeout_s: float = 30.0,
         ready_timeout_s: float = 10.0,
         poll_interval_s: float = 0.02,
+        request_settle_s: float = 0.05,
     ) -> None:
         self.client = client
         self.command_timeout_s = command_timeout_s
         self.ready_timeout_s = ready_timeout_s
         self.poll_interval_s = poll_interval_s
+        # Hold RequestPickPlace LOW at least this long before asserting a new edge,
+        # so the PLC's one-shot re-arms between back-to-back jobs even when the
+        # previous job completed nearly instantly.
+        self.request_settle_s = request_settle_s
         self._command_id = 0
 
     def send_job_and_wait(
@@ -121,6 +126,12 @@ class PickPlaceHandshake:
 
         Returns True once accepted (or on a PLC fault — surfaced by the caller),
         False if no acknowledgement arrives within ``ready_timeout_s``."""
+        # Guarantee a low dwell first so the PLC scans the falling edge and its
+        # one-shot re-arms — otherwise a second job right after a fast-completing
+        # first job can find the ONS still latched and never fire.
+        self._write(T.Cmd.REQUEST_PICK_PLACE, False)
+        if self.request_settle_s > 0:
+            time.sleep(self.request_settle_s)
         self._write(T.Cmd.REQUEST_PICK_PLACE, True)
         deadline = time.monotonic() + self.ready_timeout_s
         try:
