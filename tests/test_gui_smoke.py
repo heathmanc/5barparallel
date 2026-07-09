@@ -758,6 +758,38 @@ def test_vision_tuning_sliders_and_save_frame(qapp, tmp_path, monkeypatch):
     assert out.exists()
 
 
+def test_vision_save_diagnostics_writes_png_and_report(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    win = MainWindow()
+    vt = win.vision_tab
+    vt._on_detect()                          # populate last-detection results
+
+    out = tmp_path / "diag.png"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), "PNG (*.png)"))
+    vt._on_save_diag()
+    assert out.exists()
+    report = (tmp_path / "diag.txt")
+    assert report.exists()
+    text = report.read_text()
+    assert "Cover detector:" in text and "Hole detector:" in text
+    assert "Covers:" in text                 # detection section present
+
+
+def test_holes_searched_full_frame_outside_pick_region(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    # Drop-hole search must not confine to a bright battery blob (that grabs the
+    # covers); it spans the frame, keeps the straight row, and skips the chute.
+    hc = vt.hole_detector.config
+    assert hc.auto_battery_roi is False
+    assert hc.select_collinear_subset is True
+    # Drawing a pick region wires it into the hole detector as an exclusion zone.
+    vt._apply_pick_roi((10, 20, 100, 80))
+    assert vt.hole_detector.config.exclude_roi == (10, 20, 100, 80)
+
+
 def test_recipe_save_propagates_bung_size_to_detector(qapp):
     win = MainWindow()
     ct, vt = win.calibration_tab, win.vision_tab

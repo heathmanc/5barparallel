@@ -66,6 +66,48 @@ def test_battery_roi_found():
     assert w > 300 and 80 < h < 260  # roughly the battery bbox
 
 
+def _holes_scene(row_y=200, stray=None, cover_box=None):
+    """Light tray with a straight row of 6 dark drop-holes. Optionally a stray
+    dark circle off the row, and a bright 'cover' rectangle (the pick chute)."""
+    img = np.full((400, 700, 3), 180, np.uint8)
+    for i in range(6):
+        cx = int(120 + i * 90)
+        cv2.circle(img, (cx, row_y), 15, (20, 20, 20), -1)
+    if stray is not None:
+        cv2.circle(img, stray, 15, (20, 20, 20), -1)
+    if cover_box is not None:
+        cv2.rectangle(img, cover_box[0], cover_box[1], (250, 250, 250), -1)
+    return img
+
+
+def test_collinear_subset_ignores_stray_hole():
+    # A stray dark blob off the row must not spoil the straight-row detection.
+    img = _holes_scene(stray=(360, 90))
+    cfg = HoleDetectorConfig(
+        expected_count=6, method="shape", auto_battery_roi=False,
+        select_collinear_subset=True, min_diameter_px=15, max_diameter_px=60)
+    res = HoleDetector(cfg).detect(img)
+    assert res.count == 6
+    assert res.ok
+    xs = [h.cx for h in res.holes]
+    assert xs == sorted(xs)               # ordered along the row
+    assert max(h.cy for h in res.holes) < 260   # the y=90 stray was dropped
+
+
+def test_exclude_roi_drops_holes_in_pick_region():
+    # Holes whose centre falls in the pick region (cover chute) are excluded.
+    img = _holes_scene()
+    base = HoleDetectorConfig(
+        expected_count=6, method="shape", auto_battery_roi=False,
+        select_collinear_subset=True, min_diameter_px=15, max_diameter_px=60)
+    assert HoleDetector(base).detect(img).count == 6
+    # cover the two right-most holes (cx 480, 570) with a pick region
+    base.exclude_roi = (450, 150, 200, 100)
+    res = HoleDetector(base).detect(img)
+    assert res.count == 4
+    assert all(h.cx < 450 for h in res.holes)
+
+
 # --------------------------------------------------------------------------- #
 # Covers
 # --------------------------------------------------------------------------- #

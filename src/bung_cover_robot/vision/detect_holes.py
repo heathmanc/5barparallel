@@ -34,6 +34,15 @@ class HoleDetectorConfig:
     collinear_tol_px: float = 6.0         # max perpendicular residual to the fit line
     roi: Optional[ROI] = None
     auto_battery_roi: bool = True         # confine to the battery when no roi is set
+    # Pick region (x, y, w, h px): holes centred inside it are dropped — that area
+    # is the cover chute, not a drop target. Everything *outside* it is a candidate
+    # drop hole. None => consider the whole search area.
+    exclude_roi: Optional[ROI] = None
+    # Keep the largest subset of centres that lie on a common line (RANSAC-style)
+    # instead of requiring every detected blob to be collinear — so a stray
+    # false-positive off the row can't spoil the whole detection. The drop holes
+    # are a straight row; scattered clutter is discarded.
+    select_collinear_subset: bool = False
     # Finder: "shape" = region outline (color-agnostic — a hole may be dark OR
     # bright-centered); "blob" = dark fill; "auto" = shape when confined to a
     # battery/ROI, else blob.
@@ -82,6 +91,13 @@ class HoleDetector:
                 cfg.min_circularity, cfg.blur)
         circles = offset_circles(found, ox, oy)
 
+        # The pick region (cover chute) is not a drop target — drop only the holes
+        # whose centre falls inside it, keeping everything outside.
+        if cfg.exclude_roi is not None:
+            ex, ey, ew, eh = cfg.exclude_roi
+            circles = [c for c in circles
+                       if not (ex <= c.cx <= ex + ew and ey <= c.cy <= ey + eh)]
+
         # Physical-size gate: keep only blobs the right real diameter (drop-hole).
         if cfg.expected_diameter_mm > 0 and to_robot is not None:
             lo = cfg.expected_diameter_mm * (1.0 - cfg.diameter_tolerance)
@@ -93,10 +109,14 @@ class HoleDetector:
             return HoleDetectionResult(circles, None, float("inf"), False,
                                        f"found {len(circles)} holes (need >= 2 to fit)")
 
-        line, residual, order = _fit_line(circles)
-        holes = [circles[i] for i in order]
-        ok = len(holes) == cfg.expected_count and residual <= cfg.collinear_tol_px
-        if len(holes) != cfg.expected_count:
+        if cfg.select_collinear_subset:
+            holes, line, residual = _select_collinear(circles, cfg.collinear_tol_px)
+        else:
+            line, residual, order = _fit_line(circles)
+            holes = [circles[i] for i in order]
+        count_ok = cfg.expected_count <= 0 or len(holes) == cfg.expected_count
+        ok = count_ok and residual <= cfg.collinear_tol_px
+        if not count_ok:
             reason = f"found {len(holes)} holes, expected {cfg.expected_count}"
         elif residual > cfg.collinear_tol_px:
             reason = f"holes not collinear (residual {residual:.1f} px > {cfg.collinear_tol_px:.1f})"
@@ -112,6 +132,33 @@ def _diameter_mm(c: Circle, to_robot) -> float:
     dx = float(np.hypot(bx[0] - ax[0], bx[1] - ax[1]))
     dy = float(np.hypot(by[0] - ay[0], by[1] - ay[1]))
     return 0.5 * (dx + dy)
+
+
+def _select_collinear(circles: List[Circle], tol: float):
+    """Largest subset of centres on a common line (within ``tol`` px), ordered
+    along it. RANSAC-lite: every centre pair defines a candidate line; keep the
+    line with the most inliers. Returns ``(subset, line, residual)`` — the fit is
+    over the inliers, so a stray blob off the row can't inflate the residual."""
+    pts = np.array([[c.cx, c.cy] for c in circles], dtype=np.float64)
+    n = len(circles)
+    best: Optional[np.ndarray] = None
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = pts[j] - pts[i]
+            length = float(np.hypot(d[0], d[1]))
+            if length < 1e-6:
+                continue
+            nx, ny = -d[1] / length, d[0] / length      # unit normal
+            dist = np.abs((pts[:, 0] - pts[i, 0]) * nx + (pts[:, 1] - pts[i, 1]) * ny)
+            inliers = np.nonzero(dist <= tol)[0]
+            if best is None or len(inliers) > len(best):
+                best = inliers
+    idx = best if best is not None else np.arange(n)
+    subset = [circles[k] for k in idx]
+    if len(subset) < 2:
+        return subset, None, float("inf")
+    line, residual, order = _fit_line(subset)
+    return [subset[k] for k in order], line, residual
 
 
 def _fit_line(circles: List[Circle]):

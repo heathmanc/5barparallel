@@ -76,6 +76,8 @@ class VisionTab(QWidget):
         self._pick_roi = None           # (x, y, w, h) px — covers must be inside
         self._frame = None
         self._display = None            # last rendered image (raw or overlay), for Save
+        self._last_covers = None        # last CoverDetectionResult (for diagnostics)
+        self._last_holes = None         # last HoleDetectionResult (for diagnostics)
         self._reach_cache = None        # safe-zone outline in robot mm (computed once)
         self._running = False
         self._thread: Optional[QThread] = None
@@ -148,6 +150,13 @@ class VisionTab(QWidget):
             "Write the current raw frame to a PNG (for tuning / sharing)."
         )
         self.save_frame_btn.clicked.connect(self._on_save_frame)
+        self.save_diag_btn = QPushButton("Save diagnostics…")
+        self.save_diag_btn.setToolTip(
+            "Write the annotated overlay PNG plus a text report — pick region, "
+            "calibration, and every detected cover/hole with pixel + robot (x,y) "
+            "coordinates and its accept/reject reason. Run Detect first."
+        )
+        self.save_diag_btn.clicked.connect(self._on_save_diag)
         self.detect_btn = QPushButton("Detect")
         self.detect_btn.clicked.connect(self._on_detect)
         self.start_btn = QPushButton("Start cycle")
@@ -156,8 +165,8 @@ class VisionTab(QWidget):
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setProperty("accent", "danger")
         self.stop_btn.clicked.connect(self._on_stop)
-        for b in (self.capture_btn, self.save_frame_btn, self.detect_btn,
-                  self.start_btn, self.stop_btn):
+        for b in (self.capture_btn, self.save_frame_btn, self.save_diag_btn,
+                  self.detect_btn, self.start_btn, self.stop_btn):
             rb.addWidget(b)
         self.bypass_chk = QCheckBox("Bypass vision (scripted)")
         self.bypass_chk.setToolTip(
@@ -264,6 +273,84 @@ class VisionTab(QWidget):
         cv2.imwrite(path, img)
         self._set_status(f"Saved to {path}", theme.SUCCESS)
 
+    def _on_save_diag(self) -> None:
+        """Save the annotated overlay + a text report of the current detection, so
+        the whole picture (pick region, calibration, per-object robot coords and
+        reject reasons) can be reviewed from one bundle."""
+        if self._frame is None:
+            self._capture()
+        img = self._display if self._display is not None else self._frame
+        if img is None:
+            self._set_status("No frame to save (connect the camera).", theme.WARN)
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save diagnostics", "diagnostics.png", "PNG (*.png)")
+        if not path:
+            return
+        import cv2
+        cv2.imwrite(path, img)
+        txt_path = (path[:-4] if path.lower().endswith(".png") else path) + ".txt"
+        try:
+            with open(txt_path, "w", encoding="utf-8") as fh:
+                fh.write(self._build_diag_report())
+        except OSError as exc:
+            self._set_status(f"Saved image; report failed: {exc}", theme.WARN)
+            return
+        self._set_status(f"Saved {path} + {txt_path}", theme.SUCCESS)
+
+    def _build_diag_report(self) -> str:
+        """Human-readable snapshot of the last Detect: settings + every object."""
+        lines = ["5-Bar vision diagnostics", "=" * 44]
+        lines.append(f"Recipe: {self.active_recipe_key()}  ({self.recipe_combo.currentText()})")
+        cal = self.calibration
+        lines.append(f"Calibration: {'present' if cal is not None else 'NONE'}"
+                     f" ({type(cal).__name__ if cal is not None else '-'})")
+        lines.append(f"Pick region (x,y,w,h px): {self._pick_roi}")
+
+        cc = self.cover_detector.config
+        lines += ["", "Cover detector:",
+                  f"  method={cc.method}  Ø {cc.min_diameter_px:.0f}-{cc.max_diameter_px:.0f} px"
+                  f"  param1={cc.hough_param1:.0f} param2={cc.hough_param2:.0f}",
+                  f"  expected {cc.expected_diameter_mm:.1f} mm ± {cc.diameter_tolerance*100:.0f}%"
+                  f"  reject_crowded={cc.reject_crowded}"]
+
+        hc = self.hole_detector.config
+        lines += ["Hole detector:",
+                  f"  method={hc.method}  expected_count={hc.expected_count}"
+                  f"  expected {hc.expected_diameter_mm:.1f} mm ± {hc.diameter_tolerance*100:.0f}%",
+                  f"  exclude_roi(px)={hc.exclude_roi}  subset={hc.select_collinear_subset}"
+                  f"  auto_battery_roi={hc.auto_battery_roi}"]
+
+        covers = self._last_covers
+        lines.append("")
+        if covers is not None:
+            lines.append(f"Covers: {covers.count} detected, {len(covers.accepted)} accepted")
+            for i, cd in enumerate(covers.covers):
+                c = cd.circle
+                rob = (f"robot({cd.robot_xy[0]:.1f},{cd.robot_xy[1]:.1f})mm"
+                       if cd.robot_xy is not None else "robot(--)")
+                lines.append(f"  #{i} px({c.cx:.0f},{c.cy:.0f}) Ø{c.diameter:.0f} {rob}"
+                             f"  {'ACCEPT' if cd.accepted else 'reject'} :: {cd.reason}")
+        else:
+            lines.append("Covers: (run Detect first)")
+
+        holes = self._last_holes
+        lines.append("")
+        if holes is not None:
+            lines.append(f"Holes: {holes.count} detected, ok={holes.ok}"
+                         f" residual={holes.max_residual_px:.1f}px :: {holes.reason}")
+            to_robot = cal.pixel_to_robot if cal is not None else None
+            for i, h in enumerate(holes.holes):
+                if to_robot is not None:
+                    rx, ry = to_robot(h.cx, h.cy)
+                    rob = f"robot({rx:.1f},{ry:.1f})mm"
+                else:
+                    rob = "robot(--)"
+                lines.append(f"  #{i} px({h.cx:.0f},{h.cy:.0f}) Ø{h.diameter:.0f} {rob}")
+        else:
+            lines.append("Holes: (drop-hole overlay off, or Detect not yet run)")
+        return "\n".join(lines) + "\n"
+
     # --- camera -------------------------------------------------------------
     def set_camera(self, camera: Camera) -> None:
         self.camera = camera
@@ -297,6 +384,8 @@ class VisionTab(QWidget):
         covers = self.cover_detector.detect(self._frame, to_robot, validator)
         show_holes = getattr(self, "show_holes_chk", None) and self.show_holes_chk.isChecked()
         holes = self.hole_detector.detect(self._frame, to_robot) if show_holes else None
+        self._last_covers = covers
+        self._last_holes = holes
         base = self._frame
         if self.calibration is not None:
             def _r2p(x, y):
@@ -334,6 +423,9 @@ class VisionTab(QWidget):
     def _apply_pick_roi(self, roi) -> None:
         self._pick_roi = roi
         self.cover_detector.config.pick_roi = roi
+        # The pick region is the cover chute — exclude it from drop-hole search so
+        # everything *outside* it is considered a drop target.
+        self.hole_detector.config.exclude_roi = roi
 
     def _load_pick_roi(self) -> None:
         """Load the active recipe's saved pick region (if any) into the detector
@@ -431,10 +523,15 @@ class VisionTab(QWidget):
     def set_hole_count(self, count: int, diameter_mm: float = 0.0,
                        tolerance: float = 0.25) -> None:
         """Apply the recipe's vent-hole count and drop-hole diameter (a separate
-        size from the cover — a shouldered bung is wider than its hole)."""
+        size from the cover — a shouldered bung is wider than its hole).
+
+        Drop holes are searched across the whole frame (not confined to a bright
+        battery blob, which would lock onto the covers) and the pick region is
+        excluded; the straight row is kept via collinear-subset selection."""
         self.hole_detector = HoleDetector(HoleDetectorConfig(
             expected_count=count, expected_diameter_mm=diameter_mm,
-            diameter_tolerance=tolerance))
+            diameter_tolerance=tolerance, method="shape", auto_battery_roi=False,
+            select_collinear_subset=True, exclude_roi=self._pick_roi))
 
     def set_cover_diameter_mm(self, diameter_mm: float, tolerance: float = 0.25) -> None:
         """Apply the active recipe's nominal cover (bung) size + size tolerance as a
