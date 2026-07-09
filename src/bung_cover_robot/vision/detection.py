@@ -176,6 +176,75 @@ def find_blobs(
     return out
 
 
+def _round_candidates(
+    frame: np.ndarray,
+    min_diameter: float,
+    max_diameter: float,
+    blur: int,
+    min_circularity: float,
+    min_solidity: float,
+    canny_lo_frac: float,
+    canny_hi_frac: float,
+):
+    """Yield ``(Circle, reason)`` for every SIZE-passing round candidate.
+
+    Two complementary outline sources, merged: Canny edges (polarity-independent;
+    catches ring/bright-centered shapes) and Otsu region segmentation in BOTH
+    polarities (relative, so it catches a low-contrast solid an edge threshold
+    would miss). ``reason`` is "ok", or why a right-sized blob was rejected
+    (roundness/solidity) — the diagnostic view surfaces it.
+    """
+    import cv2
+
+    gray = _gray_blur(frame, blur)
+    height, width = gray.shape[:2]
+    ksz = max(3, (int(min_diameter / 4) | 1))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz))
+    med = float(np.median(gray))
+    lo = int(max(0.0, canny_lo_frac * med))
+    hi = int(min(255.0, max(lo + 1.0, canny_hi_frac * med)))
+    masks = [cv2.morphologyEx(cv2.Canny(gray, lo, hi), cv2.MORPH_CLOSE, kernel)]
+    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    masks.append(cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, kernel))
+    masks.append(cv2.morphologyEx(cv2.bitwise_not(otsu), cv2.MORPH_CLOSE, kernel))
+
+    for mask in masks:
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area <= 0.0:
+                continue
+            x, y, w, h = cv2.boundingRect(cnt)
+            if (x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1) and (
+                    w >= 0.9 * width or h >= 0.9 * height):
+                continue                          # crop-spanning background blob
+            (_, _), r = cv2.minEnclosingCircle(cnt)
+            if not (min_diameter <= 2.0 * r <= max_diameter):
+                continue
+            peri = cv2.arcLength(cnt, True)
+            if peri <= 0.0:
+                continue
+            circ = 4.0 * math.pi * area / (peri * peri)
+            hull_area = cv2.contourArea(cv2.convexHull(cnt))
+            solidity = area / hull_area if hull_area > 0.0 else 0.0
+            m = cv2.moments(cnt)
+            if m["m00"] == 0.0:
+                continue
+            cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+            if circ < min_circularity:
+                reason = f"round {circ:.2f}<{min_circularity:.2f}"
+            elif solidity < min_solidity:
+                reason = f"solid {solidity:.2f}<{min_solidity:.2f}"
+            else:
+                reason = "ok"
+            yield Circle(float(cx), float(cy), float(r), float(area), float(circ), cnt), reason
+
+
+def _near(c: Circle, others: Sequence[Circle], tol: float) -> bool:
+    return any(math.hypot(c.cx - o.cx, c.cy - o.cy) < tol for o in others)
+
+
 def find_round_objects(
     frame: np.ndarray,
     min_diameter: float,
@@ -188,69 +257,47 @@ def find_round_objects(
 ) -> List[Circle]:
     """Round-ish objects by their outline — color- and (partly) shape-agnostic.
 
-    Segments the region (Otsu, tried BOTH polarities so it finds an object that
-    is darker *or* brighter than its background), closes internal features (a
-    bright center, small holes/vents, a flat spot), then keeps blobs that are the
-    right size and **convex** (``solidity`` = area / convex-hull area). Solidity
-    tolerates a D-shaped (flat-sided) cover — which is still convex — while
-    rejecting wood grain and clutter, and the reported centre is the region
-    centroid (the right vacuum-pickup point for a D), not a circle centre.
-
-    ``min_circularity`` is relaxed (0.6) so a flat-sided disk still passes.
+    Solidity (area / convex-hull area) tolerates a D-shaped (flat-sided) cover —
+    still convex — while rejecting wood grain; the centre is the region centroid
+    (the right vacuum-pickup point for a D). See ``_round_candidates``.
     """
-    import cv2
-
-    gray = _gray_blur(frame, blur)
-    height, width = gray.shape[:2]
-    ksz = max(3, (int(min_diameter / 4) | 1))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz))
-
-    # Two complementary sources of the object outline, then merge:
-    #  * Canny edges — polarity-independent; catches ring/bright-centered shapes.
-    #  * Otsu region (both polarities) — relative, so it catches a low-contrast
-    #    solid object an edge threshold would miss.
-    med = float(np.median(gray))
-    lo = int(max(0.0, canny_lo_frac * med))
-    hi = int(min(255.0, max(lo + 1.0, canny_hi_frac * med)))
-    masks = [cv2.morphologyEx(cv2.Canny(gray, lo, hi), cv2.MORPH_CLOSE, kernel)]
-    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    masks.append(cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, kernel))
-    masks.append(cv2.morphologyEx(cv2.bitwise_not(otsu), cv2.MORPH_CLOSE, kernel))
-
     out: List[Circle] = []
-    for mask in masks:
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area <= 0.0:
-                continue
-            x, y, w, h = cv2.boundingRect(cnt)
-            # Reject only a crop-spanning blob (the background), not an object that
-            # merely sits near an edge of the (already cropped) pick region.
-            if (x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1) and (
-                    w >= 0.9 * width or h >= 0.9 * height):
-                continue
-            (_, _), r = cv2.minEnclosingCircle(cnt)
-            if not (min_diameter <= 2.0 * r <= max_diameter):
-                continue
-            peri = cv2.arcLength(cnt, True)
-            if peri <= 0.0:
-                continue
-            circ = 4.0 * math.pi * area / (peri * peri)
-            hull_area = cv2.contourArea(cv2.convexHull(cnt))
-            solidity = area / hull_area if hull_area > 0.0 else 0.0
-            if circ < min_circularity or solidity < min_solidity:
-                continue
-            m = cv2.moments(cnt)
-            if m["m00"] == 0.0:
-                continue
-            cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
-            if any(math.hypot(cx - o.cx, cy - o.cy) < min_diameter * 0.5 for o in out):
-                continue
-            out.append(Circle(float(cx), float(cy), float(r),
-                              float(area), float(circ), cnt))
+    for c, reason in _round_candidates(
+            frame, min_diameter, max_diameter, blur, min_circularity,
+            min_solidity, canny_lo_frac, canny_hi_frac):
+        if reason == "ok" and not _near(c, out, min_diameter * 0.5):
+            out.append(c)
     return out
+
+
+def analyze_round_objects(
+    frame: np.ndarray,
+    min_diameter: float,
+    max_diameter: float,
+    blur: int = 5,
+    min_circularity: float = 0.6,
+    min_solidity: float = 0.9,
+    canny_lo_frac: float = 0.33,
+    canny_hi_frac: float = 0.66,
+) -> List[Tuple[Circle, str]]:
+    """Diagnostic: every size-passing candidate with its keep/reject reason, so
+    the operator can see *why* a right-sized blob was or wasn't taken."""
+    cands = list(_round_candidates(
+        frame, min_diameter, max_diameter, blur, min_circularity,
+        min_solidity, canny_lo_frac, canny_hi_frac))
+    tol = min_diameter * 0.5
+    ok: List[Circle] = []
+    for c, reason in cands:
+        if reason == "ok" and not _near(c, ok, tol):
+            ok.append(c)
+    results: List[Tuple[Circle, str]] = [(c, "ok") for c in ok]
+    shown: List[Circle] = list(ok)
+    for c, reason in cands:
+        if reason == "ok" or _near(c, shown, tol):
+            continue
+        shown.append(c)
+        results.append((c, reason))
+    return results
 
 
 def offset_circles(circles: Sequence[Circle], ox: int, oy: int) -> List[Circle]:
@@ -287,11 +334,35 @@ def annotate(
         for cd in covers:
             circle = cd.circle
             ok = getattr(cd, "accepted", True)
-            color = (0, 220, 0) if ok else (60, 60, 235)
+            color = (0, 255, 0) if ok else (60, 60, 235)   # bright green / red
             ctr = (int(circle.cx), int(circle.cy))
             if circle.contour is not None:                       # true detected outline
-                cv2.drawContours(out, [circle.contour.astype(int)], -1, color, 3)
+                cv2.drawContours(out, [circle.contour.astype(int)], -1, color, 4)
             else:
-                cv2.circle(out, ctr, int(circle.radius), color, 3)
-            cv2.drawMarker(out, ctr, color, cv2.MARKER_CROSS, 14, 2)  # pickup point
+                cv2.circle(out, ctr, int(circle.radius), color, 4)
+            cv2.drawMarker(out, ctr, color, cv2.MARKER_CROSS, 20, 2)  # pickup point
+    return out
+
+
+def annotate_candidates(
+    frame: np.ndarray, candidates: Sequence[Tuple[Circle, str]]
+) -> np.ndarray:
+    """Diagnostic overlay: every size-passing candidate, green (kept) or orange
+    (rejected), labelled with its diameter and the reason — so the operator can
+    see which slider to move."""
+    import cv2
+
+    out = frame.copy()
+    for circle, reason in candidates:
+        ok = reason == "ok"
+        color = (0, 255, 0) if ok else (0, 165, 255)     # BGR: green / orange
+        ctr = (int(circle.cx), int(circle.cy))
+        if circle.contour is not None:
+            cv2.drawContours(out, [circle.contour.astype(int)], -1, color, 3)
+        else:
+            cv2.circle(out, ctr, int(circle.radius), color, 3)
+        cv2.drawMarker(out, ctr, color, cv2.MARKER_CROSS, 18, 2)
+        cv2.putText(out, f"{int(circle.diameter)}px {reason}",
+                    (ctr[0] + int(circle.radius) + 4, ctr[1] + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
     return out
