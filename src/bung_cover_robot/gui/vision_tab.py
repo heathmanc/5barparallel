@@ -208,7 +208,9 @@ class VisionTab(QWidget):
         self.tune_edge = self._tune_row(grid, 2, "Edge sens", 0, 100, 70)
         self.tune_sol = self._tune_row(grid, 3, "Solidity %", 50, 100, int(cfg.shape_min_solidity * 100))
         self.tune_circ = self._tune_row(grid, 4, "Round %", 0, 100, int(cfg.shape_min_circularity * 100))
-        for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_sol, self.tune_circ):
+        self.tune_votes = self._tune_row(grid, 5, "Votes (Hough)", 20, 90, int(cfg.hough_param2))
+        for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_sol,
+                  self.tune_circ, self.tune_votes):
             s.valueChanged.connect(self._on_tuning_changed)
         self.debug_chk = QCheckBox("Show all candidates (why rejected)")
         self.debug_chk.setToolTip(
@@ -216,19 +218,19 @@ class VisionTab(QWidget):
             "orange (rejected) with the reason — so you can see which slider to move."
         )
         self.debug_chk.toggled.connect(self._on_tuning_changed)
-        grid.addWidget(self.debug_chk, 5, 0, 1, 3)
+        grid.addWidget(self.debug_chk, 6, 0, 1, 3)
         self.show_holes_chk = QCheckBox("Show holes")
         self.show_holes_chk.setToolTip("Overlay drop-hole detections too (off keeps the cover view clean).")
         self.show_holes_chk.toggled.connect(self._on_tuning_changed)
-        grid.addWidget(self.show_holes_chk, 6, 0, 1, 3)
+        grid.addWidget(self.show_holes_chk, 7, 0, 1, 3)
         self.hough_chk = QCheckBox("Use Hough circles")
         self.hough_chk.setToolTip(
-            "Detect circles by the Hough transform instead of the region/edge "
-            "outline — often better for a clean round cover. 'Edge sens' controls "
-            "the accumulator threshold."
+            "Detect circles by the Hough transform. 'Edge sens' softens the edge; "
+            "'Votes' sets selectivity (higher = fewer, stronger circles); set "
+            "Min/Max Ø to your cover's pixel size to reject grain."
         )
         self.hough_chk.toggled.connect(self._on_tuning_changed)
-        grid.addWidget(self.hough_chk, 7, 0, 1, 3)
+        grid.addWidget(self.hough_chk, 8, 0, 1, 3)
         return box
 
     def _tune_row(self, grid: QGridLayout, row: int, label: str,
@@ -257,10 +259,11 @@ class VisionTab(QWidget):
         cfg.shape_canny_lo_frac = 0.5 * hi
         cfg.shape_min_solidity = self.tune_sol.value() / 100.0
         cfg.shape_min_circularity = self.tune_circ.value() / 100.0
-        # Edge sens drives BOTH Hough thresholds: the edge detector (so a soft
-        # cover edge still registers) and the accumulator (how many votes needed).
+        # Edge sens softens only the edge detector; selectivity is a SEPARATE knob
+        # (Votes) so cranking sensitivity for a soft edge can't flood the image
+        # with weak grain circles.
         cfg.hough_param1 = max(20.0, 170.0 - 1.4 * s)   # more sens -> softer edges
-        cfg.hough_param2 = max(8.0, 60.0 - 0.5 * s)     # more sens -> lower accumulator
+        cfg.hough_param2 = float(self.tune_votes.value())
 
     def _on_tuning_changed(self) -> None:
         self._apply_tuning()
