@@ -42,6 +42,16 @@ class Recipe:
     # Physical-size gate half-width: a detected cover/hole is accepted only if its
     # real diameter is nominal * (1 +/- diameter_tolerance). 0.2 = +/-20%.
     diameter_tolerance: float = 0.2
+    # Live detection tuning (the Vision-tab sliders) — saved per recipe so a
+    # changeover restores the pixel-Ø windows + Hough knobs dialed in for that
+    # battery. Covers use Hough (min/max Ø px, edge sensitivity, votes); drop
+    # holes have their own (smaller) Ø window.
+    cover_min_px: float = 250.0
+    cover_max_px: float = 400.0
+    hough_edge: int = 70            # 0..100 edge sensitivity (maps to Hough param1)
+    hough_votes: int = 30           # Hough accumulator threshold (param2)
+    hole_min_px: float = 30.0
+    hole_max_px: float = 220.0
 
     def __post_init__(self) -> None:
         if not _KEY_RE.match(self.key):
@@ -56,6 +66,9 @@ class Recipe:
             raise RecipeError("hole_diameter_mm must be >= 0")
         if not 0.0 < self.diameter_tolerance <= 1.0:
             raise RecipeError("diameter_tolerance must be in (0, 1]")
+        for field_name in ("cover_min_px", "cover_max_px", "hole_min_px", "hole_max_px"):
+            if getattr(self, field_name) <= 0:
+                raise RecipeError(f"{field_name} must be > 0")
 
     @classmethod
     def from_dict(cls, data: dict) -> "Recipe":
@@ -66,6 +79,12 @@ class Recipe:
             cover_diameter_mm=float(data.get("cover_diameter_mm", 0.0)),
             hole_diameter_mm=float(data.get("hole_diameter_mm", 0.0)),
             diameter_tolerance=float(data.get("diameter_tolerance", 0.2)),
+            cover_min_px=float(data.get("cover_min_px", 250.0)),
+            cover_max_px=float(data.get("cover_max_px", 400.0)),
+            hough_edge=int(data.get("hough_edge", 70)),
+            hough_votes=int(data.get("hough_votes", 30)),
+            hole_min_px=float(data.get("hole_min_px", 30.0)),
+            hole_max_px=float(data.get("hole_max_px", 220.0)),
         )
 
     def to_dict(self) -> dict:
@@ -76,6 +95,12 @@ class Recipe:
             "cover_diameter_mm": self.cover_diameter_mm,
             "hole_diameter_mm": self.hole_diameter_mm,
             "diameter_tolerance": self.diameter_tolerance,
+            "cover_min_px": self.cover_min_px,
+            "cover_max_px": self.cover_max_px,
+            "hough_edge": self.hough_edge,
+            "hough_votes": self.hough_votes,
+            "hole_min_px": self.hole_min_px,
+            "hole_max_px": self.hole_max_px,
         }
 
 

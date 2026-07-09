@@ -132,6 +132,7 @@ class TargetSource(ABC):
     """
 
     label = "targets"
+    last_frame = None          # most recent camera frame imaged (None if source-less)
 
     def preflight(self) -> Optional[str]:
         """Source-specific blocking reason (e.g. missing calibration), or None."""
@@ -158,6 +159,7 @@ class VisionTargetSource(TargetSource):
         self.validator = validator
         self.hole_detector = hole_detector
         self.cover_detector = cover_detector
+        self.last_frame = None          # exposed so the GUI can live-render each grab
 
     def preflight(self) -> Optional[str]:
         if self.calibration is None:
@@ -165,12 +167,16 @@ class VisionTargetSource(TargetSource):
         return None
 
     def holes(self) -> List[Point]:
-        res = self.hole_detector.detect(self.camera.grab())
+        frame = self.camera.grab()
+        self.last_frame = frame
+        res = self.hole_detector.detect(frame)
         return [self.calibration.pixel_to_robot(c.cx, c.cy) for c in res.holes]
 
     def covers(self) -> List[Point]:
+        frame = self.camera.grab()
+        self.last_frame = frame
         res = self.cover_detector.detect(
-            self.camera.grab(), self.calibration.pixel_to_robot, self.validator
+            frame, self.calibration.pixel_to_robot, self.validator
         )
         return [c.robot_xy for c in res.accepted if c.robot_xy is not None]
 
@@ -262,6 +268,7 @@ class CycleManager:
         self,
         should_stop: Optional[Callable[[], bool]] = None,
         on_step: Optional[Callable[[CycleStep], None]] = None,
+        on_frame: Optional[Callable[[object], None]] = None,
     ) -> CycleResult:
         block = self.preflight()
         if block is not None:
@@ -275,6 +282,7 @@ class CycleManager:
             hole_xy = self.target_source.holes()
         except CameraError as exc:
             return CycleResult(ok=False, reason=f"capture failed: {exc}")
+        self._emit_frame(on_frame)
         if not hole_xy:
             return CycleResult(ok=False, reason="no holes detected")
         order = sort_holes_along_conveyor(hole_xy)[: self.config.max_holes]
@@ -288,6 +296,7 @@ class CycleManager:
 
             drop_xy = hole_xy[hi]
             cover = self._pick_candidate(drop_xy, used)
+            self._emit_frame(on_frame)          # live-update the view on each re-image
             if cover is None:
                 step = CycleStep(hi, drop_xy, -1, None, False, "no reachable cover available")
                 result.steps.append(step)
@@ -325,6 +334,15 @@ class CycleManager:
             result.reason = f"placed {placed}/{len(order)} covers"
         result.ok = placed > 0
         return result
+
+    def _emit_frame(self, on_frame: Optional[Callable[[object], None]]) -> None:
+        """Hand the most recently imaged frame to the GUI so the vision screen
+        refreshes on every capture during the run (no-op for a source-less bypass)."""
+        if on_frame is None:
+            return
+        frame = getattr(self.target_source, "last_frame", None)
+        if frame is not None:
+            on_frame(frame)
 
     # --- single job (vision + selection bypass) -----------------------------
     def run_single_job(self, pick_xy: Point, drop_xy: Point) -> CycleStep:

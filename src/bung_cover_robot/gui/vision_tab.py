@@ -7,6 +7,7 @@ vision/detect_* and app/cycle_manager are built.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -14,11 +15,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -78,6 +81,7 @@ class VisionTab(QWidget):
         self._display = None            # last rendered image (raw or overlay), for Save
         self._last_covers = None        # last CoverDetectionResult (for diagnostics)
         self._last_holes = None         # last HoleDetectionResult (for diagnostics)
+        self._readouts = {}             # slider -> value QLabel (for silent updates)
         self._reach_cache = None        # safe-zone outline in robot mm (computed once)
         self._running = False
         self._thread: Optional[QThread] = None
@@ -109,10 +113,13 @@ class VisionTab(QWidget):
         return col
 
     def _build_sidebar(self) -> QWidget:
+        # The controls stack is tall (recipe, status, mode, run, pick region,
+        # tuning); put it in a scroll area so groups never overlap on a short
+        # window instead of a fixed panel that clips.
         panel = QWidget()
-        panel.setFixedWidth(260)
         v = QVBoxLayout(panel)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(0, 0, 8, 0)
+        v.setSpacing(10)
 
         recipe_box = QGroupBox("Recipe (changeover)")
         rv = QVBoxLayout(recipe_box)
@@ -221,7 +228,14 @@ class VisionTab(QWidget):
         v.addWidget(self._build_tuning_group())
 
         v.addStretch(1)
-        return panel
+
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(292)          # panel width + room for the scrollbar
+        return scroll
 
     # --- live Hough tuning --------------------------------------------------
     def _build_tuning_group(self) -> QGroupBox:
@@ -238,6 +252,7 @@ class VisionTab(QWidget):
         self.tune_votes = self._tune_row(grid, 3, "Votes", 20, 90, int(cfg.hough_param2))
         for s in (self.tune_min, self.tune_max, self.tune_edge, self.tune_votes):
             s.valueChanged.connect(self._on_tuning_changed)
+            s.sliderReleased.connect(self._save_tuning_to_recipe)
         self.show_holes_chk = QCheckBox("Show drop holes")
         self.show_holes_chk.setChecked(True)
         self.show_holes_chk.setToolTip(
@@ -252,6 +267,7 @@ class VisionTab(QWidget):
         self.tune_hole_max = self._tune_row(grid, 6, "Hole max Ø", 15, 500, 220)
         for s in (self.tune_hole_min, self.tune_hole_max):
             s.valueChanged.connect(self._on_tuning_changed)
+            s.sliderReleased.connect(self._save_tuning_to_recipe)
         return box
 
     def _tune_row(self, grid: QGridLayout, row: int, label: str,
@@ -263,9 +279,50 @@ class VisionTab(QWidget):
         readout = QLabel(str(val))
         readout.setFixedWidth(32)
         slider.valueChanged.connect(lambda v, r=readout: r.setText(str(v)))
+        self._readouts[slider] = readout
         grid.addWidget(slider, row, 1)
         grid.addWidget(readout, row, 2)
         return slider
+
+    def _set_slider(self, slider: QSlider, value: int) -> None:
+        """Set a tuning slider without firing its detect/save handlers, updating
+        its value readout by hand (blocking signals suppresses the readout too)."""
+        slider.blockSignals(True)
+        slider.setValue(int(value))
+        slider.blockSignals(False)
+        ro = self._readouts.get(slider)
+        if ro is not None:
+            ro.setText(str(slider.value()))
+
+    def set_detection_tuning(self, recipe) -> None:
+        """Load a recipe's saved detection tuning into the sliders (silently) and
+        apply it to the detectors — called on changeover before size/count so the
+        pixel windows come from the recipe, not the last recipe's sliders."""
+        self._set_slider(self.tune_min, recipe.cover_min_px)
+        self._set_slider(self.tune_max, recipe.cover_max_px)
+        self._set_slider(self.tune_edge, recipe.hough_edge)
+        self._set_slider(self.tune_votes, recipe.hough_votes)
+        self._set_slider(self.tune_hole_min, recipe.hole_min_px)
+        self._set_slider(self.tune_hole_max, recipe.hole_max_px)
+        self._apply_tuning()
+        self._apply_hole_tuning()
+
+    def _save_tuning_to_recipe(self) -> None:
+        """Persist the current slider values into the active recipe (on release)."""
+        key = self.active_recipe_key()
+        if self.recipes is None or not key or not self.recipes.has(key):
+            return
+        updated = replace(
+            self.recipes.get(key),
+            cover_min_px=float(self.tune_min.value()),
+            cover_max_px=float(self.tune_max.value()),
+            hough_edge=int(self.tune_edge.value()),
+            hough_votes=int(self.tune_votes.value()),
+            hole_min_px=float(self.tune_hole_min.value()),
+            hole_max_px=float(self.tune_hole_max.value()),
+        )
+        self.recipes.add(updated)          # add() persists the store
+        self._set_status("Detection settings saved to recipe.", theme.TEXT_DIM)
 
     def _apply_tuning(self) -> None:
         """Push the slider values into the Hough cover-detector config."""
@@ -414,6 +471,31 @@ class VisionTab(QWidget):
         self.view.set_pixmap(ndarray_to_qpixmap(frame))
         self._update_roi_buttons()      # a frame is enough to draw a pick region
 
+    def _render_detection(self, frame):
+        """Detect on ``frame`` and paint the overlay (grid + reachable zone +
+        holes + covers); store the results. Returns (covers, holes). Shared by the
+        Detect button and the live auto-cycle view updates."""
+        self._frame = frame
+        to_robot = self.calibration.pixel_to_robot if self.calibration else None
+        validator = self.controller.validator if self.calibration else None
+        covers = self.cover_detector.detect(frame, to_robot, validator)
+        show_holes = getattr(self, "show_holes_chk", None) and self.show_holes_chk.isChecked()
+        holes = self.hole_detector.detect(frame, to_robot) if show_holes else None
+        self._last_covers = covers
+        self._last_holes = holes
+        base = frame
+        if self.calibration is not None:
+            def _r2p(x, y):
+                p = self.calibration.robot_to_pixel_many([[x, y]])[0]
+                return (float(p[0]), float(p[1]))
+            base = draw_robot_grid(
+                frame, self.calibration.pixel_to_robot, _r2p, 25.0)
+            base = draw_reachable_zone(base, self._reachable_contours(), _r2p)
+        overlay = annotate(base, holes.holes if holes else None, covers.covers)
+        self._display = overlay
+        self.view.set_pixmap(ndarray_to_qpixmap(overlay))
+        return covers, holes
+
     def _on_detect(self) -> None:
         if self._frame is None:
             self._capture()
@@ -421,24 +503,7 @@ class VisionTab(QWidget):
             return
         # With a calibration, covers are also filtered by real workspace
         # reachability (pixel -> robot -> WorkspaceValidator).
-        to_robot = self.calibration.pixel_to_robot if self.calibration else None
-        validator = self.controller.validator if self.calibration else None
-        covers = self.cover_detector.detect(self._frame, to_robot, validator)
-        show_holes = getattr(self, "show_holes_chk", None) and self.show_holes_chk.isChecked()
-        holes = self.hole_detector.detect(self._frame, to_robot) if show_holes else None
-        self._last_covers = covers
-        self._last_holes = holes
-        base = self._frame
-        if self.calibration is not None:
-            def _r2p(x, y):
-                p = self.calibration.robot_to_pixel_many([[x, y]])[0]
-                return (float(p[0]), float(p[1]))
-            base = draw_robot_grid(
-                self._frame, self.calibration.pixel_to_robot, _r2p, 25.0)
-            base = draw_reachable_zone(base, self._reachable_contours(), _r2p)
-        overlay = annotate(base, holes.holes if holes else None, covers.covers)
-        self._display = overlay
-        self.view.set_pixmap(ndarray_to_qpixmap(overlay))
+        covers, holes = self._render_detection(self._frame)
         reach = " reachable" if self.calibration else " pickable"
         why = ""
         if covers.count and not covers.accepted:
@@ -448,6 +513,16 @@ class VisionTab(QWidget):
             f"{holes_txt}{covers.count} covers, {len(covers.accepted)}{reach}{why}.",
             theme.SUCCESS if covers.accepted else theme.WARN,
         )
+
+    def _on_cycle_frame(self, frame) -> None:
+        """Live view refresh: the auto cycle imaged a frame — re-render the
+        overlay on it so the operator watches detection track each capture."""
+        if frame is None:
+            return
+        try:
+            self._render_detection(frame)
+        except Exception:  # noqa: BLE001 - a render glitch must never kill the run
+            pass
 
     def _reachable_contours(self):
         """Safe-zone outline in robot mm — computed once (geometry is fixed)."""
@@ -655,6 +730,7 @@ class VisionTab(QWidget):
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.stepDone.connect(self._on_cycle_step)
+        self._worker.frameReady.connect(self._on_cycle_frame)
         self._worker.finished.connect(self._on_cycle_finished)
         self._thread.start()
 

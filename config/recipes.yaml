@@ -5,9 +5,21 @@ recipes:
   cover_diameter_mm: 22.5
   hole_diameter_mm: 16.0
   diameter_tolerance: 0.2
+  cover_min_px: 250.0
+  cover_max_px: 400.0
+  hough_edge: 70
+  hough_votes: 30
+  hole_min_px: 30.0
+  hole_max_px: 220.0
 - key: g24-6
   name: Group 24 (6-vent)
   hole_count: 6
   cover_diameter_mm: 18.0
   hole_diameter_mm: 0.0
   diameter_tolerance: 0.2
+  cover_min_px: 250.0
+  cover_max_px: 400.0
+  hough_edge: 70
+  hough_votes: 30
+  hole_min_px: 30.0
+  hole_max_px: 220.0

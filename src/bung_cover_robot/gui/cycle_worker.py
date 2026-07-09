@@ -16,8 +16,9 @@ from ..app.cycle_manager import CycleManager
 
 
 class CycleWorker(QObject):
-    stepDone = Signal(object)   # CycleStep, emitted per hole
-    finished = Signal(object)   # CycleResult, emitted once at the end
+    stepDone = Signal(object)    # CycleStep, emitted per hole
+    frameReady = Signal(object)  # np.ndarray, emitted on every camera capture
+    finished = Signal(object)    # CycleResult, emitted once at the end
 
     def __init__(self, manager: CycleManager) -> None:
         super().__init__()
@@ -32,5 +33,6 @@ class CycleWorker(QObject):
         result = self._manager.run_cycle(
             should_stop=lambda: self._stop,
             on_step=self.stepDone.emit,
+            on_frame=self.frameReady.emit,
         )
         self.finished.emit(result)

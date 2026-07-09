@@ -128,6 +128,9 @@ class MainWindow(QMainWindow):
     def _apply_recipe(self, key: str) -> None:
         """Changeover: load the recipe's hole count + its own calibration."""
         recipe = self.recipes.get(key)
+        # Detection tuning first: set_hole_count / set_cover_diameter_mm read the
+        # slider windows, so the sliders must already hold this recipe's values.
+        self.vision_tab.set_detection_tuning(recipe)
         self.vision_tab.set_hole_count(
             recipe.hole_count, recipe.hole_diameter_mm, recipe.diameter_tolerance
         )

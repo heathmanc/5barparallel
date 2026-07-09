@@ -822,6 +822,32 @@ def test_holes_searched_full_frame_outside_pick_region(qapp):
     assert vt.hole_detector.config.exclude_roi == (10, 20, 100, 80)
 
 
+def test_detection_sliders_save_and_load_per_recipe(qapp, tmp_path):
+    from bung_cover_robot.app.recipes import RecipeStore
+
+    win = MainWindow(config_dir=tmp_path)          # recipes.yaml persists under tmp
+    vt = win.vision_tab
+    key = win.recipes.list()[0].key
+    vt.select_recipe(key)
+    win._apply_recipe(key)
+
+    vt.tune_min.setValue(300)
+    vt.tune_hole_max.setValue(180)
+    vt._save_tuning_to_recipe()                    # normally on sliderReleased
+
+    # persisted into the recipe + written to disk
+    assert win.recipes.get(key).cover_min_px == 300
+    reloaded = RecipeStore.load(tmp_path / "recipes.yaml").get(key)
+    assert reloaded.cover_min_px == 300 and reloaded.hole_max_px == 180
+
+    # a changeover restores the saved windows into the sliders and detectors
+    vt._set_slider(vt.tune_min, 250)               # scramble first
+    vt.set_detection_tuning(reloaded)
+    assert vt.tune_min.value() == 300 and vt.tune_hole_max.value() == 180
+    assert vt.cover_detector.config.min_diameter_px == pytest.approx(300)
+    assert vt.hole_detector.config.max_diameter_px == pytest.approx(180)
+
+
 def test_hole_size_sliders_drive_hole_detector(qapp):
     win = MainWindow()
     vt = win.vision_tab

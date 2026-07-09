@@ -210,6 +210,18 @@ def test_cycle_places_reachable_covers_then_stops():
     assert len(picks) == len({(round(p[0]), round(p[1])) for p in picks})
 
 
+def test_cycle_emits_a_frame_on_each_capture():
+    mgr = CycleManager(_ready_controller(), _mock_camera(), demo_transform())
+    frames = []
+    res = mgr.run_cycle(on_frame=frames.append)
+    assert res.ok
+    # imaged for the holes once + once per pick attempt (>= number placed)
+    assert len(frames) >= 1 + len(res.placed)
+    assert all(f is not None for f in frames)
+    # the source exposes the last frame it grabbed for the live view
+    assert mgr.target_source.last_frame is not None
+
+
 def test_cycle_single_step_stops_after_one_hole():
     from bung_cover_robot.app.cycle_manager import (
         CycleConfig,
