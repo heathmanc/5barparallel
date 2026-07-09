@@ -271,7 +271,8 @@ values — so all of these start at 0/false):
 > **Home offset:** the ClearLink zeroes position **at the prox trip point**, not
 > at 140.54°/39.46°. Set `HOME_OFFSET_L/R` so
 > `ActualDeg = (Motor*_CommandedPosn + HOME_OFFSET) / STEPS_PER_DEG` reads the
-> true shoulder angle (`plc_program.md` §5, `plc_homing.md`).
+> true shoulder angle. **Full procedure: `home_offset_calibration.md`**
+> (`plc_program.md` §5, `plc_homing.md`).
 
 > **Back up / restore the commissioning constants (disaster recovery).** Studio
 > 5000 does **not** restore the set-by-hand tuning tags (`HOME_OFFSET_L/R`,
@@ -308,7 +309,8 @@ Motor-Faulted and cancels motion). Reset, fix, retry.
 3. **Homing:** confirm each prox toggles (read its DIP) as the L1 flag passes;
    run **Robot Test → Home (find ref)**; confirm `Has Homed`, tune `HOME_VEL_0/1`
    (sign = approach direction), and set `HOME_OFFSET_L/R` so
-   `ActualLeftDeg ≈ 140.54`, `ActualRightDeg ≈ 39.46`.
+   `ActualLeftDeg ≈ 140.54`, `ActualRightDeg ≈ 39.46` — measure them per
+   `home_offset_calibration.md`.
    Verify the sequential sweep can't collide the two arms.
 4. **Absolute moves:** jog via **Robot Test** (Cartesian/joint); confirm
    `CompleteCommandID` tracks each move and `InPosition`/`At_Target_Posn` gates it.

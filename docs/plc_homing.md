@@ -291,6 +291,7 @@ runs both axes, and sets `Status.Homed` + `ActualLeft/RightDeg` on success
 5. Set `HOME_OFFSET_L`/`HOME_OFFSET_R` so that after homing
    `Status.ActualLeftDeg ≈ 140.54`, `Status.ActualRightDeg ≈ 39.46` (position 0
    is the prox trip point, not the home angle — the offset bridges the two).
+   Measure them with the fixture procedure in `home_offset_calibration.md`.
 6. Block a prox so the switch never trips to confirm `HOME_TIMEOUT` →
    `FaultCode 4`.
 7. Confirm the soft limits (−20/+200, `Config Register.SoftLimitEnable` + `Soft
