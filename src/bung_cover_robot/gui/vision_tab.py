@@ -377,6 +377,14 @@ class VisionTab(QWidget):
         key = self.recipe_combo.currentData()
         return str(key) if key is not None else None
 
+    def select_recipe(self, key: str) -> None:
+        """Set the changeover combo to ``key`` without re-emitting recipeChanged."""
+        idx = self.recipe_combo.findData(key)
+        if idx >= 0:
+            self.recipe_combo.blockSignals(True)
+            self.recipe_combo.setCurrentIndex(idx)
+            self.recipe_combo.blockSignals(False)
+
     def _on_recipe_changed(self) -> None:
         key = self.active_recipe_key()
         if key is not None:

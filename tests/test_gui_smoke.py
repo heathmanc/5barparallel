@@ -758,6 +758,23 @@ def test_vision_tuning_sliders_and_save_frame(qapp, tmp_path, monkeypatch):
     assert out.exists()
 
 
+def test_recipe_save_propagates_bung_size_to_detector(qapp):
+    win = MainWindow()
+    ct, vt = win.calibration_tab, win.vision_tab
+    key = win.recipes.list()[0].key
+
+    ct.recipe_combo.setCurrentIndex(ct.recipe_combo.findData(key))
+    ct.bung_dia_spin.setValue(22.5)
+    ct.hole_count_spin.setValue(6)
+    ct.tol_spin.setValue(20)               # 20 %
+    ct._on_save_recipe_params()
+
+    # the saved recipe is now active in the Vision tab and drives the detector
+    assert vt.active_recipe_key() == key
+    assert vt.cover_detector.config.expected_diameter_mm == pytest.approx(22.5)
+    assert vt.cover_detector.config.diameter_tolerance == pytest.approx(0.20)
+
+
 def test_vision_pick_roi_draw_without_calibration(qapp):
     win = MainWindow()
     vt = win.vision_tab

@@ -130,7 +130,7 @@ class CalibrationTab(QWidget):
 
     # emits (recipe_key, HomographyTransform) when a calibration is saved
     calibrationSaved = Signal(str, object)
-    recipesChanged = Signal()  # a recipe was added to the shared store
+    recipesChanged = Signal(str)  # key of the recipe added/edited in the store
 
     def __init__(
         self,
@@ -525,7 +525,7 @@ class CalibrationTab(QWidget):
         except RecipeError as exc:
             self._set_status(f"Cannot save recipe: {exc}", theme.DANGER)
             return
-        self.recipesChanged.emit()  # re-applies detectors for the active recipe
+        self.recipesChanged.emit(key)  # re-applies detectors for this recipe
         self._set_status(f"Saved settings for '{key}'.", theme.SUCCESS)
 
     def _update_recipe_status(self) -> None:
@@ -559,7 +559,7 @@ class CalibrationTab(QWidget):
         self.new_recipe_edit.clear()
         self._reload_recipes()
         self.recipe_combo.setCurrentIndex(self.recipe_combo.findData(key))
-        self.recipesChanged.emit()
+        self.recipesChanged.emit(key)
         self._set_status(f"Added recipe '{key}'. Now calibrate it.", theme.SUCCESS)
 
     # --- helpers ------------------------------------------------------------

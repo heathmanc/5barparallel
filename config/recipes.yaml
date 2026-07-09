@@ -1,17 +1,11 @@
-# Battery recipes (Claude.md §13).
-#
-# Each recipe is a battery type. Because the vent holes and the loose covers share
-# one plane that a changeover shifts, every recipe owns its own pixel->robot
-# calibration, stored at calibration/<key>.npy (git-ignored) and built in the
-# Calibration tab. `key` is the calibration filename; `hole_count` feeds the hole
-# detector; `cover_diameter_mm` gates cover detection by physical size (0 = off).
-
 recipes:
-  - key: g31-6
-    name: Group 31 (6-vent)
-    hole_count: 6
-    cover_diameter_mm: 18.0
-  - key: g24-6
-    name: Group 24 (6-vent)
-    hole_count: 6
-    cover_diameter_mm: 18.0
+- key: g31-6
+  name: Group 31 (6-vent)
+  hole_count: 6
+  cover_diameter_mm: 22.5
+  diameter_tolerance: 0.2
+- key: g24-6
+  name: Group 24 (6-vent)
+  hole_count: 6
+  cover_diameter_mm: 18.0
+  diameter_tolerance: 0.2

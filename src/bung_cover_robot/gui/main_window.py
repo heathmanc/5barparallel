@@ -106,13 +106,24 @@ class MainWindow(QMainWindow):
         self.plc_tab.connectionChanged.connect(self.diagnostics_tab.refresh)
         self.camera_tab.cameraChanged.connect(self._on_camera_changed)
         self.calibration_tab.calibrationSaved.connect(self._on_calibration_saved)
-        self.calibration_tab.recipesChanged.connect(self.vision_tab.reload_recipes)
+        self.calibration_tab.recipesChanged.connect(self._on_recipes_changed)
         self.vision_tab.recipeChanged.connect(self._apply_recipe)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Load the first recipe's calibration into the Vision tab.
         if self.recipes.list():
             self._apply_recipe(self.recipes.list()[0].key)
+
+    def _on_recipes_changed(self, key: str) -> None:
+        """A recipe was edited/added: refresh the combo, make that recipe active in
+        the Vision tab, and re-apply it so a just-saved bung size takes effect on
+        the next Detect."""
+        self.vision_tab.reload_recipes()
+        if key and self.recipes.has(key):
+            self.vision_tab.select_recipe(key)
+            self._apply_recipe(key)
+        elif self.vision_tab.active_recipe_key():
+            self._apply_recipe(self.vision_tab.active_recipe_key())
 
     def _apply_recipe(self, key: str) -> None:
         """Changeover: load the recipe's hole count + its own calibration."""
