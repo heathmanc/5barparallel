@@ -284,10 +284,13 @@ class VisionTab(QWidget):
         self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
         reach = " reachable" if self.calibration else " pickable"
+        why = ""
+        if covers.count and not covers.accepted:
+            why = f" — rejected: {covers.covers[0].reason}"
         self._set_status(
             f"{covers.count} covers, {len(covers.accepted)}{reach} "
             f"(Ø {int(self.cover_detector.config.min_diameter_px)}–"
-            f"{int(self.cover_detector.config.max_diameter_px)} px).",
+            f"{int(self.cover_detector.config.max_diameter_px)} px){why}.",
             theme.SUCCESS if covers.accepted else theme.WARN,
         )
 

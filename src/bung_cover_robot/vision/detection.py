@@ -386,6 +386,10 @@ def annotate(
             else:
                 cv2.circle(out, ctr, int(circle.radius), color, 4)
             cv2.drawMarker(out, ctr, color, cv2.MARKER_CROSS, 20, 2)  # pickup point
+            reason = getattr(cd, "reason", "")
+            if not ok and reason:                                # why it was rejected
+                cv2.putText(out, reason, (ctr[0] - int(circle.radius), ctr[1] - int(circle.radius) - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
     return out
 
 
