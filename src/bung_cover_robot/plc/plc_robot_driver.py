@@ -44,6 +44,7 @@ class PlcRobotDriver(RobotDriver):
         # between scans and never be seen. 0 = no dwell (e.g. against the sim).
         self.pulse_hold_s = pulse_hold_s
         self._command_id = 0
+        self._auto_mode = False          # commanded Auto/Manual (PC is sole writer)
         # Heartbeat: a background thread increments Cmd.Heartbeat so the PLC's
         # watchdog (R10) knows the app is alive; if it stalls the PLC drops the
         # drives + faults code 10. Set 0 to disable (tests that don't want a
@@ -142,11 +143,16 @@ class PlcRobotDriver(RobotDriver):
             self._write(T.Cmd.AUTO_MODE, bool(on))
         except PlcError as exc:
             raise RobotDriverError(f"set auto mode: PLC comms error: {exc}") from exc
+        # Cache the commanded mode: the PC is the SOLE writer of Cmd.AutoMode, so the
+        # command is authoritative. Reading it back each refresh made the HMI button
+        # revert whenever a read lagged or lost the client lock to the running cycle
+        # (a transient read -> 0 -> "Manual"), so pushes looked missed.
+        self._auto_mode = bool(on)
         logger.info("mode -> %s", "AUTO" if on else "MANUAL")
 
     @property
     def is_auto_mode(self) -> bool:
-        return bool(self._read_safe(T.Cmd.AUTO_MODE))
+        return self._auto_mode
 
     def reset(self) -> None:
         """Hold Cmd.Reset until the fault actually clears, then drop it.

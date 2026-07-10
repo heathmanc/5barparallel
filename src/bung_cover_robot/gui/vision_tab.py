@@ -12,6 +12,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -205,6 +206,12 @@ class VisionTab(QWidget):
         self.auto_btn.setToolTip("Auto mode — the PLC scans the pick/place routine; "
                                  "required to run the cycle.")
         self.auto_btn.clicked.connect(lambda: self._set_mode(True))
+        # Exclusive group so exactly one stays lit and a re-click on the active
+        # mode can't toggle it off (which read as a "missed" push).
+        self._mode_group = QButtonGroup(mode_box)
+        self._mode_group.setExclusive(True)
+        self._mode_group.addButton(self.manual_btn)
+        self._mode_group.addButton(self.auto_btn)
         mh.addWidget(self.manual_btn)
         mh.addWidget(self.auto_btn)
         v.addWidget(mode_box)
@@ -723,11 +730,15 @@ class VisionTab(QWidget):
 
     # --- mode (Manual / Auto) ----------------------------------------------
     def _set_mode(self, auto: bool) -> None:
+        # Reflect the press immediately so the HMI feels assertive even if the PLC
+        # write blocks for a scan or two -- the button never looks like it "missed."
+        self.auto_btn.setChecked(auto)
+        self.manual_btn.setChecked(not auto)
         try:
             self.controller.set_auto_mode(auto)
         except Exception as exc:                       # noqa: BLE001 - surface any driver error
             self._set_status(f"Mode change failed: {exc}", theme.DANGER)
-            self._sync_mode_buttons()
+            self._sync_mode_buttons()                  # roll back to the real state
             return
         if not auto and self._running:
             self._on_stop()                            # leaving Auto stops the cycle
