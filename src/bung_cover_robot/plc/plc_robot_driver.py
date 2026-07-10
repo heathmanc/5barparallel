@@ -44,6 +44,10 @@ class PlcRobotDriver(RobotDriver):
         # between scans and never be seen. 0 = no dwell (e.g. against the sim).
         self.pulse_hold_s = pulse_hold_s
         self._command_id = 0
+        # Last mode the PLC *confirmed* it is in (read back after the write). Only
+        # used as a fallback when a live read errors, so the HMI holds the last
+        # known-good state instead of flickering to Manual on a comms hiccup.
+        self._auto_mode = False
         # Heartbeat: a background thread increments Cmd.Heartbeat so the PLC's
         # watchdog (R10) knows the app is alive; if it stalls the PLC drops the
         # drives + faults code 10. Set 0 to disable (tests that don't want a
@@ -136,17 +140,45 @@ class PlcRobotDriver(RobotDriver):
             return None
 
     def set_auto_mode(self, on: bool) -> None:
-        """Write Cmd.AutoMode — R00_Main scans R50_Auto (pick/place) when true,
-        R40_Manual (jog/home) when false. A level, not a pulse."""
+        """Write Cmd.AutoMode and CONFIRM the PLC took it — R00_Main scans
+        R50_Auto (pick/place) when true, R40_Manual (jog/home) when false. A
+        level, not a pulse.
+
+        The button "missed pushes" because a single fire-and-forget write isn't
+        guaranteed to land (a dropped CIP packet, the PLC busy mid-scan). Python
+        is the master here, so we re-assert the level and read it back until the
+        device actually reflects it, and only then report success. If it never
+        confirms we raise, so the HMI shows the failure rather than a mode the
+        machine isn't in."""
+        want = bool(on)
+        deadline = time.monotonic() + self.command_timeout_s
         try:
-            self._write(T.Cmd.AUTO_MODE, bool(on))
+            while True:
+                self._write(T.Cmd.AUTO_MODE, want)
+                if bool(self._read(T.Cmd.AUTO_MODE)) == want:
+                    self._auto_mode = want
+                    logger.info("mode -> %s (confirmed)", "AUTO" if want else "MANUAL")
+                    return
+                if time.monotonic() >= deadline:
+                    raise RobotDriverError(
+                        f"set auto mode: PLC did not accept {'AUTO' if want else 'MANUAL'} "
+                        f"within {self.command_timeout_s:.1f}s"
+                    )
+                time.sleep(self.poll_interval_s)
         except PlcError as exc:
             raise RobotDriverError(f"set auto mode: PLC comms error: {exc}") from exc
-        logger.info("mode -> %s", "AUTO" if on else "MANUAL")
 
     @property
     def is_auto_mode(self) -> bool:
-        return bool(self._read_safe(T.Cmd.AUTO_MODE))
+        """Live PLC state (Cmd.AutoMode is the level the ladder actually reads).
+        On a transient read error, hold the last confirmed value rather than
+        defaulting to Manual, so the button doesn't flicker under lock contention
+        with a running cycle."""
+        try:
+            self._auto_mode = bool(self._read(T.Cmd.AUTO_MODE))
+        except PlcError:
+            pass
+        return self._auto_mode
 
     def reset(self) -> None:
         """Hold Cmd.Reset until the fault actually clears, then drop it.
