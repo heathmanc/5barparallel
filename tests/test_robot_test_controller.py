@@ -179,6 +179,32 @@ def test_update_geometry_reresolves_pose():
     assert 0.0 < c.state.metrics["reach_fraction"] <= 0.85
 
 
+def test_set_home_xy_recomputes_and_rejects():
+    c = make()
+    res = c.set_home_xy(20.0, 240.0)
+    assert res.ok and c.home_xy == pytest.approx((20.0, 240.0))
+    jt = c.kin.inverse(20.0, 240.0)
+    # the driver adopted the new home angles -> a find-reference lands there
+    c.enable()
+    c.home_reference()
+    assert c.driver.read_angles() == pytest.approx((jt.left_deg, jt.right_deg))
+    # an unreachable home is rejected and leaves the old home intact
+    bad = c.set_home_xy(0.0, 9999.0)
+    assert not bad.ok and c.home_xy == pytest.approx((20.0, 240.0))
+
+
+def test_update_geometry_with_new_home_for_smaller_robot():
+    from bung_cover_robot.robot.fivebar_kinematics import FiveBarConfig
+
+    c = make()
+    small = FiveBarConfig(l1_mm=100.0, l2_mm=115.0, base_spacing_mm=40.0)
+    # default home (0,250) is unreachable by the small arms -> must pass a new home
+    c.update_geometry(small, home_xy=(0.0, 120.0))
+    assert c.kin.config.l1_mm == 100.0
+    assert c.home_xy == pytest.approx((0.0, 120.0))
+    assert c.validator.is_safe(*c.home_xy)
+
+
 # --------------------------------------------------------------------------- #
 # Homing config wiring
 # --------------------------------------------------------------------------- #

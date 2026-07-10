@@ -568,11 +568,19 @@ class VisionTab(QWidget):
             pass
 
     def _reachable_contours(self):
-        """Safe-zone outline in robot mm — computed once (geometry is fixed)."""
+        """Safe-zone outline in robot mm — cached; bounds derived from the current
+        geometry so it tracks a smaller/larger robot. Invalidated on a geometry
+        change (invalidate_reach_cache)."""
         if self._reach_cache is None:
+            reach = self.controller.kin.config.max_reach_mm
+            step = max(4.0, 2.0 * reach / 200.0)
             self._reach_cache = reachable_zone_contours(
-                self.controller.validator.is_safe, -300.0, 300.0, 40.0, 430.0, 4.0)
+                self.controller.validator.is_safe, -reach, reach, 0.0, reach, step)
         return self._reach_cache
+
+    def invalidate_reach_cache(self) -> None:
+        """Drop the cached reachable-zone outline (call after a geometry change)."""
+        self._reach_cache = None
 
     def set_calibration(self, calibration) -> None:
         self.calibration = calibration

@@ -210,7 +210,21 @@ class RobotTestController:
     def set_home(self) -> Point:
         """Teach: capture the current pose as the software home reference."""
         self._home_xy = self._state.tcp
+        self.driver.set_home_angles((self._state.left_deg, self._state.right_deg))
         return self._home_xy
+
+    def set_home_xy(self, x: float, y: float) -> MoveResult:
+        """Set the software home to a specific TCP (x, y) mm and recompute its
+        shoulder angles under the current geometry. Rejects an unreachable/unsafe
+        home. Adopts the new home angles as the driver's reference too."""
+        state, reason = self._state_from_xy(x, y)
+        if state is None:
+            return self._reject(f"home ({x:.1f}, {y:.1f}) invalid: {reason}")
+        self._home_xy = (float(x), float(y))
+        self.driver.set_home_angles((state.left_deg, state.right_deg))
+        if not self._referenced:
+            self._state = state
+        return MoveResult(True, "ok", state)
 
     def go_home(self) -> MoveResult:
         """Drive the robot to the taught software home pose."""
@@ -325,16 +339,28 @@ class RobotTestController:
         )
 
     def update_geometry(
-        self, config: FiveBarConfig, validator: Optional[WorkspaceValidator] = None
+        self,
+        config: FiveBarConfig,
+        validator: Optional[WorkspaceValidator] = None,
+        home_xy: Optional[Point] = None,
     ) -> None:
         """Swap in new geometry (used by the Settings tab after re-validation).
 
-        Rebuilds kinematics + validator and re-resolves the current pose. If the
-        current pose is no longer valid under the new geometry, snaps back to the
-        (validated) home pose.
+        Rebuilds kinematics + validator. If ``home_xy`` is given, adopt it as the
+        new (validated) home and current pose — needed when a geometry change also
+        moves the home (e.g. a smaller robot). Otherwise re-resolve the current
+        pose, snapping back to the existing home if it's no longer valid.
         """
         self.kin = FiveBarKinematics(config)
         self.validator = validator or WorkspaceValidator(self.kin)
+        if home_xy is not None:
+            state, reason = self._state_from_xy(*home_xy)
+            if state is None:
+                raise ValueError(f"home {home_xy} invalid under new geometry: {reason}")
+            self._home_xy = (float(home_xy[0]), float(home_xy[1]))
+            self.driver.set_home_angles((state.left_deg, state.right_deg))
+            self._state = state
+            return
         state, _ = self._state_from_xy(*self._state.tcp)
         if state is None:
             state, _ = self._state_from_xy(*self._home_xy)

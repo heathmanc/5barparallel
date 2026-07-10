@@ -1,20 +1,23 @@
-"""Settings tab: view/edit robot geometry and workspace guard thresholds.
+"""Settings tab: view/edit robot geometry, home, and workspace guard thresholds.
 
-Geometry (L1, L2, base spacing, joint limits, branch, drivetrain) is editable,
-but Claude.md §3 forbids silently reverting the *verified* design. So Apply
-re-runs the full work-zone validation (the six-hole span + cap pick + ±2 in
-cross-conveyor tolerance) and REFUSES any geometry that can't clear every
-singularity/reach check. Only geometry that passes is pushed to the live
-controller; Save then writes it back to config/robot_config.yaml.
+Geometry (L1, L2, base spacing, joint limits, branch, drivetrain) and the home
+TCP are editable. Apply auto-derives the largest safe work area the geometry
+supports (largest reachable + singularity-clear rectangle) — so a smaller robot
+yields a smaller area instead of being refused — recomputes the home shoulder
+angles, and refuses only if the geometry has no safe area or the chosen home is
+unreachable/unsafe. Passing geometry is pushed to the live controller; Save then
+writes geometry + the recomputed home back to config/robot_config.yaml.
 
-The geometry must also match the physically-built arms — this tab does not
-change hardware, only what the kinematics believe.
+Changing link lengths/base spacing (or the home) changes the home shoulder
+angles, so HOME_ANGLE_L/R and HOME_OFFSET on the PLC must be updated + re-
+calibrated afterward. The geometry must also match the physically-built arms —
+this tab changes only what the kinematics believe, not the hardware.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -31,29 +34,13 @@ from PySide6.QtWidgets import (
 )
 
 from ..app.robot_test_controller import RobotTestController
-from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
-from ..robot.workspace import SingularityLimits, WorkspaceValidator
-
-# The verified work zone in the robot frame (Claude.md §3, §4). New geometry
-# must keep all of these valid to be accepted.
-_Y_NOM = 250.0
-_TOL = 50.8
-WORK_ZONE: List[Tuple[float, float]] = [
-    (x, y)
-    for y in (_Y_NOM - _TOL, _Y_NOM, _Y_NOM + _TOL)
-    for x in (-175.0, -125.0, -75.0, 0.0, 75.0, 125.0, 175.0)
-]
-
-
-def validate_work_zone(validator: WorkspaceValidator) -> List[Tuple[float, float, str]]:
-    """Return [(x, y, reason)] for every work-zone point the geometry fails.
-    Empty list means the geometry covers the whole verified work zone."""
-    failures: List[Tuple[float, float, str]] = []
-    for x, y in WORK_ZONE:
-        res = validator.validate(x, y)
-        if not res.ok:
-            failures.append((x, y, res.reason))
-    return failures
+from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics, KinematicsError
+from ..robot.workspace import (
+    SingularityLimits,
+    WorkArea,
+    WorkspaceValidator,
+    largest_safe_rectangle,
+)
 
 
 class SettingsTab(QWidget):
@@ -69,9 +56,11 @@ class SettingsTab(QWidget):
         self.controller = controller
         self.config_path = Path(config_path) if config_path else None
         self._floats: Dict[str, QDoubleSpinBox] = {}
+        self._work_area: Optional[WorkArea] = None   # last auto-derived safe area
 
         root = QVBoxLayout(self)
         root.addWidget(self._build_geometry_group())
+        root.addWidget(self._build_home_group())
         root.addWidget(self._build_limits_group())
         root.addWidget(self._build_buttons())
         self.status_label = QLabel("")
@@ -118,6 +107,18 @@ class SettingsTab(QWidget):
         self.pulses_per_rev.valueChanged.connect(self._update_derived)
         return box
 
+    def _build_home_group(self) -> QGroupBox:
+        box = QGroupBox("Home reference (recomputed on Apply)")
+        form = QFormLayout(box)
+        form.addRow("Home TCP X (mm)", self._fspin("home_x", -600, 600, 1, 1))
+        form.addRow("Home TCP Y (mm)", self._fspin("home_y", 0, 600, 1, 1))
+        self.home_angles_label = QLabel()
+        self.home_angles_label.setWordWrap(True)
+        form.addRow("Home angles", self.home_angles_label)
+        for key in ("home_x", "home_y"):
+            self._floats[key].valueChanged.connect(self._update_derived)
+        return box
+
     def _build_limits_group(self) -> QGroupBox:
         box = QGroupBox("Workspace guard thresholds")
         form = QFormLayout(box)
@@ -160,6 +161,9 @@ class SettingsTab(QWidget):
         self._floats["parallel_min_deg"].setValue(limits.parallel_min_deg)
         self._floats["serial_min_deg"].setValue(limits.serial_min_deg)
         self._floats["reach_fraction_max"].setValue(limits.reach_fraction_max)
+        hx, hy = self.controller.home_xy
+        self._floats["home_x"].setValue(hx)
+        self._floats["home_y"].setValue(hy)
         self._update_derived()
 
     def _read_config(self) -> FiveBarConfig:
@@ -185,36 +189,64 @@ class SettingsTab(QWidget):
     def _update_derived(self) -> None:
         try:
             cfg = self._read_config()
-            self.derived_label.setText(
-                f"reach {cfg.max_reach_mm:.0f} mm  |  "
-                f"pulses/deg {cfg.pulses_per_degree:.4f}"
-            )
         except ValueError as exc:
             self.derived_label.setText(f"invalid: {exc}")
+            return
+        self.derived_label.setText(
+            f"reach {cfg.max_reach_mm:.0f} mm  |  pulses/deg {cfg.pulses_per_degree:.4f}"
+        )
+        # Live home-angle preview from the current (unapplied) fields.
+        try:
+            jt = FiveBarKinematics(cfg).inverse(
+                self._floats["home_x"].value(), self._floats["home_y"].value())
+            self.home_angles_label.setText(
+                f"L {jt.left_deg:.2f}°   R {jt.right_deg:.2f}°")
+            self.home_angles_label.setStyleSheet("")
+        except (KinematicsError, ValueError):
+            self.home_angles_label.setText("home unreachable with this geometry")
+            self.home_angles_label.setStyleSheet("color:#f85149;")
 
     # --- actions ------------------------------------------------------------
     def _on_apply(self) -> bool:
         try:
             config = self._read_config()
             limits = self._read_limits()
+            home_x = self._floats["home_x"].value()
+            home_y = self._floats["home_y"].value()
         except ValueError as exc:
             self._status(f"Invalid geometry: {exc}", ok=False)
             return False
 
         validator = WorkspaceValidator(FiveBarKinematics(config), limits)
-        failures = validate_work_zone(validator)
-        if failures:
-            x, y, reason = failures[0]
+        # Auto-derive the usable work area from the geometry (largest safe rectangle).
+        area = largest_safe_rectangle(validator)
+        if area is None:
             self._status(
-                f"Refused: {len(failures)}/{len(WORK_ZONE)} work-zone points fail "
-                f"(e.g. ({x:.0f}, {y:.0f}): {reason})",
-                ok=False,
-            )
+                "Refused: this geometry has no safe work area (check link lengths "
+                "and the singularity thresholds).", ok=False)
+            return False
+        # The home must sit inside the safe area, or the robot can't reference there.
+        if not validator.is_safe(home_x, home_y):
+            reason = validator.validate(home_x, home_y).reason
+            self._status(
+                f"Refused: home ({home_x:.0f}, {home_y:.0f}) mm is not safe: {reason}. "
+                f"Set the home inside the derived area (x [{area.x_min:.0f}, "
+                f"{area.x_max:.0f}], y [{area.y_min:.0f}, {area.y_max:.0f}]).",
+                ok=False)
             return False
 
-        self.controller.update_geometry(config, validator)
+        self.controller.update_geometry(config, validator, home_xy=(home_x, home_y))
+        self._work_area = area
+        jt = self.controller.kin.inverse(home_x, home_y)
         self.geometryChanged.emit()
-        self._status("Applied — work zone fully valid.", ok=True)
+        self._update_derived()
+        self._status(
+            f"Applied. Work area {area.width:.0f} × {area.height:.0f} mm "
+            f"(x [{area.x_min:.0f}, {area.x_max:.0f}], y [{area.y_min:.0f}, "
+            f"{area.y_max:.0f}]).  Home ({home_x:.0f}, {home_y:.0f}) → "
+            f"L {jt.left_deg:.2f}°  R {jt.right_deg:.2f}°.  "
+            f"⚠ Update HOME_ANGLE_L/R and RE-CALIBRATE HOME_OFFSET on the PLC.",
+            ok=True)
         return True
 
     def _on_save(self) -> None:
@@ -247,8 +279,19 @@ class SettingsTab(QWidget):
             "serial_min_deg": lim.serial_min_deg,
             "reach_fraction_max": lim.reach_fraction_max,
         }
+        # Persist the (recomputed) home into the homing block, preserving its other
+        # keys (flag radius, joint limits) so the homing reference stays consistent.
+        hx, hy = self.controller.home_xy
+        jt = self.controller.kin.inverse(hx, hy)
+        homing = dict(data.get("homing", {}) or {})
+        homing["home_tcp_mm"] = [round(hx, 3), round(hy, 3)]
+        homing["home_left_deg"] = round(jt.left_deg, 4)
+        homing["home_right_deg"] = round(jt.right_deg, 4)
+        data["homing"] = homing
         self.config_path.write_text(yaml.safe_dump(data, sort_keys=False))
-        self._status(f"Saved to {self.config_path}.", ok=True)
+        self._status(
+            f"Saved to {self.config_path}. Home angles → L {jt.left_deg:.2f}° "
+            f"R {jt.right_deg:.2f}°; re-calibrate HOME_OFFSET on the PLC.", ok=True)
 
     def _on_reload(self) -> None:
         if self.config_path is None:

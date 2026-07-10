@@ -745,15 +745,32 @@ def test_settings_apply_valid_geometry(qapp):
     assert win.controller.kin.config.l1_mm == pytest.approx(225.0)
 
 
-def test_settings_refuses_geometry_that_breaks_workzone(qapp):
+def test_settings_refuses_when_home_unreachable(qapp):
     win = MainWindow()
     st = win.settings_tab
     before = win.controller.kin.config.l1_mm
-    st._floats["l1_mm"].setValue(60.0)  # far too short to cover the work zone
+    # A tiny robot can't reach the default home (0, 250); Apply must refuse it
+    # (rather than silently accepting an unreferenceable home).
+    st._floats["l1_mm"].setValue(60.0)
     st._floats["l2_mm"].setValue(60.0)
     assert st._on_apply() is False
     assert "Refused" in st.status_label.text()
     assert win.controller.kin.config.l1_mm == before  # unchanged
+
+
+def test_settings_small_robot_with_reachable_home_applies(qapp):
+    win = MainWindow()
+    st = win.settings_tab
+    # Shrink the robot AND move the home somewhere the small arms can reach.
+    st._floats["l1_mm"].setValue(100.0)
+    st._floats["l2_mm"].setValue(115.0)
+    st._floats["base_spacing_mm"].setValue(40.0)
+    st._floats["home_x"].setValue(0.0)
+    st._floats["home_y"].setValue(120.0)
+    assert st._on_apply() is True
+    assert win.controller.kin.config.l1_mm == pytest.approx(100.0)
+    assert win.controller.home_xy == pytest.approx((0.0, 120.0))
+    assert "Work area" in st.status_label.text()
 
 
 def test_settings_save_preserves_homing_block(qapp, tmp_path):

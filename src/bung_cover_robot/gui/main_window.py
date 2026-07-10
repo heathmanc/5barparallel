@@ -103,6 +103,8 @@ class MainWindow(QMainWindow):
 
         # Cross-tab refresh.
         self.settings_tab.geometryChanged.connect(self.robot_test_tab.refresh_all)
+        # New geometry -> the safe-zone overlay bounds change; drop its cache.
+        self.settings_tab.geometryChanged.connect(self.vision_tab.invalidate_reach_cache)
         self.plc_tab.connectionChanged.connect(self.robot_test_tab.refresh_all)
         self.plc_tab.connectionChanged.connect(self.vision_tab.refresh)
         self.plc_tab.connectionChanged.connect(self.bypass_tab.refresh)

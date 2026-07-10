@@ -108,6 +108,11 @@ class RobotDriver(ABC):
     def reset(self) -> None:
         """Clear a latched fault so the drives can be enabled/homed again."""
 
+    def set_home_angles(self, angles: Angles) -> None:
+        """Tell the driver where the software home reference is, in shoulder
+        degrees. Used when the home pose is re-taught/recomputed. No-op for a
+        real PLC (home is the switch reference); the dry-run driver adopts it."""
+
     def set_auto_mode(self, on: bool) -> None:
         """Select Auto (automatic pick/place owns motion) vs Manual (jog/home)
         mode. No-op for drivers with no mode concept."""
@@ -150,6 +155,10 @@ class DryRunRobotDriver(RobotDriver):
     @property
     def is_enabled(self) -> bool:
         return self._enabled
+
+    def set_home_angles(self, angles: Angles) -> None:
+        self._home_angles = (float(angles[0]), float(angles[1]))
+        logger.info("[dry-run] home reference set to L=%.3f R=%.3f", *self._home_angles)
 
     def set_auto_mode(self, on: bool) -> None:
         self._auto = bool(on)

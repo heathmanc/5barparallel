@@ -59,6 +59,109 @@ class SingularityLimits:
         )
 
 
+@dataclass(frozen=True)
+class WorkArea:
+    """An axis-aligned rectangle in the robot frame (mm) — the usable work area."""
+
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+
+    @property
+    def width(self) -> float:
+        return self.x_max - self.x_min
+
+    @property
+    def height(self) -> float:
+        return self.y_max - self.y_min
+
+    @property
+    def center(self) -> "tuple[float, float]":
+        return ((self.x_min + self.x_max) / 2.0, (self.y_min + self.y_max) / 2.0)
+
+    def contains(self, x: float, y: float) -> bool:
+        return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
+
+
+def largest_safe_rectangle(
+    validator: "WorkspaceValidator",
+    step: float = 4.0,
+    inset: float = 0.0,
+    max_cells: int = 200,
+) -> "WorkArea | None":
+    """The largest axis-aligned rectangle whose every point passes ``validate``.
+
+    Grid-samples the geometry's safe region (reachable + within joint limits +
+    clear of both singularities + under the stiffness cap), then finds the biggest
+    all-safe rectangle (maximal-rectangle-in-a-binary-matrix). This IS the usable
+    work area for the current arms — it shrinks/grows automatically with L1/L2/base
+    spacing, so a smaller robot yields a smaller area instead of being refused.
+
+    ``inset`` shrinks the result by a safety margin on every side. Returns None if
+    the geometry has no safe area at all. ``max_cells`` caps the grid per axis (the
+    sample step is coarsened to fit), so the scan stays fast on any geometry.
+    """
+    cfg = validator.config
+    reach = cfg.max_reach_mm
+    x0, x1 = -reach, reach
+    y0, y1 = 0.0, reach
+    step = max(step, (x1 - x0) / max_cells, (y1 - y0) / max_cells)
+    nx = int((x1 - x0) / step) + 1
+    ny = int((y1 - y0) / step) + 1
+    mask = [
+        [1 if validator.is_safe(x0 + ix * step, y0 + iy * step) else 0
+         for ix in range(nx)]
+        for iy in range(ny)
+    ]
+    rect = _max_true_rectangle(mask)
+    if rect is None:
+        return None
+    top, left, bottom, right = rect
+    area = WorkArea(
+        x_min=x0 + left * step, x_max=x0 + right * step,
+        y_min=y0 + top * step, y_max=y0 + bottom * step,
+    )
+    if inset > 0.0:
+        area = WorkArea(area.x_min + inset, area.x_max - inset,
+                        area.y_min + inset, area.y_max - inset)
+        if area.width <= 0.0 or area.height <= 0.0:
+            return None
+    return area
+
+
+def _max_true_rectangle(mask: List[List[int]]):
+    """(top, left, bottom, right) inclusive indices of the largest all-1 rectangle
+    in a binary matrix, or None if it's all zeros. Histogram method, O(rows*cols)."""
+    if not mask or not mask[0]:
+        return None
+    cols = len(mask[0])
+    heights = [0] * cols
+    best_area = 0
+    best = None
+    for i, row in enumerate(mask):
+        for j in range(cols):
+            heights[j] = heights[j] + 1 if row[j] else 0
+        # largest rectangle in this histogram, tracking its position
+        stack: List[int] = []   # indices of increasing bar heights
+        j = 0
+        while j <= cols:
+            h = heights[j] if j < cols else 0
+            if not stack or h >= heights[stack[-1]]:
+                stack.append(j)
+                j += 1
+            else:
+                top_idx = stack.pop()
+                height = heights[top_idx]
+                left = stack[-1] + 1 if stack else 0
+                right = j - 1
+                area = height * (right - left + 1)
+                if height > 0 and area > best_area:
+                    best_area = area
+                    best = (i - height + 1, left, i, right)
+    return best
+
+
 @dataclass
 class ValidationResult:
     """Outcome of a single validate() call. ``metrics`` always populated when
