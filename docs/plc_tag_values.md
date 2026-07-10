@@ -14,6 +14,7 @@ points you refine at commissioning; `STEPS_PER_DEG` is fixed and
 | `MOVE_VEL` | DINT | `20000` | steps/s | Move speed, steps/s (max 500000). Set ~20000. |
 | `MOVE_ACC` | DINT | `100000` | steps/s^2 | Move accel, steps/s^2. Set ~100000. |
 | `MOVE_DEC` | DINT | `0` | steps/s^2 | Move decel, steps/s^2. 0 => use accel. |
+| `MOVE_SETTLE_MS` | DINT | `100` | ms | Post-load move settle, ms. A move can't read 'in position' until this elapses, so the ClearLink At_Target_Posn has cleared from the previous move before it's checked - stops a chained auto move from completing on a stale at-target and being cancelled before it arrives. |
 
 ## Homing (R_HomeMotor0/1)
 
@@ -37,6 +38,7 @@ points you refine at commissioning; `STEPS_PER_DEG` is fixed and
 |---|---|---|---|---|
 | `VAC_SETTLE` | DINT | `300` | ms | Vacuum settle time, ms (VacTmr preset). Tune. |
 | `BLOWOFF_TIME` | DINT | `200` | ms | Blowoff time, ms (BlowTmr preset). Tune. |
+| `BENCH_DWELL_MS` | DINT | `600` | ms | BENCH: with Bypass_Vision, dwell this long at each cylinder down/up step so the pick/place is visible on the bench (no real Z/vacuum). 0 = no dwell. Ignored in production (real sensors gate). |
 
 ## Poses — set to safe positions (R50_Auto)
 

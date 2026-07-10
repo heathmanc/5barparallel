@@ -19,14 +19,22 @@
 <Text><![CDATA[XIC(ClearLink:I1.Motor1_Status_Load_Posn_Move_Ack)OTU(ClearLink:O1.Motor1_Output_Reg_Load_Posn_Data);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
-<Comment><![CDATA[Move done = a loaded move reached At Target Position (Loaded gate stops a stale/at-rest At_Target_Posn from reading as done). Latch InPosition, clear Loaded. Needs HLFB Inversion for the EM806.]]></Comment>
-<Text><![CDATA[XIC(Move1_Loaded)XIC(ClearLink:I1.Motor1_Status_At_Target_Posn)XIO(ClearLink:O1.Motor1_Output_Reg_Load_Posn_Data)OTL(Move1_InPosition)OTU(Move1_Loaded);]]></Text>
+<Comment><![CDATA[Keep the settle-timer preset loaded (CSV imports it as 0).]]></Comment>
+<Text><![CDATA[MOV(MOVE_SETTLE_MS,Move1_SettleTmr.PRE);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
+<Comment><![CDATA[Post-load settle timer: runs while a move is loaded (resets between moves).]]></Comment>
+<Text><![CDATA[XIC(Move1_Loaded)TON(Move1_SettleTmr,?,?);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[Move done = a loaded move reached At Target Position, but only AFTER the settle elapses. The settle is critical for chained auto moves: right after the load-ack the ClearLink At_Target_Posn can still read the PREVIOUS move's at-target (stale/at-rest), so without the delay the new move 'completes' before it has moved and the next state cancels it mid-flight - the arm never reaches pick/drop. Waiting MOVE_SETTLE_MS lets At_Target_Posn clear first. Latch InPosition, clear Loaded. Needs HLFB Inversion for the EM806.]]></Comment>
+<Text><![CDATA[XIC(Move1_Loaded)XIC(Move1_SettleTmr.DN)XIC(ClearLink:I1.Motor1_Status_At_Target_Posn)XIO(ClearLink:O1.Motor1_Output_Reg_Load_Posn_Data)OTL(Move1_InPosition)OTU(Move1_Loaded);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
 <Comment><![CDATA[Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.]]></Comment>
 <Text><![CDATA[[XIC(ClearLink:I1.Motor1_Status_Motor_In_Fault),XIC(ClearLink:I1.Motor1_Status_Shutdowns_Pres),XIC(EM806_1_ALM)]OTE(Move1_Fault);]]></Text>
 </Rung>
-<Rung Number="5" Type="N">
+<Rung Number="7" Type="N">
 <Comment><![CDATA[Abort: on a motor-local fault or the latched controller fault, drop any in-flight load so a faulted axis cannot keep or re-issue a move. Reset (R10) clears Status.Faulted; the operator re-Executes to resume.]]></Comment>
 <Text><![CDATA[[XIC(Move1_Fault),XIC(VisionRobot.Status.Faulted)]OTU(ClearLink:O1.Motor1_Output_Reg_Load_Posn_Data)OTU(Move1_Loaded);]]></Text>
 </Rung>

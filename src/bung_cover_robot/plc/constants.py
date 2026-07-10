@@ -58,6 +58,11 @@ COMMISSIONING_CONSTANTS: List[PlcConstant] = [
     PlcConstant("HOME_ANGLE_R", "REAL", 39.4594, "deg", "Right home angle published on a bypass home."),
     PlcConstant("VAC_SETTLE", "DINT", 300, "ms", "Vacuum settle time (VacTmr preset)."),
     PlcConstant("BLOWOFF_TIME", "DINT", 200, "ms", "Blowoff time (BlowTmr preset)."),
+    PlcConstant("MOVE_SETTLE_MS", "DINT", 100, "ms",
+                "Post-load move settle: an in-position can't register until this "
+                "elapses, so a chained auto move can't complete on a stale at-target."),
+    PlcConstant("BENCH_DWELL_MS", "DINT", 600, "ms",
+                "BENCH: visible dwell at each pneumatic step under Bypass_Vision."),
     PlcConstant("CAMERA_CLEAR_L", "REAL", 140.5406, "deg",
                 "Camera-clear pose, left shoulder deg. Defaults to home (a safe, "
                 "small move); set to a real out-of-view pose. NEVER leave 0 — 0 forces "

@@ -150,10 +150,19 @@ def move_rungs(m: int) -> List[Rung]:
          f"OTL({o}Output_Reg_Load_Posn_Data)OTL(Move{m}_Loaded);"),
         ("ClearLink acknowledges the load -> drop Load Position Data.",
          f"XIC({i}Status_Load_Posn_Move_Ack)OTU({o}Output_Reg_Load_Posn_Data);"),
-        ("Move done = a loaded move reached At Target Position (Loaded gate stops a "
-         "stale/at-rest At_Target_Posn from reading as done). Latch InPosition, clear "
-         "Loaded. Needs HLFB Inversion for the EM806.",
-         f"XIC(Move{m}_Loaded)XIC({i}Status_At_Target_Posn)XIO({o}Output_Reg_Load_Posn_Data)"
+        ("Keep the settle-timer preset loaded (CSV imports it as 0).",
+         f"MOV(MOVE_SETTLE_MS,Move{m}_SettleTmr.PRE);"),
+        ("Post-load settle timer: runs while a move is loaded (resets between moves).",
+         f"XIC(Move{m}_Loaded)TON(Move{m}_SettleTmr,?,?);"),
+        ("Move done = a loaded move reached At Target Position, but only AFTER the "
+         "settle elapses. The settle is critical for chained auto moves: right after "
+         "the load-ack the ClearLink At_Target_Posn can still read the PREVIOUS move's "
+         "at-target (stale/at-rest), so without the delay the new move 'completes' "
+         "before it has moved and the next state cancels it mid-flight - the arm never "
+         "reaches pick/drop. Waiting MOVE_SETTLE_MS lets At_Target_Posn clear first. "
+         "Latch InPosition, clear Loaded. Needs HLFB Inversion for the EM806.",
+         f"XIC(Move{m}_Loaded)XIC(Move{m}_SettleTmr.DN)XIC({i}Status_At_Target_Posn)"
+         f"XIO({o}Output_Reg_Load_Posn_Data)"
          f"OTL(Move{m}_InPosition)OTU(Move{m}_Loaded);"),
         ("Motor fault, ClearLink shutdown, or EM806 alarm -> Fault.",
          f"[XIC({i}Status_Motor_In_Fault),XIC({i}Status_Shutdowns_Pres),"
@@ -497,7 +506,7 @@ AUTO: List[Rung] = [
      "blowoff; advances on status bits (timers only for vacuum settle + blowoff). "
      "Tags (RobotTags.csv): State/RPP_prev/AR_prev/VacTmr/BlowTmr/Arrived/poses/"
      "pneumatics/sensors. Keep the timer presets loaded from the constants.",
-     "MOV(VAC_SETTLE,VacTmr.PRE)MOV(BLOWOFF_TIME,BlowTmr.PRE);"),
+     "MOV(VAC_SETTLE,VacTmr.PRE)MOV(BLOWOFF_TIME,BlowTmr.PRE)MOV(BENCH_DWELL_MS,BenchTmr.PRE);"),
     ("Arrived (status/HMI only) = both axes in position. Transitions check the two "
      "InPosition bits directly so a stale value can't fall through.",
      "XIC(Move0_InPosition)XIC(Move1_InPosition)OTE(Arrived);"),
@@ -505,6 +514,11 @@ AUTO: List[Rung] = [
      "[EQU(State,90),EQU(State,100)]TON(VacTmr,?,?);"),
     ("Blowoff timer runs in the blowoff state.",
      "EQU(State,170)TON(BlowTmr,?,?);"),
+    ("BENCH: the Z-confirm timer runs at each cylinder down/up step while "
+     "Bypass_Vision is set, so the bench pick/place dwells visibly (no real "
+     "sensors). Resets between steps (state leaves the set -> rung false).",
+     "[EQU(State,80),EQU(State,120),EQU(State,160),EQU(State,190)]"
+     "XIC(Bypass_Vision)TON(BenchTmr,?,?);"),
     ("State 0 IDLE: on Cmd.RequestPickPlace (edge) while enabled, homed and safe, "
      "latch the CommandID and start.",
      "EQU(State,0)XIC(VisionRobot.Cmd.RequestPickPlace)ONS(RPP_prev)"
@@ -532,8 +546,9 @@ AUTO: List[Rung] = [
      "EQU(State,60)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(70,State);"),
     ("State 70 CYLINDER_DOWN_PICK.",
      "EQU(State,70)OTL(CylinderDown)MOV(80,State);"),
-    ("State 80: Z down at pick confirmed (or Bypass_Vision on the bench).",
-     "EQU(State,80)[XIC(PickDown),XIC(Bypass_Vision)]MOV(90,State);"),
+    ("State 80: Z down at pick confirmed (or, on the bench, Bypass_Vision after a "
+     "visible BenchTmr dwell).",
+     "EQU(State,80)[XIC(PickDown),XIC(Bypass_Vision)XIC(BenchTmr.DN)]MOV(90,State);"),
     ("State 90 VACUUM_ON.",
      "EQU(State,90)OTL(VacuumOn);"),
     ("State 90: vacuum settle timer done -> verify.",
@@ -545,8 +560,8 @@ AUTO: List[Rung] = [
      "OTL(VisionRobot.Status.Faulted)MOV(9,VisionRobot.Status.FaultCode)MOV(900,State);"),
     ("State 110 CYLINDER_UP_PICK.",
      "EQU(State,110)OTU(CylinderDown)MOV(120,State);"),
-    ("State 120: Z up at pick confirmed (or Bypass_Vision).",
-     "EQU(State,120)[XIC(PickUp),XIC(Bypass_Vision)]MOV(130,State);"),
+    ("State 120: Z up at pick confirmed (or Bypass_Vision after a BenchTmr dwell).",
+     "EQU(State,120)[XIC(PickUp),XIC(Bypass_Vision)XIC(BenchTmr.DN)]MOV(130,State);"),
     ("State 130 MOVE_ABOVE_DROP.",
      "EQU(State,130)MOV(DropL,Move0_Target_Deg)MOV(DropR,Move1_Target_Deg)"
      "OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(140,State);"),
@@ -554,16 +569,17 @@ AUTO: List[Rung] = [
      "EQU(State,140)XIC(Move0_InPosition)XIC(Move1_InPosition)OTU(Move0_Execute)OTU(Move1_Execute)MOV(150,State);"),
     ("State 150 CYLINDER_DOWN_DROP.",
      "EQU(State,150)OTL(CylinderDown)MOV(160,State);"),
-    ("State 160: Z down at drop confirmed (or Bypass_Vision).",
-     "EQU(State,160)[XIC(DropDown),XIC(Bypass_Vision)]MOV(170,State);"),
+    ("State 160: Z down at drop confirmed (or Bypass_Vision after a BenchTmr dwell).",
+     "EQU(State,160)[XIC(DropDown),XIC(Bypass_Vision)XIC(BenchTmr.DN)]MOV(170,State);"),
     ("State 170 VACUUM_OFF_BLOWOFF: release vacuum, start blowoff.",
      "EQU(State,170)OTU(VacuumOn)OTL(Blowoff);"),
     ("State 170: blowoff timer done -> stop blowoff, advance.",
      "EQU(State,170)XIC(BlowTmr.DN)OTU(Blowoff)MOV(180,State);"),
     ("State 180 CYLINDER_UP_DROP.",
      "EQU(State,180)OTU(CylinderDown)MOV(190,State);"),
-    ("State 190: Z up at drop confirmed (or Bypass_Vision) -> return to park.",
-     "EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(192,State);"),
+    ("State 190: Z up at drop confirmed (or Bypass_Vision after a BenchTmr dwell) -> "
+     "return home.",
+     "EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)XIC(BenchTmr.DN)]MOV(192,State);"),
     ("State 192 MOVE_HOME: return the arm to the home pose (HOME_ANGLE_L/R — the "
      "same angles homing references, so it lands exactly at the datum) at the end of "
      "every cycle, not left at the last drop. Using HOME_ANGLE (always set) avoids a "
@@ -799,6 +815,15 @@ def _glue_tags() -> List[Tag]:
         unit="ms", hand=True)
     add("BLOWOFF_TIME", "DINT", "200", desc="Blowoff time, ms (BlowTmr preset). Tune.",
         unit="ms", hand=True)
+    add("MOVE_SETTLE_MS", "DINT", "100", desc="Post-load move settle, ms. A move can't "
+        "read 'in position' until this elapses, so the ClearLink At_Target_Posn has "
+        "cleared from the previous move before it's checked - stops a chained auto move "
+        "from completing on a stale at-target and being cancelled before it arrives.",
+        unit="ms", hand=True)
+    add("BENCH_DWELL_MS", "DINT", "600", desc="BENCH: with Bypass_Vision, dwell this "
+        "long at each cylinder down/up step so the pick/place is visible on the bench "
+        "(no real Z/vacuum). 0 = no dwell. Ignored in production (real sensors gate).",
+        unit="ms", hand=True)
     add("CAMERA_CLEAR_L", "REAL", "140.5406",
         desc="Camera-clear pose, left shoulder deg. Defaults to home (a safe, small "
              "move); set to a real out-of-view pose. NEVER leave 0: a 0 target forces "
@@ -814,6 +839,7 @@ def _glue_tags() -> List[Tag]:
         add(f"Move{m}_Fault", "BOOL", desc=f"Motor {m} move fault (drive fault / shutdown / ALM).")
         add(f"Move{m}_InPosition", "BOOL", desc=f"Motor {m} at target (only after a loaded move).")
         add(f"Move{m}_Loaded", "BOOL", desc=f"Motor {m} has a move loaded - gates InPosition off a stale At_Target_Posn.")
+        add(f"Move{m}_SettleTmr", "TIMER", desc=f"Motor {m} post-load settle (preset MOVE_SETTLE_MS); gates InPosition off a stale at-target.")
         add(f"Move{m}_Steps", "DINT", desc=f"Motor {m} target in steps (deg * STEPS_PER_DEG).")
         add(f"Move{m}_Target_Deg", "REAL", "0.0", desc=f"Motor {m} absolute target angle, deg.")
         add(f"Home{m}_Req", "BOOL", desc=f"Request homing of Motor {m} (set by R30_Homing).")
@@ -878,6 +904,8 @@ def _glue_tags() -> List[Tag]:
     add("AR_prev", "BOOL", desc="Edge storage for VisionRobot.Cmd.Reset in R50.")
     add("VacTmr", "TIMER", desc="Vacuum settle timer (preset VAC_SETTLE).")
     add("BlowTmr", "TIMER", desc="Blowoff timer (preset BLOWOFF_TIME).")
+    add("BenchTmr", "TIMER", desc="BENCH: dwell timer at each pneumatic step in "
+        "Bypass_Vision (preset BENCH_DWELL_MS) so bench pick/place is visible.")
     add("CmdCameraClear", "BOOL", desc="Dispatch: move to the camera-clear pose.")
     add("CmdMovePick", "BOOL", desc="Dispatch: move above the pick.")
     add("CmdMoveDrop", "BOOL", desc="Dispatch: move above the drop.")
@@ -952,13 +980,13 @@ def robot_tags_csv() -> str:
 # groups for the values reference (name order within each group is preserved)
 _VALUE_GROUPS: List[Tuple[str, List[str]]] = [
     ("Motion — absolute moves (R_MoveMotor0/1)",
-     ["STEPS_PER_DEG", "MOVE_VEL", "MOVE_ACC", "MOVE_DEC"]),
+     ["STEPS_PER_DEG", "MOVE_VEL", "MOVE_ACC", "MOVE_DEC", "MOVE_SETTLE_MS"]),
     ("Homing (R_HomeMotor0/1)",
      ["HOME_VEL_0", "HOME_VEL_1", "HOME_ACC", "HOME_TMO_MS"]),
     ("Home offsets — measure at commissioning (R30_Homing)",
      ["HOME_OFFSET_L", "HOME_OFFSET_R"]),
     ("Auto pick/place process timers (R50_Auto)",
-     ["VAC_SETTLE", "BLOWOFF_TIME"]),
+     ["VAC_SETTLE", "BLOWOFF_TIME", "BENCH_DWELL_MS"]),
     ("Poses — set to safe positions (R50_Auto)",
      ["CAMERA_CLEAR_L", "CAMERA_CLEAR_R"]),
     ("Heartbeat watchdog + drop-out debounce (R10/R20)",
