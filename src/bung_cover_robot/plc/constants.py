@@ -58,10 +58,12 @@ COMMISSIONING_CONSTANTS: List[PlcConstant] = [
     PlcConstant("HOME_ANGLE_R", "REAL", 39.4594, "deg", "Right home angle published on a bypass home."),
     PlcConstant("VAC_SETTLE", "DINT", 300, "ms", "Vacuum settle time (VacTmr preset)."),
     PlcConstant("BLOWOFF_TIME", "DINT", 200, "ms", "Blowoff time (BlowTmr preset)."),
-    PlcConstant("CAMERA_CLEAR_L", "REAL", 0.0, "deg", "Camera-clear pose, left shoulder deg."),
-    PlcConstant("CAMERA_CLEAR_R", "REAL", 0.0, "deg", "Camera-clear pose, right shoulder deg."),
-    PlcConstant("PARK_L", "REAL", 140.5406, "deg", "End-of-cycle park pose, left shoulder deg (R50 returns here)."),
-    PlcConstant("PARK_R", "REAL", 39.4594, "deg", "End-of-cycle park pose, right shoulder deg."),
+    PlcConstant("CAMERA_CLEAR_L", "REAL", 140.5406, "deg",
+                "Camera-clear pose, left shoulder deg. Defaults to home (a safe, "
+                "small move); set to a real out-of-view pose. NEVER leave 0 — 0 forces "
+                "a full-speed swing to 0 deg that open-loop steppers skip on."),
+    PlcConstant("CAMERA_CLEAR_R", "REAL", 39.4594, "deg",
+                "Camera-clear pose, right shoulder deg. Defaults to home; see CAMERA_CLEAR_L."),
     PlcConstant("HB_TIMEOUT_MS", "DINT", 1000, "ms", "PC-heartbeat watchdog timeout."),
     PlcConstant("EN_DROP_TMO_MS", "DINT", 1000, "ms", "Enable drop-out (power-cycle) debounce."),
 ]

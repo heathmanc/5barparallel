@@ -564,10 +564,12 @@ AUTO: List[Rung] = [
      "EQU(State,180)OTU(CylinderDown)MOV(190,State);"),
     ("State 190: Z up at drop confirmed (or Bypass_Vision) -> return to park.",
      "EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(192,State);"),
-    ("State 192 MOVE_PARK: return the arm to the fixed PARK pose so every cycle ends "
-     "at the SAME origin (not left sitting at the last drop). Absolute move; clear "
-     "stale InPosition/Loaded first, then execute both axes.",
-     "EQU(State,192)MOV(PARK_L,Move0_Target_Deg)MOV(PARK_R,Move1_Target_Deg)"
+    ("State 192 MOVE_HOME: return the arm to the home pose (HOME_ANGLE_L/R — the "
+     "same angles homing references, so it lands exactly at the datum) at the end of "
+     "every cycle, not left at the last drop. Using HOME_ANGLE (always set) avoids a "
+     "separate park constant that, left at 0, would command a full-speed swing to 0 "
+     "deg and skip steps. Absolute move; clear stale InPosition/Loaded, then execute.",
+     "EQU(State,192)MOV(HOME_ANGLE_L,Move0_Target_Deg)MOV(HOME_ANGLE_R,Move1_Target_Deg)"
      "OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)"
      "OTL(Move0_Execute)OTL(Move1_Execute)MOV(194,State);"),
     ("State 194: parked (both axes in position) -> drop execute, complete the job.",
@@ -797,20 +799,13 @@ def _glue_tags() -> List[Tag]:
         unit="ms", hand=True)
     add("BLOWOFF_TIME", "DINT", "200", desc="Blowoff time, ms (BlowTmr preset). Tune.",
         unit="ms", hand=True)
-    add("CAMERA_CLEAR_L", "REAL", "0.0",
-        desc="Camera-clear pose, left shoulder deg. Set to a safe out-of-view pose.",
+    add("CAMERA_CLEAR_L", "REAL", "140.5406",
+        desc="Camera-clear pose, left shoulder deg. Defaults to home (a safe, small "
+             "move); set to a real out-of-view pose. NEVER leave 0: a 0 target forces "
+             "a full-speed swing to 0 deg that open-loop steppers skip on.",
         unit="deg", hand=True)
-    add("CAMERA_CLEAR_R", "REAL", "0.0",
-        desc="Camera-clear pose, right shoulder deg. Set to a safe out-of-view pose.",
-        unit="deg", hand=True)
-    add("PARK_L", "REAL", "140.5406",
-        desc="End-of-cycle park pose, left shoulder deg. R50_Auto returns the arm "
-             "here after each place so every cycle ends at the SAME fixed origin "
-             "(defaults to the home angle; set to CAMERA_CLEAR_L for an out-of-view "
-             "park instead).",
-        unit="deg", hand=True)
-    add("PARK_R", "REAL", "39.4594",
-        desc="End-of-cycle park pose, right shoulder deg (see PARK_L).",
+    add("CAMERA_CLEAR_R", "REAL", "39.4594",
+        desc="Camera-clear pose, right shoulder deg. Defaults to home; see CAMERA_CLEAR_L.",
         unit="deg", hand=True)
 
     # --- per-motor move + home glue (R_MoveMotor* / R_HomeMotor*) ---
@@ -965,7 +960,7 @@ _VALUE_GROUPS: List[Tuple[str, List[str]]] = [
     ("Auto pick/place process timers (R50_Auto)",
      ["VAC_SETTLE", "BLOWOFF_TIME"]),
     ("Poses — set to safe positions (R50_Auto)",
-     ["CAMERA_CLEAR_L", "CAMERA_CLEAR_R", "PARK_L", "PARK_R"]),
+     ["CAMERA_CLEAR_L", "CAMERA_CLEAR_R"]),
     ("Heartbeat watchdog + drop-out debounce (R10/R20)",
      ["HB_TIMEOUT_MS", "EN_DROP_TMO_MS"]),
 ]

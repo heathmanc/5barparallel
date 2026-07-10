@@ -263,8 +263,8 @@ class SimulatedPlcClient(PlcClient):
         self._store[T.Status.ACTIVE_COMMAND_ID] = cid
         self._store[T.Status.BUSY] = True
         self._store[T.Status.READY] = False
-        # ... pick (vacuum on) -> place -> blow-off -> return to PARK (R50 State 192),
-        # so the job ends back at the fixed park/home pose, not left at the drop.
+        # ... pick (vacuum on) -> place -> blow-off -> return HOME (R50 State 192
+        # moves to HOME_ANGLE), so the job ends back at the home pose, not the drop.
         self._store[T.Status.ACTUAL_LEFT_DEG] = self._home_angles[0]
         self._store[T.Status.ACTUAL_RIGHT_DEG] = self._home_angles[1]
         self._store[T.Status.VACUUM_OK] = False  # released after blow-off

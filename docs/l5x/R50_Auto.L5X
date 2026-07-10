@@ -115,8 +115,8 @@
 <Text><![CDATA[EQU(State,190)[XIC(DropUp),XIC(Bypass_Vision)]MOV(192,State);]]></Text>
 </Rung>
 <Rung Number="27" Type="N">
-<Comment><![CDATA[State 192 MOVE_PARK: return the arm to the fixed PARK pose so every cycle ends at the SAME origin (not left sitting at the last drop). Absolute move; clear stale InPosition/Loaded first, then execute both axes.]]></Comment>
-<Text><![CDATA[EQU(State,192)MOV(PARK_L,Move0_Target_Deg)MOV(PARK_R,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(194,State);]]></Text>
+<Comment><![CDATA[State 192 MOVE_HOME: return the arm to the home pose (HOME_ANGLE_L/R — the same angles homing references, so it lands exactly at the datum) at the end of every cycle, not left at the last drop. Using HOME_ANGLE (always set) avoids a separate park constant that, left at 0, would command a full-speed swing to 0 deg and skip steps. Absolute move; clear stale InPosition/Loaded, then execute.]]></Comment>
+<Text><![CDATA[EQU(State,192)MOV(HOME_ANGLE_L,Move0_Target_Deg)MOV(HOME_ANGLE_R,Move1_Target_Deg)OTU(Move0_InPosition)OTU(Move1_InPosition)OTU(Move0_Loaded)OTU(Move1_Loaded)OTL(Move0_Execute)OTL(Move1_Execute)MOV(194,State);]]></Text>
 </Rung>
 <Rung Number="28" Type="N">
 <Comment><![CDATA[State 194: parked (both axes in position) -> drop execute, complete the job.]]></Comment>

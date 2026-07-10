@@ -454,9 +454,9 @@ CASE State OF
  160:  IF DropDown THEN State := 170; END_IF;
  170:  VacuumOff();  Blowoff();  T_blow(...);  State := 180;
  180:  CylinderUp();                    State := 190;
- 190:  IF DropUp THEN State := 192; END_IF;             // return to a fixed origin
- 192:  MoveAbove(PARK_L, PARK_R);       State := 194;    // park pose (abs), so every
- 194:  IF AtPark THEN State := 200; END_IF;             //  cycle ends at the SAME spot
+ 190:  IF DropUp THEN State := 192; END_IF;             // return to home
+ 192:  MoveAbove(HOME_ANGLE_L, HOME_ANGLE_R); State := 194;  // home pose (abs) — the
+ 194:  IF AtHome THEN State := 200; END_IF;             //  same angles homing references
  200:  Status.CompleteCommandID := ActiveCmd;  Status.Done := TRUE;  State := 0;
  900:  // FAULT — hold; wait for Cmd.Reset
        Status.Faulted := TRUE;
