@@ -310,12 +310,19 @@ Motor-Faulted and cancels motion). Reset, fix, retry.
 2. **Jog (SD_Jog):** enable one axis, jog slowly; confirm direction and that
    `STEPS_PER_DEG` is right (command 90°, measure the shoulder). Fix `Enable
    Inversion` / step wiring if needed.
-3. **Homing:** confirm each prox toggles (read its DIP) as the L1 flag passes;
-   run **Robot Test → Home (find ref)**; confirm `Has Homed`, tune `HOME_VEL_0/1`
-   (sign = approach direction), and set `HOME_OFFSET_L/R` so
-   `ActualLeftDeg ≈ 140.54`, `ActualRightDeg ≈ 39.46` — measure them per
-   `home_offset_calibration.md`.
-   Verify the sequential sweep can't collide the two arms.
+3. **Homing (coordinated, 2-phase):** confirm each prox toggles (read its DIP) as
+   the L1 flag passes; run **Robot Test → Home (find ref)**. Both shoulders move the
+   **same direction together** so neither is ever a locked reaction anchor on the
+   closed chain: **Phase 1** both drive **left/negative** — Motor0 homes at its left
+   prox while Motor1 follows; **Phase 2** both drive **right/positive** — Motor1
+   homes at its right prox while Motor0 (already zeroed) follows. Confirm `Has Homed`
+   on both, tune `HOME_VEL_0/1` (sign = approach direction, `−`/`+`), and set
+   `HOME_OFFSET_L/R` so `ActualLeftDeg ≈ 140.54`, `ActualRightDeg ≈ 39.46` — measure
+   per `home_offset_calibration.md`. **Verify against the ClearLink AOP** that the
+   follow-axis velocity jog (`Load_Vel_Data` / `Load_Vel_Move_Ack`, stop = velocity
+   0) starts and stops cleanly, and that neither phase's sweep collides the arms or
+   hits a hard limit before the prox. After homing the arm sits referenced (not at
+   the home pose); command a move to home if you want it there.
 4. **Absolute moves:** jog via **Robot Test** (Cartesian/joint); confirm
    `CompleteCommandID` tracks each move and `InPosition`/`At_Target_Posn` gates it.
 5. **Soft limits:** enable them; confirm a move past −20°/+200° is refused.

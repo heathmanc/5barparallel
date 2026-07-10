@@ -7,42 +7,62 @@
 <Routine Use="Target" Name="R30_Homing" Type="RLL">
 <RLLContent>
 <Rung Number="0" Type="N">
-<Comment><![CDATA[R30_Homing: sequential 2-axis homing coordinator. JSRs R_HomeMotor0 / R_HomeMotor1 and publishes VisionRobot.Status. Tags from RobotTags.csv (HomeStep, HR_ons, SoftLimitsEnable, Home0_Req/Home1_Req, Ax0/Ax1_HomeDone/HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import the VisionRobot UDT .L5X files + RobotTags.csv first.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)XIO(Bypass_Homing)MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req);]]></Text>
+<Comment><![CDATA[R30_Homing: COORDINATED 2-axis homing coordinator (closed-chain 5-bar). BOTH shoulders always move the SAME direction together, so neither is ever a locked reaction anchor for the other (jogging one shoulder while the other is locked reacts force through the distal links into the held open-loop stepper and can back-drive it near a singularity). Phase 1: both drive LEFT (negative) - Motor0 homes at its left prox while Motor1 FOLLOWS left. Phase 2: both drive RIGHT (positive) - Motor1 homes at its right prox while Motor0 (already zeroed) FOLLOWS right, its datum tracked via CommandedPosn. The homing axis uses R_HomeMotor's ClearLink homing (zeroes at the prox); the follow axis is a plain coordinated velocity jog at the same HOME_VEL. VERIFY the ClearLink velocity-jog start/stop (Load_Vel_Data / Load_Vel_Move_Ack) against the AOP at commissioning. Tags: HomeStep, HR_ons, Home0/1_Req, Ax0/1_HomeDone/HomeFault, HOME_VEL_0/1, HOME_ACC, HOME_OFFSET_L/R, STEPS_PER_DEG. Import the UDT .L5X + RobotTags.csv first.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)XIO(Bypass_Homing)MOV(11,HomeStep)OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req)MOV(HOME_VEL_0,ClearLink:O1.Motor1_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor1_Accel_Lim)OTL(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data);]]></Text>
 </Rung>
 <Rung Number="1" Type="N">
 <Comment><![CDATA[BENCH BYPASS: with Bypass_Homing set, HomeRequest marks referenced instantly (publishes the nominal home angles, enables soft limits) without running the ClearLink prox homing move. Lets you jog motors on the bench with no prox.]]></Comment>
 <Text><![CDATA[XIC(VisionRobot.Manual.HomeRequest)ONS(HRB_ons)XIC(Bypass_Homing)XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)MOV(HOME_ANGLE_L,VisionRobot.Status.ActualLeftDeg)MOV(HOME_ANGLE_R,VisionRobot.Status.ActualRightDeg)OTL(VisionRobot.Status.Homed)OTL(SoftLimitsEnable)MOV(0,HomeStep);]]></Text>
 </Rung>
 <Rung Number="2" Type="N">
-<Comment><![CDATA[Axis 0 (left) homed -> start Axis 1 (right).]]></Comment>
-<Text><![CDATA[EQU(HomeStep,10)XIC(Ax0_HomeDone)OTU(Home0_Req)OTL(Home1_Req)MOV(20,HomeStep);]]></Text>
+<Comment><![CDATA[Phase 1 (both LEFT): the Motor1 follow-jog is acked -> drop the load bit; the jog keeps running while Motor0 homes.]]></Comment>
+<Text><![CDATA[EQU(HomeStep,11)XIC(ClearLink:I1.Motor1_Status_Load_Vel_Move_Ack)OTU(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data)MOV(12,HomeStep);]]></Text>
 </Rung>
 <Rung Number="3" Type="N">
-<Comment><![CDATA[Axis 1 (right) homed.]]></Comment>
-<Text><![CDATA[EQU(HomeStep,20)XIC(Ax1_HomeDone)OTU(Home1_Req)MOV(30,HomeStep);]]></Text>
+<Comment><![CDATA[Phase 1 done when Motor0's left prox homes it: drop Home0_Req and STOP the Motor1 follow (command velocity 0).]]></Comment>
+<Text><![CDATA[EQU(HomeStep,12)XIC(Ax0_HomeDone)OTU(Home0_Req)MOV(0,ClearLink:O1.Motor1_Jog_Vel)OTL(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data)MOV(13,HomeStep);]]></Text>
 </Rung>
 <Rung Number="4" Type="N">
+<Comment><![CDATA[Motor1 follow-stop acked -> begin phase 2.]]></Comment>
+<Text><![CDATA[EQU(HomeStep,13)XIC(ClearLink:I1.Motor1_Status_Load_Vel_Move_Ack)OTU(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data)MOV(20,HomeStep);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[Phase 2 (both RIGHT): start Motor1 homing at its right prox and the Motor0 follow-jog at the same velocity (Motor0 is already zeroed; CommandedPosn tracks how far it follows, so its datum is preserved).]]></Comment>
+<Text><![CDATA[EQU(HomeStep,20)OTL(Home1_Req)MOV(HOME_VEL_1,ClearLink:O1.Motor0_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor0_Accel_Lim)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(21,HomeStep);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
+<Comment><![CDATA[Phase 2: Motor0 follow-jog acked -> drop the load bit.]]></Comment>
+<Text><![CDATA[EQU(HomeStep,21)XIC(ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(22,HomeStep);]]></Text>
+</Rung>
+<Rung Number="7" Type="N">
+<Comment><![CDATA[Phase 2 done when Motor1's right prox homes it: drop Home1_Req and STOP the Motor0 follow.]]></Comment>
+<Text><![CDATA[EQU(HomeStep,22)XIC(Ax1_HomeDone)OTU(Home1_Req)MOV(0,ClearLink:O1.Motor0_Jog_Vel)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(23,HomeStep);]]></Text>
+</Rung>
+<Rung Number="8" Type="N">
+<Comment><![CDATA[Motor0 follow-stop acked -> both axes referenced, publish.]]></Comment>
+<Text><![CDATA[EQU(HomeStep,23)XIC(ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack)OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(30,HomeStep);]]></Text>
+</Rung>
+<Rung Number="9" Type="N">
 <Comment><![CDATA[Publish angles with the home offset, latch soft limits on, return to idle.]]></Comment>
 <Text><![CDATA[EQU(HomeStep,30)CPT(VisionRobot.Status.ActualLeftDeg,(ClearLink:I1.Motor0_CommandedPosn + HOME_OFFSET_L) / STEPS_PER_DEG)CPT(VisionRobot.Status.ActualRightDeg,(ClearLink:I1.Motor1_CommandedPosn + HOME_OFFSET_R) / STEPS_PER_DEG)OTL(SoftLimitsEnable)OTL(VisionRobot.Status.Homed)MOV(0,HomeStep);]]></Text>
 </Rung>
-<Rung Number="5" Type="N">
+<Rung Number="10" Type="N">
 <Comment><![CDATA[Run the per-axis homing routines every scan (they self-idle at rest).]]></Comment>
 <Text><![CDATA[JSR(R_HomeMotor0,0)JSR(R_HomeMotor1,0);]]></Text>
 </Rung>
-<Rung Number="6" Type="N">
+<Rung Number="11" Type="N">
 <Comment><![CDATA[Disable invalidates the reference. An open-loop stepper has no feedback, so the instant the drive disables the datum is gone (the shaft can back-drive / lose steps unseen). Drop Homed + per-axis HomeDone + soft limits whenever the drive is not commanded on, forcing a re-home after any disable. Keyed on EnableReq (the commanded enable), NOT Status.Enabled: the latter is the ClearLink's HLFB-derived bit 10, which can momentarily dip as a move stops or during a Clear-Fault enable cycle - keying on it would spuriously un-home between jogs. The homing state machines re-zero on the next HomeRequest.]]></Comment>
 <Text><![CDATA[XIO(EnableReq)OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable);]]></Text>
 </Rung>
-<Rung Number="7" Type="N">
+<Rung Number="12" Type="N">
 <Comment><![CDATA[Drive power-cycle invalidates the reference AND drops the enable, even while still commanded on. The ClearLink's Has_Homed (bit 13) de-asserts the instant HLFB drops (drive powered down) - dip-sensitive, so it catches even a quick unplug that a level like Status.Enabled misses. If we think we're homed (real homing, not bypass) but either axis dropped Has_Homed: clear the reference (force a re-home) AND drop Manual.Enable so the drive powers back up DISABLED, not holding torque. Gated by Status.Homed so a normal re-home (which itself clears Has_Homed) can't trip it. Excluded in bypass.]]></Comment>
 <Text><![CDATA[XIC(VisionRobot.Status.Homed)XIO(Bypass_Homing)[XIO(ClearLink:I1.Motor0_Status_Has_Homed),XIO(ClearLink:I1.Motor1_Status_Has_Homed)]OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(SoftLimitsEnable)OTU(VisionRobot.Manual.Enable);]]></Text>
 </Rung>
-<Rung Number="8" Type="N">
-<Comment><![CDATA[Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: clear the coordinator + per-axis states and latched home faults/requests. MUST scan before the fault-latch rung below so the cleared HomeFault can't immediately re-latch the fault in the same scan.]]></Comment>
-<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)ONS(HomeRst_ons)XIC(EStop_OK)XIC(Guard_Closed)MOV(0,HomeStep)MOV(0,Home0_State)MOV(0,Home1_State)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)OTU(Home0_Req)OTU(Home1_Req);]]></Text>
+<Rung Number="13" Type="N">
+<Comment><![CDATA[Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: clear the coordinator + per-axis states and latched home faults/requests, and command both coordinated-homing follow jogs to a stop (velocity 0). MUST scan before the fault-latch rung below so the cleared HomeFault can't immediately re-latch the fault in the same scan.]]></Comment>
+<Text><![CDATA[XIC(VisionRobot.Cmd.Reset)ONS(HomeRst_ons)XIC(EStop_OK)XIC(Guard_Closed)MOV(0,HomeStep)MOV(0,Home0_State)MOV(0,Home1_State)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)OTU(Home0_Req)OTU(Home1_Req)MOV(0,ClearLink:O1.Motor0_Jog_Vel)MOV(0,ClearLink:O1.Motor1_Jog_Vel);]]></Text>
 </Rung>
-<Rung Number="9" Type="N">
+<Rung Number="14" Type="N">
 <Comment><![CDATA[Either axis homing fault -> homing fault (FaultCode 4).]]></Comment>
 <Text><![CDATA[[XIC(Ax0_HomeFault),XIC(Ax1_HomeFault)]OTL(VisionRobot.Status.Faulted)MOV(4,VisionRobot.Status.FaultCode)MOV(900,HomeStep);]]></Text>
 </Rung>

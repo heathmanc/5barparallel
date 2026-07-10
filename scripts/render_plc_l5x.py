@@ -257,16 +257,26 @@ def home_rungs(m: int) -> List[Rung]:
 
 
 COORD: List[Rung] = [
-    ("R30_Homing: sequential 2-axis homing coordinator. JSRs R_HomeMotor0 / "
-     "R_HomeMotor1 and publishes VisionRobot.Status. Tags from RobotTags.csv "
-     "(HomeStep, HR_ons, SoftLimitsEnable, Home0_Req/Home1_Req, Ax0/Ax1_HomeDone/"
-     "HomeFault, HOME_OFFSET_L/HOME_OFFSET_R, STEPS_PER_DEG). Import the "
-     "VisionRobot UDT .L5X files + RobotTags.csv first.",
+    ("R30_Homing: COORDINATED 2-axis homing coordinator (closed-chain 5-bar). BOTH "
+     "shoulders always move the SAME direction together, so neither is ever a locked "
+     "reaction anchor for the other (jogging one shoulder while the other is locked "
+     "reacts force through the distal links into the held open-loop stepper and can "
+     "back-drive it near a singularity). Phase 1: both drive LEFT (negative) - Motor0 "
+     "homes at its left prox while Motor1 FOLLOWS left. Phase 2: both drive RIGHT "
+     "(positive) - Motor1 homes at its right prox while Motor0 (already zeroed) "
+     "FOLLOWS right, its datum tracked via CommandedPosn. The homing axis uses "
+     "R_HomeMotor's ClearLink homing (zeroes at the prox); the follow axis is a plain "
+     "coordinated velocity jog at the same HOME_VEL. VERIFY the ClearLink velocity-jog "
+     "start/stop (Load_Vel_Data / Load_Vel_Move_Ack) against the AOP at commissioning. "
+     "Tags: HomeStep, HR_ons, Home0/1_Req, Ax0/1_HomeDone/HomeFault, HOME_VEL_0/1, "
+     "HOME_ACC, HOME_OFFSET_L/R, STEPS_PER_DEG. Import the UDT .L5X + RobotTags.csv first.",
      "XIC(VisionRobot.Manual.HomeRequest)ONS(HR_ons)EQU(HomeStep,0)"
      "XIC(VisionRobot.Status.Enabled)XIO(VisionRobot.Status.Faulted)XIO(Bypass_Homing)"
-     "MOV(10,HomeStep)OTU(VisionRobot.Status.Homed)"
+     "MOV(11,HomeStep)OTU(VisionRobot.Status.Homed)"
      "OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)"
-     "MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req);"),
+     "MOV(0,Home0_State)MOV(0,Home1_State)OTL(Home0_Req)"
+     "MOV(HOME_VEL_0,ClearLink:O1.Motor1_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor1_Accel_Lim)"
+     "OTL(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data);"),
     ("BENCH BYPASS: with Bypass_Homing set, HomeRequest marks referenced instantly "
      "(publishes the nominal home angles, enables soft limits) without running the "
      "ClearLink prox homing move. Lets you jog motors on the bench with no prox.",
@@ -275,11 +285,35 @@ COORD: List[Rung] = [
      "MOV(HOME_ANGLE_L,VisionRobot.Status.ActualLeftDeg)"
      "MOV(HOME_ANGLE_R,VisionRobot.Status.ActualRightDeg)"
      "OTL(VisionRobot.Status.Homed)OTL(SoftLimitsEnable)MOV(0,HomeStep);"),
-    ("Axis 0 (left) homed -> start Axis 1 (right).",
-     "EQU(HomeStep,10)XIC(Ax0_HomeDone)OTU(Home0_Req)OTL(Home1_Req)"
-     "MOV(20,HomeStep);"),
-    ("Axis 1 (right) homed.",
-     "EQU(HomeStep,20)XIC(Ax1_HomeDone)OTU(Home1_Req)MOV(30,HomeStep);"),
+    ("Phase 1 (both LEFT): the Motor1 follow-jog is acked -> drop the load bit; the "
+     "jog keeps running while Motor0 homes.",
+     "EQU(HomeStep,11)XIC(ClearLink:I1.Motor1_Status_Load_Vel_Move_Ack)"
+     "OTU(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data)MOV(12,HomeStep);"),
+    ("Phase 1 done when Motor0's left prox homes it: drop Home0_Req and STOP the "
+     "Motor1 follow (command velocity 0).",
+     "EQU(HomeStep,12)XIC(Ax0_HomeDone)OTU(Home0_Req)"
+     "MOV(0,ClearLink:O1.Motor1_Jog_Vel)OTL(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data)"
+     "MOV(13,HomeStep);"),
+    ("Motor1 follow-stop acked -> begin phase 2.",
+     "EQU(HomeStep,13)XIC(ClearLink:I1.Motor1_Status_Load_Vel_Move_Ack)"
+     "OTU(ClearLink:O1.Motor1_Output_Reg_Load_Vel_Data)MOV(20,HomeStep);"),
+    ("Phase 2 (both RIGHT): start Motor1 homing at its right prox and the Motor0 "
+     "follow-jog at the same velocity (Motor0 is already zeroed; CommandedPosn tracks "
+     "how far it follows, so its datum is preserved).",
+     "EQU(HomeStep,20)OTL(Home1_Req)"
+     "MOV(HOME_VEL_1,ClearLink:O1.Motor0_Jog_Vel)MOV(HOME_ACC,ClearLink:O1.Motor0_Accel_Lim)"
+     "OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(21,HomeStep);"),
+    ("Phase 2: Motor0 follow-jog acked -> drop the load bit.",
+     "EQU(HomeStep,21)XIC(ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack)"
+     "OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(22,HomeStep);"),
+    ("Phase 2 done when Motor1's right prox homes it: drop Home1_Req and STOP the "
+     "Motor0 follow.",
+     "EQU(HomeStep,22)XIC(Ax1_HomeDone)OTU(Home1_Req)"
+     "MOV(0,ClearLink:O1.Motor0_Jog_Vel)OTL(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)"
+     "MOV(23,HomeStep);"),
+    ("Motor0 follow-stop acked -> both axes referenced, publish.",
+     "EQU(HomeStep,23)XIC(ClearLink:I1.Motor0_Status_Load_Vel_Move_Ack)"
+     "OTU(ClearLink:O1.Motor0_Output_Reg_Load_Vel_Data)MOV(30,HomeStep);"),
     ("Publish angles with the home offset, latch soft limits on, return to idle.",
      "EQU(HomeStep,30)"
      "CPT(VisionRobot.Status.ActualLeftDeg,"
@@ -313,12 +347,14 @@ COORD: List[Rung] = [
      "OTU(VisionRobot.Status.Homed)OTU(Ax0_HomeDone)OTU(Ax1_HomeDone)"
      "OTU(SoftLimitsEnable)OTU(VisionRobot.Manual.Enable);"),
     ("Cmd.Reset (rising edge) while safe restores a fresh, re-homeable state: "
-     "clear the coordinator + per-axis states and latched home faults/requests. "
-     "MUST scan before the fault-latch rung below so the cleared HomeFault can't "
-     "immediately re-latch the fault in the same scan.",
+     "clear the coordinator + per-axis states and latched home faults/requests, and "
+     "command both coordinated-homing follow jogs to a stop (velocity 0). MUST scan "
+     "before the fault-latch rung below so the cleared HomeFault can't immediately "
+     "re-latch the fault in the same scan.",
      "XIC(VisionRobot.Cmd.Reset)ONS(HomeRst_ons)XIC(EStop_OK)XIC(Guard_Closed)"
      "MOV(0,HomeStep)MOV(0,Home0_State)MOV(0,Home1_State)"
-     "OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)OTU(Home0_Req)OTU(Home1_Req);"),
+     "OTU(Ax0_HomeFault)OTU(Ax1_HomeFault)OTU(Home0_Req)OTU(Home1_Req)"
+     "MOV(0,ClearLink:O1.Motor0_Jog_Vel)MOV(0,ClearLink:O1.Motor1_Jog_Vel);"),
     ("Either axis homing fault -> homing fault (FaultCode 4).",
      "[XIC(Ax0_HomeFault),XIC(Ax1_HomeFault)]OTL(VisionRobot.Status.Faulted)"
      "MOV(4,VisionRobot.Status.FaultCode)MOV(900,HomeStep);"),
