@@ -2,15 +2,15 @@
 hardware.
 
 The jog/home logic (app.robot_test_controller) computes and *validates* shoulder
-angles, then hands them to a RobotDriver to actuate. Today only DryRunRobotDriver
-exists (simulates instantly, no hardware), so the GUI and tests run with nothing
-connected. A PLC-backed driver comes later: jogging needs a small manual-move
-surface on the PLC (a manual/jog mode plus MoveTo-angles + InPosition tags),
-separate from the pick/place job handshake in Claude.md §11.
+angles, then hands them to a RobotDriver to actuate. Two implementations exist:
+``DryRunRobotDriver`` (simulates instantly, no hardware) and
+``ethercat.EtherCatRobotDriver`` (the real backend — the PC streams CSP setpoints
+to the two A6 servo drives over EtherCAT). The GUI and tests run against either.
 
 Contract: a driver never decides *where* to go — it only enables/disables the
 axes and moves to angles it is given. All reachability/singularity gating happens
-upstream in WorkspaceValidator (Claude.md §15).
+upstream in WorkspaceValidator (Claude.md §15); the EtherCAT driver additionally
+validates every point of the planned path before streaming it.
 """
 
 from __future__ import annotations

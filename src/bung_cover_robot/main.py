@@ -1,11 +1,14 @@
 """5-Bar bung-cover robot — command-line entry point.
 
     bung-cover-robot                         # dry-run: sim driver + demo camera
+    bung-cover-robot --sim-ec                 # EtherCAT driver vs a simulated A6 net
+    bung-cover-robot --ethercat               # real A6 servo drives (Stage 4)
     bung-cover-robot --camera basler         # real Basler (else the demo scene)
     bung-cover-robot --config /path/to/config
 
-The motion backend is the in-process dry-run driver (the EtherCAT servo backend
-lands in a later stage). ``--camera auto`` (the default) uses the mock demo scene;
+``--dry-run`` (default) is the in-process instant driver. ``--sim-ec`` runs the
+real EtherCatRobotDriver (CiA 402 + CSP streaming) against an in-memory A6
+network — no hardware. ``--camera auto`` (the default) uses the mock demo scene;
 ``--camera basler`` opens a real Basler. ``--config`` is the directory holding
 robot_config.yaml, camera_config.yaml, and recipes.yaml.
 """
@@ -31,7 +34,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--config", metavar="DIR", type=Path, default=_DEFAULT_CONFIG_DIR,
         help="config directory (robot_config.yaml, camera_config.yaml, recipes.yaml)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="in-process sim (default)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="in-process sim (default)")
+    mode.add_argument("--sim-ec", action="store_true",
+                      help="EtherCAT driver against a simulated A6 network (no HW)")
+    mode.add_argument("--ethercat", action="store_true",
+                      help="real EtherCAT drives over pysoem (Stage 4)")
     parser.add_argument(
         "--camera", choices=("auto", "mock", "basler"), default="auto",
         help="camera backend (auto: mock demo scene; basler: real camera)",
@@ -88,7 +96,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     config_dir = _config_dir(args)
-    controller = build_controller(config_path=_robot_config_path(config_dir))
+    controller = build_controller(
+        config_path=_robot_config_path(config_dir),
+        sim_ec=args.sim_ec,
+        ethercat=args.ethercat,
+    )
     camera = build_camera(args)
 
     # Import Qt lazily so --help works with no display / Qt libraries.

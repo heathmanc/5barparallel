@@ -20,6 +20,8 @@ from .cia402 import (
     is_operation_enabled,
     next_controlword,
 )
+from .ethercat_driver import EtherCatRobotDriver
+from .master import DriveProcessData, EtherCatMaster, SimulatedEtherCatMaster
 from .trajectory import (
     JointSetpoint,
     Trajectory,
@@ -41,4 +43,8 @@ __all__ = [
     "TrajectoryError",
     "TrajectoryLimits",
     "plan_linear_move",
+    "DriveProcessData",
+    "EtherCatMaster",
+    "SimulatedEtherCatMaster",
+    "EtherCatRobotDriver",
 ]
