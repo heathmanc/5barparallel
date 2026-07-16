@@ -27,7 +27,7 @@ from ..robot.driver import Angles, RobotDriver, RobotDriverError
 from ..robot.fivebar_kinematics import FiveBarKinematics
 from ..robot.workspace import WorkspaceValidator
 from . import cia402
-from .master import EtherCatMaster
+from .master import EtherCatMaster, MasterError
 from .trajectory import TrajectoryError, TrajectoryLimits, plan_linear_move
 
 logger = logging.getLogger(__name__)
@@ -191,19 +191,19 @@ class EtherCatRobotDriver(RobotDriver):
         logger.info("moved -> L=%.3f R=%.3f (%d cycles)", left_deg, right_deg, len(traj))
 
     def _stream(self, traj) -> None:
-        """Stream per-cycle CSP setpoints. This loop becomes the SCHED_FIFO
-        real-time thread on hardware; here it runs synchronously against the sim.
-        Does zero kinematics/allocation per cycle — just indexes the plan."""
-        for sp in traj.setpoints:
-            if self.is_faulted:
-                raise RobotDriverError(
-                    f"drive faulted mid-move (code {self.fault_code()})")
-            self.master.drives[0].target_position = sp.left_counts - self._home_counts[0]
-            self.master.drives[1].target_position = sp.right_counts - self._home_counts[1]
-            self.master.exchange()
-        final = traj.final
-        want = (final.left_counts - self._home_counts[0],
-                final.right_counts - self._home_counts[1])
+        """Hand the precomputed per-cycle CSP setpoints to the master to stream.
+
+        The master owns the timing: the simulator plays them out synchronously,
+        the real master's SCHED_FIFO thread plays one per DC cycle. We converted
+        the whole plan to drive counts up front, so the real-time loop does zero
+        kinematics and zero allocation."""
+        h0, h1 = self._home_counts
+        targets = [(sp.left_counts - h0, sp.right_counts - h1) for sp in traj.setpoints]
+        try:
+            self.master.run_csp(targets)
+        except MasterError as exc:
+            raise RobotDriverError(f"move aborted: {exc}") from exc
+        want = targets[-1]
         got = (self.master.drives[0].actual_position,
                self.master.drives[1].actual_position)
         if (abs(got[0] - want[0]) > self.position_tol_counts

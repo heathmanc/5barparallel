@@ -21,7 +21,15 @@ from .cia402 import (
     next_controlword,
 )
 from .ethercat_driver import EtherCatRobotDriver
-from .master import DriveProcessData, EtherCatMaster, SimulatedEtherCatMaster
+from .master import (
+    DriveProcessData,
+    EtherCatMaster,
+    MasterError,
+    PysoemMaster,
+    SimulatedEtherCatMaster,
+    pack_outputs,
+    unpack_inputs,
+)
 from .trajectory import (
     JointSetpoint,
     Trajectory,
@@ -45,6 +53,10 @@ __all__ = [
     "plan_linear_move",
     "DriveProcessData",
     "EtherCatMaster",
+    "MasterError",
+    "PysoemMaster",
     "SimulatedEtherCatMaster",
     "EtherCatRobotDriver",
+    "pack_outputs",
+    "unpack_inputs",
 ]

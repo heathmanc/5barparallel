@@ -1,4 +1,4 @@
-"""EtherCAT master abstraction + an in-memory simulator.
+"""EtherCAT master abstraction, an in-memory simulator, and the pysoem master.
 
 The driver talks to the servo drives only through this interface, so the whole
 motion stack runs in tests and in the GUI with nothing connected — exactly the
@@ -13,18 +13,76 @@ are the statusword, the mode display, and the actual position.
   * ``SimulatedEtherCatMaster`` — in-memory A6 drives that run the CiA 402 state
     machine and, in CSP, follow the streamed target position. Used by tests and
     the ``--sim-ec`` backend.
-  * ``PysoemMaster`` (Stage 4) — the real master over ``pysoem``; the PDO map,
-    distributed-clock sync, and real-time streamer land there. Imported lazily so
-    this module works without pysoem installed.
+  * ``PysoemMaster`` — the real master over ``pysoem`` (Stage 4): a free-running
+    real-time thread owns the cyclic PDO exchange and the CSP setpoint streaming,
+    synchronized to the EtherCAT distributed clock. BENCH-UNTESTED — it needs the
+    actual A6-EC drives and a PREEMPT_RT kernel; see docs/ethercat_bringup.md.
+
+``run_csp`` is the streaming primitive: give it the per-cycle (left, right) drive
+targets and it plays them out one per PDO cycle. The simulator runs it
+synchronously; the real master hands it to the RT thread. Either raises
+``MasterError`` if a drive faults mid-stream.
 """
 
 from __future__ import annotations
 
+import logging
+import struct
+import threading
+import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass
+from typing import List, Sequence, Tuple
 
 from . import cia402
+
+logger = logging.getLogger(__name__)
+
+CspTargets = Sequence[Tuple[int, int]]
+
+
+class MasterError(Exception):
+    """EtherCAT master / drive failure (fault mid-stream, lost frames, timeout)."""
+
+
+# --------------------------------------------------------------------------- #
+# PDO layout  (pure, testable — no pysoem needed)
+# --------------------------------------------------------------------------- #
+# The A6-EC drives exchange these objects as fixed PDOs. The BYTE ORDER BELOW
+# MUST MATCH the drive's actual PDO assignment (0x1C12/0x1C13 -> 0x1600/0x1A00);
+# confirm/set it over SDO at bring-up (docs/ethercat_bringup.md). Little-endian,
+# packed (no alignment padding):
+#
+#   RxPDO (PC -> drive): Controlword(U16) | Modes(S8) | TargetPosition(S32)
+#   TxPDO (drive -> PC): Statusword(U16)  | ModesDisp(S8) | ActualPosition(S32)
+_RX_FMT = "<HbI"      # controlword, mode, target_position (target packed as U32 two's-comp)
+_TX_FMT = "<HbI"      # statusword, mode_display, actual_position
+RX_SIZE = struct.calcsize(_RX_FMT)   # 7 bytes
+TX_SIZE = struct.calcsize(_TX_FMT)   # 7 bytes
+
+# CiA 402 object dictionary indices for the PDO map (documented for bring-up).
+OD_CONTROLWORD = 0x6040
+OD_STATUSWORD = 0x6041
+OD_MODES_OF_OPERATION = 0x6060
+OD_MODES_DISPLAY = 0x6061
+OD_TARGET_POSITION = 0x607A
+OD_POSITION_ACTUAL = 0x6064
+OD_HOMING_METHOD = 0x6098
+OD_FOLLOWING_ERROR = 0x60F4
+OD_ERROR_CODE = 0x603F
+
+
+def pack_outputs(controlword: int, mode: int, target_position: int) -> bytes:
+    """Pack a drive's RxPDO output image to bytes (target as 32-bit two's comp)."""
+    return struct.pack(_RX_FMT, controlword & 0xFFFF, mode, target_position & 0xFFFFFFFF)
+
+
+def unpack_inputs(data: bytes) -> Tuple[int, int, int]:
+    """Unpack a drive's TxPDO input image -> (statusword, mode_display, actual).
+    Actual position is decoded as signed 32-bit."""
+    sw, mode, actual_u = struct.unpack(_TX_FMT, data[:TX_SIZE])
+    actual = actual_u - (1 << 32) if actual_u >= (1 << 31) else actual_u
+    return sw, mode, actual
 
 
 @dataclass
@@ -70,12 +128,21 @@ class EtherCatMaster(ABC):
 
     @abstractmethod
     def exchange(self) -> None:
-        """Perform one PDO cycle: send outputs, receive inputs. On real hardware
-        this blocks on the distributed-clock sync, which paces the loop."""
+        """Perform (or wait for) one PDO cycle so fresh inputs are visible. Used
+        for the low-rate CiA 402 state-machine steps (enable/home/reset)."""
+
+    @abstractmethod
+    def run_csp(self, targets: CspTargets) -> None:
+        """Stream per-cycle (left_counts, right_counts) CSP targets, one per PDO
+        cycle, returning when the last has been applied. Raises MasterError if a
+        drive faults mid-stream."""
 
     @property
     def num_drives(self) -> int:
         return len(self.drives)
+
+    def _faulted(self) -> bool:
+        return any(cia402.is_fault(d.statusword) for d in self.drives)
 
 
 # --------------------------------------------------------------------------- #
@@ -105,20 +172,16 @@ class _SimDrive:
 
         if self._faulted:
             self.state = cia402.Cia402State.FAULT
-            # Fault Reset is edge-triggered (bit 7 low -> high) and clears the fault.
             if (cw & cia402.CW_FAULT_RESET) and not (prev & cia402.CW_FAULT_RESET):
                 self._faulted = False
                 self.state = cia402.Cia402State.SWITCH_ON_DISABLED
         else:
             self.state = self._advance(self.state, cw)
 
-        # CSP motion: an enabled drive in CSP follows the commanded target exactly.
         if (self.state is cia402.Cia402State.OPERATION_ENABLED
                 and pd.mode_of_operation == cia402.MODE_CSP):
             self.actual_position = pd.target_position
 
-        # Homing: an enabled drive in Homing mode with the start bit set finds its
-        # switch immediately (sim), zeroing position at the home offset.
         if (self.state is cia402.Cia402State.OPERATION_ENABLED
                 and pd.mode_of_operation == cia402.MODE_HOMING
                 and (cw & (1 << 4))):
@@ -133,14 +196,14 @@ class _SimDrive:
         S = cia402.Cia402State
         low = cw & 0x0F
         if (cw & 0x02) == 0 and (cw & cia402.CW_FAULT_RESET) == 0:
-            return S.SWITCH_ON_DISABLED            # disable voltage (bit1 low)
-        if low == 0x06:                            # Shutdown
+            return S.SWITCH_ON_DISABLED
+        if low == 0x06:
             return S.READY_TO_SWITCH_ON
-        if low == 0x07:                            # Switch On / Disable Operation
+        if low == 0x07:
             if state in (S.READY_TO_SWITCH_ON, S.SWITCHED_ON, S.OPERATION_ENABLED):
                 return S.SWITCHED_ON
             return state
-        if low == 0x0F:                            # Enable Operation
+        if low == 0x0F:
             if state in (S.SWITCHED_ON, S.OPERATION_ENABLED, S.READY_TO_SWITCH_ON):
                 return S.OPERATION_ENABLED
             return state
@@ -148,7 +211,7 @@ class _SimDrive:
 
     def _statusword(self) -> int:
         S = cia402.Cia402State
-        base = cia402.SW_VOLTAGE_ENABLED          # mains present
+        base = cia402.SW_VOLTAGE_ENABLED
         word = {
             S.SWITCH_ON_DISABLED: cia402.SW_SWITCH_ON_DISABLED,
             S.READY_TO_SWITCH_ON: cia402.SW_READY_TO_SWITCH_ON | cia402.SW_QUICK_STOP,
@@ -176,7 +239,6 @@ class SimulatedEtherCatMaster(EtherCatMaster):
 
     def open(self) -> "SimulatedEtherCatMaster":
         self._open = True
-        # Seed one exchange so statuswords read a real state immediately.
         self.exchange()
         return self
 
@@ -193,39 +255,228 @@ class SimulatedEtherCatMaster(EtherCatMaster):
         for pd, sim in zip(self._drives, self._sim):
             sim.step(pd)
 
+    def run_csp(self, targets: CspTargets) -> None:
+        for t0, t1 in targets:
+            self._drives[0].target_position = int(t0)
+            self._drives[1].target_position = int(t1)
+            self.exchange()
+            if self._faulted():
+                raise MasterError("drive faulted during CSP stream")
+
     # --- test / bench helpers ---------------------------------------------- #
     def inject_fault(self, drive: int = 0) -> None:
         """Force a drive into FAULT (models a drive alarm / following error)."""
         self._sim[drive].inject_fault()
 
 
-class PysoemMaster(EtherCatMaster):  # pragma: no cover - real hardware (Stage 4)
-    """Real EtherCAT master over pysoem — the PDO map, distributed-clock sync, and
-    SCHED_FIFO/mlockall real-time streamer land here in Stage 4 (needs the actual
-    A6-EC drives and a PREEMPT_RT kernel to validate). Present now so the backend
-    wiring is complete and fails with a clear message instead of an ImportError."""
+# --------------------------------------------------------------------------- #
+# Real hardware — pysoem  (BENCH-UNTESTED scaffolding, Stage 4)
+# --------------------------------------------------------------------------- #
+def set_realtime(priority: int = 80) -> bool:
+    """Best-effort: pin this thread to SCHED_FIFO and lock memory (mlockall) so
+    the CSP loop isn't preempted or paged. Needs CAP_SYS_NICE / root. Returns
+    True if both succeeded; logs and returns False otherwise (dev machines)."""
+    ok = True
+    try:
+        import os
+        param = os.sched_param(priority)
+        os.sched_setscheduler(0, os.SCHED_FIFO, param)  # type: ignore[attr-defined]
+    except (OSError, AttributeError, PermissionError) as exc:  # pragma: no cover
+        logger.warning("SCHED_FIFO not set (%s) — jitter will be higher", exc)
+        ok = False
+    try:  # pragma: no cover - platform dependent
+        import ctypes
+        MCL_CURRENT, MCL_FUTURE = 1, 2
+        if ctypes.CDLL("libc.so.6", use_errno=True).mlockall(MCL_CURRENT | MCL_FUTURE) != 0:
+            raise OSError(ctypes.get_errno(), "mlockall failed")
+    except (OSError, AttributeError) as exc:  # pragma: no cover
+        logger.warning("mlockall failed (%s) — page faults may cause jitter", exc)
+        ok = False
+    return ok
 
-    def __init__(self, ifname: str = "eth0", cycle_dt_s: float = 0.002) -> None:
+
+class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
+    """Real EtherCAT master over pysoem. BENCH-UNTESTED — validate on hardware.
+
+    A background real-time thread owns the whole cyclic exchange: every DC cycle
+    it packs each drive's output image, ``send_processdata`` / ``receive_processdata``,
+    and unpacks the inputs back. The main thread only mutates the drive images
+    (controlword / target) and reads status; ``run_csp`` loads a setpoint array
+    the RT thread plays out one entry per cycle, so the tight loop does no
+    kinematics and no allocation.
+
+    See docs/ethercat_bringup.md for the PDO map, DC, homing, and STO steps.
+    """
+
+    def __init__(
+        self,
+        ifname: str = "eth0",
+        cycle_dt_s: float = 0.002,
+        num_drives: int = 2,
+        rt_priority: int = 80,
+        recv_timeout_us: int = 2000,
+    ) -> None:
         self.ifname = ifname
         self.cycle_dt_s = cycle_dt_s
-        self._drives: List[DriveProcessData] = []
+        self.rt_priority = rt_priority
+        self.recv_timeout_us = recv_timeout_us
+        self._num = num_drives
+        self._drives = [DriveProcessData() for _ in range(num_drives)]
+        self._master = None
+        self._slaves: List[object] = []
+        self._open = False
+        # RT-thread control (single-writer / single-reader on simple fields).
+        self._rt_thread = None
+        self._rt_stop = threading.Event()
+        self._cycle_count = 0
+        self._csp: List[Tuple[int, int]] = []
+        self._csp_index = 0
+        self._csp_running = False
+        self._fault = False
+        self._wkc_bad = 0
 
     @property
     def drives(self) -> List[DriveProcessData]:
         return self._drives
 
-    def open(self) -> "PysoemMaster":
-        raise NotImplementedError(
-            "PysoemMaster is not implemented yet (Stage 4: pysoem PDO map + DC sync "
-            "+ RT streamer). Use SimulatedEtherCatMaster / sim_ec for now."
-        )
-
-    def close(self) -> None:
-        pass
-
     @property
     def is_open(self) -> bool:
-        return False
+        return self._open
 
+    # --- lifecycle --------------------------------------------------------- #
+    def open(self) -> "PysoemMaster":
+        try:
+            import pysoem
+        except ImportError as exc:
+            raise MasterError(
+                "pysoem is not installed. `pip install pysoem` on the control PC, "
+                "or use SimulatedEtherCatMaster / --sim-ec."
+            ) from exc
+
+        m = pysoem.Master()
+        try:
+            m.open(self.ifname)
+            found = m.config_init()
+        except Exception as exc:
+            raise MasterError(
+                f"failed to open EtherCAT on {self.ifname!r}: {exc} "
+                "(check the interface name and that you have raw-socket privileges)"
+            ) from exc
+        if found < self._num:
+            m.close()
+            raise MasterError(
+                f"expected {self._num} EtherCAT slaves, found {found} on {self.ifname}")
+        self._slaves = list(m.slaves)[: self._num]
+        for s in self._slaves:
+            s.config_func = self._configure_slave      # PDO map + CSP setup per drive
+        m.config_map()
+        if m.config_dc():                              # distributed clocks
+            logger.info("EtherCAT DC configured")
+        # SAFE_OP -> OP; OP requires processdata already flowing, so prime it.
+        m.state_check(pysoem.SAFEOP_STATE, 50_000)
+        m.send_processdata()
+        m.receive_processdata(self.recv_timeout_us)
+        m.state = pysoem.OP_STATE
+        m.write_state()
+        if m.state_check(pysoem.OP_STATE, 50_000) != pysoem.OP_STATE:
+            m.close()
+            raise MasterError("slaves did not reach OP state")
+        self._master = m
+        self._open = True
+        self._rt_stop.clear()
+        self._rt_thread = threading.Thread(
+            target=self._rt_loop, name="ethercat-rt", daemon=True)
+        self._rt_thread.start()
+        return self
+
+    def close(self) -> None:
+        self._rt_stop.set()
+        if self._rt_thread is not None:
+            self._rt_thread.join(timeout=1.0)
+            self._rt_thread = None
+        if self._master is not None:
+            try:
+                import pysoem
+                self._master.state = pysoem.INIT_STATE
+                self._master.write_state()
+            finally:
+                self._master.close()
+                self._master = None
+        self._open = False
+
+    def _configure_slave(self, slave_pos: int) -> None:
+        """Per-drive SDO setup run by pysoem during config_map: select CSP and map
+        the PDOs. Object indices are documented in docs/ethercat_bringup.md; the
+        exact 0x1C12/0x1C13 assignment may need to match your A6 firmware."""
+        s = self._master.slaves[slave_pos]
+        # Modes of operation -> CSP (also settable cyclically via the PDO).
+        s.sdo_write(OD_MODES_OF_OPERATION, 0, bytes([cia402.MODE_CSP]))
+
+    # --- real-time loop ---------------------------------------------------- #
+    def _rt_loop(self) -> None:
+        import pysoem
+        set_realtime(self.rt_priority)
+        next_t = time.perf_counter()
+        while not self._rt_stop.is_set():
+            # advance the CSP stream (RT-owned: no allocation here)
+            if self._csp_running:
+                if self._csp_index < len(self._csp):
+                    t0, t1 = self._csp[self._csp_index]
+                    self._drives[0].target_position = t0
+                    self._drives[1].target_position = t1
+                    self._csp_index += 1
+                else:
+                    self._csp_running = False
+            # pack outputs -> send -> receive -> unpack inputs
+            for pd, s in zip(self._drives, self._slaves):
+                s.output = pack_outputs(pd.controlword, pd.mode_of_operation,
+                                        pd.target_position)
+            self._master.send_processdata()
+            wkc = self._master.receive_processdata(self.recv_timeout_us)
+            if wkc < len(self._slaves):
+                self._wkc_bad += 1
+            for pd, s in zip(self._drives, self._slaves):
+                sw, mode, actual = unpack_inputs(bytes(s.input))
+                pd.statusword, pd.mode_display, pd.actual_position = sw, mode, actual
+            if self._faulted():
+                self._fault = True
+                self._csp_running = False
+            self._cycle_count += 1
+            next_t += self.cycle_dt_s
+            slack = next_t - time.perf_counter()
+            if slack > 0:
+                time.sleep(slack)
+            else:
+                next_t = time.perf_counter()   # we overran; resync the phase
+
+    # --- EtherCatMaster API ------------------------------------------------ #
     def exchange(self) -> None:
-        raise NotImplementedError("PysoemMaster is not implemented yet (Stage 4).")
+        """Block until the RT thread completes one more cycle, so the caller's
+        next status read is fresh. Used by the low-rate enable/home/reset loops."""
+        if not self._open:
+            raise MasterError("master is not open")
+        start = self._cycle_count
+        deadline = time.perf_counter() + max(0.05, 20 * self.cycle_dt_s)
+        while self._cycle_count == start:
+            if time.perf_counter() > deadline:
+                raise MasterError("RT thread stalled (no PDO cycle)")
+            time.sleep(self.cycle_dt_s / 2)
+
+    def run_csp(self, targets: CspTargets) -> None:
+        if not self._open:
+            raise MasterError("master is not open")
+        self._fault = False
+        self._csp = list(targets)
+        self._csp_index = 0
+        self._csp_running = True
+        deadline = time.perf_counter() + len(self._csp) * self.cycle_dt_s + 1.0
+        while self._csp_running:
+            if self._fault:
+                raise MasterError(f"drive faulted during CSP stream (code {self.fault_code()})")
+            if time.perf_counter() > deadline:
+                self._csp_running = False
+                raise MasterError("CSP stream did not complete in time")
+            time.sleep(self.cycle_dt_s)
+
+    def fault_code(self) -> int:
+        return self._wkc_bad
