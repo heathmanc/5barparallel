@@ -22,7 +22,9 @@ drivetrain:
   # feedback resolution, not a microstep count. Confirm against the drive's
   # position factor / electronic gearing at bring-up (docs/ethercat_bringup.md).
   pulses_per_rev: 131072  # A6M80-750 17-bit encoder counts / motor rev
-  belt_reduction: 3.0     # 3:1 GT3 (20T motor -> 60T shoulder)
+  belt_reduction: 3.0     # 3:1 HTD-5M (20T motor -> 60T shoulder). NOTE: the A6M80
+                          # has a 19 mm shaft, so a 20T GT3 (19.1 mm pitch dia) will
+                          # NOT bore to 19 mm — use HTD-5M (20T pitch dia 31.8 mm).
   # pulses_per_degree = 131072 * 3 / 360 = 1092.2667 (derived, see config properties)
 
 singularity:
