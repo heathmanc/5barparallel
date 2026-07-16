@@ -49,8 +49,8 @@ def test_default_config_is_the_verified_design_point():
 
 
 def test_pulses_per_degree():
-    # 3200 pulses/rev * 3:1 / 360 deg = 26.6667
-    assert FiveBarConfig().pulses_per_degree == pytest.approx(26.66667, abs=1e-4)
+    # A6 17-bit encoder: 131072 counts/rev * 3:1 / 360 deg = 1092.2667
+    assert FiveBarConfig().pulses_per_degree == pytest.approx(1092.2667, abs=1e-3)
 
 
 def test_from_yaml_matches_defaults():

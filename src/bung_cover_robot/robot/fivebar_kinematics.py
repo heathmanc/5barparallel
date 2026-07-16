@@ -50,7 +50,11 @@ class FiveBarConfig:
     right_elbow: str = "down"
     joint_min_deg: float = -20.0
     joint_max_deg: float = 200.0
-    pulses_per_rev: int = 3200
+    # A6 servo drivetrain: 17-bit absolute encoder (131072 counts/rev) through a
+    # 3:1 belt. In CSP the drive's position unit is one encoder count, so
+    # ``pulses_per_degree`` (131072*3/360 = 1092.267) is the deg<->counts factor
+    # the trajectory planner and EtherCAT driver both use.
+    pulses_per_rev: int = 131072
     belt_reduction: float = 3.0
 
     def __post_init__(self) -> None:
