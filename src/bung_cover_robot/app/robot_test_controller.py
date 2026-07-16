@@ -110,17 +110,6 @@ class RobotTestController:
         """The active PLC fault code, or None when not faulted."""
         return self.driver.fault_code()
 
-    # --- mode (Manual / Auto) ----------------------------------------------
-    @property
-    def is_auto_mode(self) -> bool:
-        """True when the machine is in Auto mode (PLC scans the pick/place
-        routine). The automatic cycle requires this."""
-        return self.driver.is_auto_mode
-
-    def set_auto_mode(self, on: bool) -> None:
-        """Select Auto vs Manual mode on the machine."""
-        self.driver.set_auto_mode(on)
-
     # --- driver ------------------------------------------------------------
     def set_driver(self, driver: RobotDriver) -> None:
         """Hot-swap the motion driver (e.g. connect/disconnect a real PLC).

@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from bung_cover_robot import main as M  # noqa: E402
 from bung_cover_robot.app.launch import build_controller  # noqa: E402
-from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient  # noqa: E402
 from bung_cover_robot.robot.driver import DryRunRobotDriver  # noqa: E402
 
 
@@ -26,14 +25,14 @@ def qapp():
 # --------------------------------------------------------------------------- #
 def test_parse_defaults():
     a = M.parse_args([])
-    assert a.camera == "auto" and not a.sim_plc and a.plc is None
+    assert a.camera == "auto"
 
 
 def test_camera_mode_auto_follows_backend():
+    # --camera auto always means the mock demo scene now (no PLC backend).
     assert M._camera_mode(M.parse_args([])) == "mock"
-    assert M._camera_mode(M.parse_args(["--plc", "1.2.3.4/0"])) == "basler"
     assert M._camera_mode(M.parse_args(["--camera", "basler"])) == "basler"
-    assert M._camera_mode(M.parse_args(["--plc", "1.2.3.4/0", "--camera", "mock"])) == "mock"
+    assert M._camera_mode(M.parse_args(["--camera", "mock"])) == "mock"
 
 
 def test_config_dir_accepts_dir_or_file(tmp_path):
@@ -43,19 +42,13 @@ def test_config_dir_accepts_dir_or_file(tmp_path):
     assert M._config_dir(M.parse_args(["--config", str(f)])) == tmp_path
 
 
-def test_mode_flags_mutually_exclusive():
-    with pytest.raises(SystemExit):
-        M.parse_args(["--sim-plc", "--plc", "1.2.3.4/0"])
-
-
 # --------------------------------------------------------------------------- #
 # backend / camera construction
 # --------------------------------------------------------------------------- #
 def test_build_controller_backends():
+    # Only the dry-run backend exists now; config_path is optional.
     assert isinstance(build_controller().driver, DryRunRobotDriver)
-    d = build_controller(sim_plc=True).driver
-    assert isinstance(d, PlcRobotDriver)
-    assert isinstance(d.client, SimulatedPlcClient)
+    assert isinstance(build_controller(config_path=None).driver, DryRunRobotDriver)
 
 
 def test_build_camera_mock_is_none():
@@ -78,10 +71,10 @@ def test_main_builds_window(qapp, monkeypatch):
         return orig(self)
 
     monkeypatch.setattr(mw.MainWindow, "show", spy)
-    assert M.main(["--sim-plc"]) == 0
+    assert M.main([]) == 0
     win = built["window"]
-    assert isinstance(win.controller.driver, PlcRobotDriver)  # --sim-plc backend
-    assert win.recipes.list()                                 # recipes loaded
+    assert isinstance(win.controller.driver, DryRunRobotDriver)  # dry-run backend
+    assert win.recipes.list()                                    # recipes loaded
 
 
 def test_main_window_reads_config_dir(qapp, tmp_path):

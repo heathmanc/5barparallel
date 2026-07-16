@@ -1,22 +1,17 @@
-"""Closing the loop: planner, the §11 pick/place handshake, and CycleManager."""
+"""Closing the loop: planner and CycleManager (dry-run direct driver)."""
 
 import numpy as np
 import pytest
 
 from bung_cover_robot.app.cycle_manager import (
     CycleManager,
-    DryRunJobRunner,
-    HandshakeJobRunner,
+    DirectJobRunner,
     make_job_runner,
 )
 from bung_cover_robot.app.robot_test_controller import (
-    RobotTestController,
     build_dry_run_controller,
 )
 from bung_cover_robot.gui.imaging import demo_frame, demo_transform
-from bung_cover_robot.plc import PlcError, PlcRobotDriver, SimulatedPlcClient, tags
-from bung_cover_robot.plc.compactlogix_client import PlcClient
-from bung_cover_robot.plc.handshake import PickPlaceHandshake
 from bung_cover_robot.robot.driver import DryRunRobotDriver
 from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
 from bung_cover_robot.robot.planner import (
@@ -60,121 +55,10 @@ def test_sort_holes_along_conveyor():
 
 
 # --------------------------------------------------------------------------- #
-# handshake against the simulator
-# --------------------------------------------------------------------------- #
-def _homed_sim():
-    sim = SimulatedPlcClient(home_angles=(135.0, 45.0)).connect()
-    sim.write(tags.Manual.ENABLE, True)
-    sim.write(tags.Manual.HOME_REQUEST, True)  # sets Enabled + Homed
-    return sim
-
-
-def test_handshake_completes_job():
-    sim = _homed_sim()
-    hs = PickPlaceHandshake(sim, command_timeout_s=2.0)
-    res = hs.send_job_and_wait((120.0, 60.0), (130.0, 50.0), hole_index=1, cover_id=3)
-    assert res.ok and res.command_id == 1
-    assert sim.read(tags.Status.COMPLETE_COMMAND_ID) == 1
-    # returns to the park/home pose at the end of the job (not left at the drop)
-    assert sim.read(tags.Status.ACTUAL_LEFT_DEG) == 135.0   # _homed_sim home angle
-
-
-def test_handshake_faults_when_not_homed():
-    sim = SimulatedPlcClient().connect()
-    sim.write(tags.Manual.ENABLE, True)  # enabled but never homed
-    hs = PickPlaceHandshake(sim, command_timeout_s=2.0)
-    res = hs.send_job_and_wait((120.0, 60.0), (130.0, 50.0), hole_index=0, cover_id=0)
-    assert not res.ok and "fault" in res.reason.lower()
-
-
-class _StuckClient(PlcClient):
-    """A PLC that ACCEPTS the request (echoes ActiveCommandID) but never completes
-    the job — exercises the command-complete timeout + abort recovery."""
-
-    def __init__(self):
-        self._store = {tags.Status.READY: True}
-        self.aborted = False
-
-    def connect(self):
-        return self
-
-    def close(self):
-        pass
-
-    @property
-    def is_connected(self):
-        return True
-
-    def read(self, tag):
-        return self._store.get(tag, 0)
-
-    def write(self, tag, value):
-        self._store[tag] = value
-        if tag == tags.Cmd.REQUEST_PICK_PLACE and value:
-            # accept the command (latch ActiveCommandID, go Busy) but never finish
-            self._store[tags.Status.ACTIVE_COMMAND_ID] = self._store.get(
-                tags.Cmd.COMMAND_ID, 0)
-            self._store[tags.Status.BUSY] = True
-        if tag == tags.Cmd.ABORT and value:
-            self.aborted = True
-
-
-def test_handshake_times_out_and_recovers():
-    client = _StuckClient()
-    hs = PickPlaceHandshake(client, command_timeout_s=0.05, poll_interval_s=0.01)
-    res = hs.send_job_and_wait((1, 2), (3, 4), hole_index=0, cover_id=0)
-    assert not res.ok and "timed out" in res.reason
-    assert client.aborted  # recovery pulsed Cmd.Abort instead of hanging
-
-
-class _DeafClient(PlcClient):
-    """Ready, but never acknowledges the request — models a real PLC whose auto
-    state machine isn't scanning, or a request edge that was missed."""
-
-    def __init__(self):
-        self._store = {tags.Status.READY: True}
-        self.aborted = False
-        self.request_high_reads = 0
-
-    def connect(self):
-        return self
-
-    def close(self):
-        pass
-
-    @property
-    def is_connected(self):
-        return True
-
-    def read(self, tag):
-        return self._store.get(tag, 0)
-
-    def write(self, tag, value):
-        self._store[tag] = value
-        if tag == tags.Cmd.REQUEST_PICK_PLACE and value:
-            self.request_high_reads += 1     # the request WAS asserted (held)
-        if tag == tags.Cmd.ABORT and value:
-            self.aborted = True
-
-
-def test_handshake_reports_request_not_accepted():
-    client = _DeafClient()
-    hs = PickPlaceHandshake(
-        client, command_timeout_s=5.0, ready_timeout_s=0.05, poll_interval_s=0.01)
-    res = hs.send_job_and_wait((1, 2), (3, 4), hole_index=0, cover_id=0)
-    assert not res.ok and "did not accept" in res.reason
-    assert client.aborted                    # aborted rather than hung
-    assert client.request_high_reads == 1    # request was asserted (held), then cleared
-    assert client.read(tags.Cmd.REQUEST_PICK_PLACE) is False  # and dropped after
-
-
-# --------------------------------------------------------------------------- #
 # job runner selection
 # --------------------------------------------------------------------------- #
 def test_make_job_runner_picks_by_driver():
-    assert isinstance(make_job_runner(DryRunRobotDriver()), DryRunJobRunner)
-    sim = SimulatedPlcClient().connect()
-    assert isinstance(make_job_runner(PlcRobotDriver(sim)), HandshakeJobRunner)
+    assert isinstance(make_job_runner(DryRunRobotDriver()), DirectJobRunner)
 
 
 # --------------------------------------------------------------------------- #
@@ -246,21 +130,6 @@ def test_cycle_stop_requested_halts_early():
     assert res.steps == [] and "stopped" in res.reason.lower()
 
 
-def test_cycle_over_plc_handshake():
-    kin = FiveBarKinematics()
-    jt = kin.inverse(0.0, 250.0)
-    client = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
-    ctrl = RobotTestController(PlcRobotDriver(client), kin)
-    ctrl.enable()
-    ctrl.home_reference()
-    mgr = CycleManager(ctrl, _mock_camera(), demo_transform())
-    res = mgr.run_cycle()
-    assert res.ok and len(res.placed) == 3
-    assert isinstance(mgr.job_runner or make_job_runner(ctrl.driver), HandshakeJobRunner)
-    # the last job really ran through the handshake
-    assert client.read(tags.Status.COMPLETE_COMMAND_ID) == 3
-
-
 def test_cycle_reports_when_no_holes():
     blank = np.full((520, 760, 3), (30, 27, 25), np.uint8)
     cam = MockCamera(CameraConfig(mock_width=760, mock_height=520), frames=[blank]).open()
@@ -293,25 +162,6 @@ def test_scripted_cycle_needs_no_calibration_or_camera():
     assert mgr.preflight() is None           # vision preflight is skipped
     res = mgr.run_cycle()
     assert res.ok and len(res.placed) == len(holes)   # every hole filled
-
-
-def test_scripted_cycle_over_plc_handshake():
-    from bung_cover_robot.app.cycle_manager import (
-        ScriptedTargetSource, default_scripted_targets)
-
-    kin = FiveBarKinematics()
-    jt = kin.inverse(0.0, 250.0)
-    client = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
-    ctrl = RobotTestController(PlcRobotDriver(client), kin)
-    ctrl.enable()
-    ctrl.home_reference()
-    holes, covers = default_scripted_targets(ctrl)
-    mgr = CycleManager(ctrl, _mock_camera(), None,
-                       target_source=ScriptedTargetSource(holes, covers))
-    res = mgr.run_cycle()
-    assert res.ok and len(res.placed) == len(holes)
-    # every scripted job really ran through the §11 handshake
-    assert client.read(tags.Status.COMPLETE_COMMAND_ID) == len(holes)
 
 
 def test_scripted_cycle_still_requires_referenced():

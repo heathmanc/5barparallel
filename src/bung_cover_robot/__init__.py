@@ -1,8 +1,8 @@
 """Vision-guided 5-bar bung-cover robot — Python control package.
 
-See Claude.md for the design. Today only the verified kinematics foundation is
-implemented (robot.fivebar_kinematics, robot.workspace); the vision, PLC, and
-app layers are still to build.
+Vision + kinematics + workspace validation + the automatic cycle run on the PC,
+which is the motion controller: it drives two StepperOnline A6 servos over
+EtherCAT (CiA 402). See Claude.md for the design.
 """
 
 __version__ = "0.1.0"

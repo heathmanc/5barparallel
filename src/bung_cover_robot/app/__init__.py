@@ -1,7 +1,7 @@
-"""app layer — headless orchestration (Claude.md §14).
+"""app layer — headless orchestration.
 
 robot_test_controller: manual jog/home logic behind the Robot Test tab.
-cycle_manager: the automatic detect -> plan -> PLC pick/place cycle.
+cycle_manager: the automatic detect -> plan -> move pick/place cycle.
 """
 
 from .cycle_manager import (
@@ -9,8 +9,8 @@ from .cycle_manager import (
     CycleManager,
     CycleResult,
     CycleStep,
-    DryRunJobRunner,
-    HandshakeJobRunner,
+    DirectJobRunner,
+    JobResult,
     JobRunner,
     ScriptedTargetSource,
     TargetSource,
@@ -29,8 +29,8 @@ __all__ = [
     "CycleManager",
     "CycleResult",
     "CycleStep",
-    "DryRunJobRunner",
-    "HandshakeJobRunner",
+    "DirectJobRunner",
+    "JobResult",
     "JobRunner",
     "Recipe",
     "RecipeError",

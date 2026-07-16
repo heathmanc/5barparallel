@@ -1,15 +1,13 @@
-"""5-Bar bung-cover robot — command-line entry point (Claude.md §14).
+"""5-Bar bung-cover robot — command-line entry point.
 
     bung-cover-robot                         # dry-run: sim driver + demo camera
-    bung-cover-robot --sim-plc               # PLC handshake vs in-memory PLC
-    bung-cover-robot --plc 192.168.1.10/0    # real CompactLogix
     bung-cover-robot --camera basler         # real Basler (else the demo scene)
     bung-cover-robot --config /path/to/config
 
-Motion backend and camera are chosen independently. ``--camera auto`` (the
-default) uses a real Basler when a real PLC is selected, otherwise the mock demo
-scene, so ``--dry-run`` and ``--sim-plc`` run with no hardware at all. ``--config``
-is the directory holding robot_config.yaml, camera_config.yaml, and recipes.yaml.
+The motion backend is the in-process dry-run driver (the EtherCAT servo backend
+lands in a later stage). ``--camera auto`` (the default) uses the mock demo scene;
+``--camera basler`` opens a real Basler. ``--config`` is the directory holding
+robot_config.yaml, camera_config.yaml, and recipes.yaml.
 """
 
 from __future__ import annotations
@@ -33,13 +31,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--config", metavar="DIR", type=Path, default=_DEFAULT_CONFIG_DIR,
         help="config directory (robot_config.yaml, camera_config.yaml, recipes.yaml)",
     )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--dry-run", action="store_true", help="in-process sim (default)")
-    mode.add_argument("--sim-plc", action="store_true", help="PLC driver + simulated PLC")
-    mode.add_argument("--plc", metavar="IP/SLOT", help="PLC driver + real CompactLogix")
+    parser.add_argument("--dry-run", action="store_true", help="in-process sim (default)")
     parser.add_argument(
         "--camera", choices=("auto", "mock", "basler"), default="auto",
-        help="camera backend (auto: basler with --plc, else mock)",
+        help="camera backend (auto: mock demo scene; basler: real camera)",
     )
     parser.add_argument("--camera-serial", help="target a specific Basler by serial")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -60,7 +55,7 @@ def _robot_config_path(config_dir: Path) -> Optional[Path]:
 def _camera_mode(args: argparse.Namespace) -> str:
     if args.camera != "auto":
         return args.camera
-    return "basler" if args.plc else "mock"
+    return "mock"
 
 
 def build_camera(args: argparse.Namespace) -> Optional[Camera]:
@@ -93,11 +88,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     config_dir = _config_dir(args)
-    controller = build_controller(
-        config_path=_robot_config_path(config_dir),
-        sim_plc=args.sim_plc,
-        plc=args.plc,
-    )
+    controller = build_controller(config_path=_robot_config_path(config_dir))
     camera = build_camera(args)
 
     # Import Qt lazily so --help works with no display / Qt libraries.
