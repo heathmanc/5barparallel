@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from ..app.robot_test_controller import MoveResult, RobotTestController
 
 # FaultCode -> operator text (matches docs/plc_program.md §9).
@@ -111,11 +112,11 @@ class RobotTestTab(QWidget):
         # next-step hint that sequences the operator: Reset -> Enable -> Home.
         self.fault_banner = QLabel("")
         self.fault_banner.setStyleSheet(
-            "color: #f85149; font-weight: bold; padding: 2px 0;"
+            f"color: {theme.DANGER}; font-weight: bold; padding: 2px 0;"
         )
         self.fault_banner.setVisible(False)
         self.hint_label = QLabel("")
-        self.hint_label.setStyleSheet("color: #8b949e;")
+        self.hint_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
         v.addWidget(self.fault_banner)
         v.addWidget(self.hint_label)
         return box
@@ -367,9 +368,9 @@ class RobotTestTab(QWidget):
         referenced = self.controller.is_referenced
         self.referenced_label.setText("REFERENCED" if referenced else "NOT REFERENCED")
         self.referenced_label.setStyleSheet(
-            "color: #3fb950; font-weight: bold;"
+            f"color: {theme.TEXT}; font-weight: bold;"
             if referenced
-            else "color: #f85149; font-weight: bold;"
+            else f"color: {theme.TEXT_DIM}; font-weight: bold;"
         )
 
     def _update_enable_state(self) -> None:
@@ -393,9 +394,9 @@ class RobotTestTab(QWidget):
         # updates the readout immediately, not only after the next click.
         self.referenced_label.setText("REFERENCED" if referenced else "NOT REFERENCED")
         self.referenced_label.setStyleSheet(
-            "color: #3fb950; font-weight: bold;"
+            f"color: {theme.TEXT}; font-weight: bold;"
             if referenced
-            else "color: #f85149; font-weight: bold;"
+            else f"color: {theme.TEXT_DIM}; font-weight: bold;"
         )
 
         # Fault banner + next-step sequencing hint.
@@ -425,5 +426,5 @@ class RobotTestTab(QWidget):
     def _set_status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
-            "color: #3fb950;" if ok else "color: #f85149; font-weight: bold;"
+            f"color: {theme.TEXT};" if ok else f"color: {theme.WARN}; font-weight: bold;"
         )

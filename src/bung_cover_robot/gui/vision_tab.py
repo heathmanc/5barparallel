@@ -515,7 +515,10 @@ class VisionTab(QWidget):
                 return (float(p[0]), float(p[1]))
             base = draw_robot_grid(
                 frame, self.calibration.pixel_to_robot, _r2p, 25.0)
-            base = draw_reachable_zone(base, self._reachable_contours(), _r2p)
+            # ISA-101: red is reserved for alarms — the safe-zone outline is an
+            # informational overlay, so it draws in the muted interaction blue.
+            base = draw_reachable_zone(base, self._reachable_contours(), _r2p,
+                                       color=(156, 104, 51), thickness=2)
         overlay = annotate(base, holes.holes if holes else None, covers.covers)
         self._display = overlay
         self.view.set_pixmap(ndarray_to_qpixmap(overlay))
@@ -807,7 +810,7 @@ class VisionTab(QWidget):
         )
         self.pill_home.set_state(
             "REFERENCED" if referenced else "NOT REFERENCED",
-            "ok" if referenced else "bad",
+            "ok" if referenced else "warn",   # pre-op state: attention, not alarm
         )
         drv = self.controller.driver
         if isinstance(drv, DryRunRobotDriver):

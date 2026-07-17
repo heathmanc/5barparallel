@@ -23,7 +23,7 @@ class ImageView(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setStyleSheet(
-            "background:#12151b; border:1px solid #363d4a; border-radius:8px; color:#5b6472;"
+            f"background:{theme.VIDEO_BG}; border:1px solid {theme.BORDER}; border-radius:8px; color:{theme.TEXT_DIM};"
         )
         self.setText("no image")
 
@@ -429,8 +429,8 @@ class ZoomPanImageView(ImageView):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
-        painter.fillRect(self.rect(), QColor("#12151b"))
-        painter.setPen(QPen(QColor("#363d4a"), 1))
+        painter.fillRect(self.rect(), QColor(theme.VIDEO_BG))
+        painter.setPen(QPen(QColor(theme.BORDER), 1))
         painter.drawRoundedRect(rect, 8, 8)
         if self._pix is None or self._pix.isNull():
             painter.setPen(QColor("#5b6472"))
