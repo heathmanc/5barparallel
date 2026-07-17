@@ -60,9 +60,10 @@ PW = 15.0                              # pulley/belt face width
 PLANE_A, PLANE_B = 126.0, 161.0        # arm plane centers: A=111-141, B=146-176
 ARM_H = 30.0
 MP_T = 8.0                             # motor plate thickness
-SO = 46.0                              # motor standoff half-pitch (square)
 MPL_TOP, MPR_TOP = 1.0, 21.0           # motor plate top faces
-SO_L, SO_R = 45.0 - MPL_TOP, 45.0 - MPR_TOP   # standoff lengths 44 / 24
+WALL_T, WALL_Y = 10.0, 50.0            # mount shear walls: thickness, centerline +/-y
+WALL_L, WALL_R = 45.0 - MPL_TOP, 45.0 - MPR_TOP   # wall heights 44 / 24
+TENSION = 4.0                          # belt tension adjustment +/- (motor slides on plate)
 # TCP joint: hollow spindle so a miniature air cylinder runs through the axis.
 # Default cylinder: ISO 6432 O10 bore (O15 barrel) — CHANGE CYL_BARREL_OD to
 # your actual cylinder and keep SPINDLE_ID ~1 mm larger.
@@ -108,9 +109,12 @@ assert (ZR - 1.5) - (ZL + PW + 1.5) >= 2.0, "staggered 60T pulleys must clear"
 assert ZR + PW + 1.5 <= 45.0 - 3.0, "high 60T must clear bottom plate"
 assert MPR_TOP - MP_T + 38 < 57.0, "right motor shaft tip inside plate bore"
 assert PLANE_B - ARM_H / 2 - (PLANE_A + ARM_H / 2) >= 5.0, "arm plane gap"
+_bh = lambda d: PD20 / 2 + (d / C) * ((PD60 - PD20) / 2) + 2.0  # belt half-width
+assert (WALL_Y - WALL_T / 2) - _bh(55.0) > 10.0, "mount walls clear the belt run"
+assert (WALL_Y - WALL_T / 2) - 40.0 >= 5.0, "mount walls clear the motor body"
 _clear = check_cross_pairs()
 assert _clear > 24.0, f"cross-pair clearance {_clear:.1f} mm too small"
-print(f"layout OK: C={C:.1f} (belt 450-5M-15), standoffs L={SO_L:.0f}/R={SO_R:.0f}, "
+print(f"layout OK: C={C:.1f} (belt 450-5M-15), wall mounts L={WALL_L:.0f}/R={WALL_R:.0f}, "
       f"cross-pair clearance {_clear:.1f} mm")
 
 # ------------------------------------------------------------- part builders
@@ -232,12 +236,25 @@ def motor():
 
 
 def motor_plate():
-    p = cq.Workplane("XY").box(110, 110, MP_T).faces(">Z").workplane().hole(70.4)
+    """Belt tension adjusts HERE: the pilot bore and the four flange holes are
+    slots (+/-TENSION along the belt direction), so the motor slides on a rigid,
+    FIXED plate — the mount itself never moves. The slot width still registers
+    the motor in Y, preserving belt tracking alignment."""
+    p = (cq.Workplane("XY").box(110, 110, MP_T)
+         .faces(">Z").workplane().slot2D(70.4 + 2 * TENSION, 70.4, 0).cutThruAll())
     bcd = [(45 * math.cos(math.radians(a)), 45 * math.sin(math.radians(a)))
            for a in (45, 135, 225, 315)]
-    p = p.faces(">Z").workplane().pushPoints(bcd).hole(6.6)
-    so = [(SO * sx, SO * sy) for sx in (-1, 1) for sy in (-1, 1)]
-    return p.faces(">Z").workplane().pushPoints(so).hole(5.0)
+    p = (p.faces(">Z").workplane().pushPoints(bcd)
+         .slot2D(6.6 + 2 * TENSION, 6.6, 0).cutThruAll())
+    edge = [(dx, sy * WALL_Y) for dx in (-40, 0, 40) for sy in (-1, 1)]
+    return p.faces(">Z").workplane().pushPoints(edge).hole(4.5)
+
+
+def mount_walls(h):
+    """Two shear walls per motor, aligned WITH the belt pull (their strong axis)
+    — replaces the four O10 posts, ~1000x stiffer in the tension direction."""
+    w = cq.Workplane("XY").box(110, WALL_T, h).translate((0, WALL_Y, h / 2))
+    return w.union(cq.Workplane("XY").box(110, WALL_T, h).translate((0, -WALL_Y, h / 2)))
 
 
 # ------------------------------------------------------------- single parts
@@ -265,8 +282,8 @@ plate_b = (cq.Workplane("XY").box(430, 110, 12)
            .faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47)
            .faces(">Z").workplane().pushPoints([(XM, 0), (-XM, 0)]).hole(26)
            .faces(">Z").workplane().pushPoints(
-               [(sx * XM + ox, oy) for sx in (-1, 1) for ox in (-SO, SO) for oy in (-SO, SO)])
-           .slot2D(13.5, 5.5, 0).cutThruAll()
+               [(sx * XM + dx, sy * WALL_Y) for sx in (-1, 1) for dx in (-40, 0, 40) for sy in (-1, 1)])
+           .hole(4.5)
            .faces(">Z").workplane().pushPoints([(x, y) for x in (-205, 205) for y in (-47, 47)]).hole(8)
            ).translate((0, 0, 51))
 P.append((plate_b, (0.35, 0.5, 0.65), "bottom_plate"))
@@ -276,7 +293,7 @@ P.append((plate_t.translate((0, 0, 105)), (0.35, 0.5, 0.65), "top_plate"))
 P.append((cq.Workplane("XY").pushPoints([(x, y) for x in (-92, 0, 92) for y in (-40, 40)])
           .circle(4.5).extrude(43).translate((0, 0, 57)), (0.6, 0.6, 0.62), "plate_standoffs_43mm"))
 
-for sgn, tag, zp, mp_top, so_len in ((-1, "L", ZL, MPL_TOP, SO_L), (1, "R", ZR, MPR_TOP, SO_R)):
+for sgn, tag, zp, mp_top, wall_h in ((-1, "L", ZL, MPL_TOP, WALL_L), (1, "R", ZR, MPR_TOP, WALL_R)):
     x, xm = sgn * HX, sgn * XM
     # Rotate the shaft with its arm's home angle so the D-flat actually mates
     # with the arm's D-bore at the home pose (the flat's azimuth on the shaft is
@@ -293,9 +310,8 @@ for sgn, tag, zp, mp_top, so_len in ((-1, "L", ZL, MPL_TOP, SO_L), (1, "R", ZR, 
         bl = bl.mirror("YZ")
     P.append((bl.translate((x, 0, 0)), (0.12, 0.12, 0.14), f"belt_450_5M_{tag}"))
     P.append((motor_plate().translate((xm, 0, mp_top - MP_T / 2)), (0.72, 0.6, 0.42), f"motor_plate_{tag}"))
-    P.append((cq.Workplane("XY").pushPoints([(SO * sx, SO * sy) for sx in (-1, 1) for sy in (-1, 1)])
-              .circle(5).extrude(so_len).translate((xm, 0, mp_top)),
-              (0.6, 0.6, 0.62), f"motor_standoffs_{tag}_{so_len:.0f}mm"))
+    P.append((mount_walls(wall_h).translate((xm, 0, mp_top)),
+              (0.6, 0.6, 0.62), f"motor_mount_walls_{tag}_{wall_h:.0f}mm"))
     P.append((motor().translate((xm, 0, mp_top - MP_T)), (0.42, 0.44, 0.5), f"motor_A6M80_{tag}"))
 
 # arms — CROSS level assignment: proxL+distR on plane A, proxR+distL on plane B
@@ -383,11 +399,11 @@ iso = lambda p: ((p[0] - p[1]) * c26, (p[0] + p[1]) * s26 - p[2])
 paint("base_iso.png", iso, lambda p: p[0] + p[1] + p[2], (1560, 980), 1.55,
       "DUAL-SHOULDER BASE - cross level assignment, home pose",
       ["plane A: proximal L + distal R | plane B: proximal R + distal L -> distals stack at TCP, no lap joint",
-       f"cross-pair clearance >{_clear:.0f}mm everywhere the validator allows; belts 450-5M-15 C={C:.1f}, standoffs 44/24"],
+       f"cross-pair clearance >{_clear:.0f}mm everywhere the validator allows; belts 450-5M-15 C={C:.1f}, wall mounts 44/24"],
       np.array([-0.3, -0.5, 0.81]), np.array([0.75, 0.7, 1.2]))
 paint("base_front.png", lambda p: (p[0], -p[2]), lambda p: -p[1], (1560, 760), 1.9,
       "FRONT ELEVATION - staggered belt planes below, crossed arm planes above",
-      ["left belt z5-20 (44mm standoffs) / right belt z25-40 (24mm) | plane A z111-141, plane B z146-176",
+      ["left belt z5-20 (44mm walls) / right belt z25-40 (24mm walls) | plane A z111-141, plane B z146-176",
        "identical arms both sides: right proximal simply clamps higher on the shaft's long D-flat"],
       np.array([-0.25, -0.75, 0.55]), np.array([0.15, -1.0, 0.25]))
 near_tcp = lambda t: sum(np.linalg.norm(t[j][:2] - np.array([0.0, 250.0])) < 240 for j in range(3)) == 3

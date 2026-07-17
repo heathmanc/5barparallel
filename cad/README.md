@@ -45,7 +45,7 @@ shoulder shaft's long D-flat; the distals are the same part.
 | Drive | HTD-5M 3:1 — 20T (Ø19 bore, on the motor) → 60T (Ø25 bore); belt **450-5M-15**, C = 120.8 mm, ±4 mm tension slots |
 | Belt planes | left z5–20, right z25–40 (60T pulleys stagger to pass at 80 mm spacing) |
 | Motors | 2× StepperOnline A6M80-750 under the base plate, shafts up, splayed outboard |
-| Motor mounts | 110×110×8 plates (Ø70 pilot, Ø90 BCD, 4×Ø6.6) on standoffs: **left 44 mm, right 24 mm** |
+| Motor mounts | Rigid, FIXED mounts: two 10 mm shear walls per motor (aligned with the belt pull — ~1000× stiffer than posts) at heights **left 44 mm, right 24 mm**. Belt tension adjusts at the motor-on-plate interface instead: the plate's pilot bore and Ø90-BCD holes are **±4 mm slots** along the belt direction, so the motor slides and clamps while staying Y-registered for belt tracking. |
 | Plates | bottom 430×110×12 (bearing bores, shaft clearance, slots), top 210×96×10 |
 
 ## Placeholders to resolve at build time
