@@ -1,13 +1,11 @@
 """GUI entry point.
 
     python -m bung_cover_robot.gui                       # dry-run sim driver
-    python -m bung_cover_robot.gui --sim-plc             # PLC driver + simulated PLC
-    python -m bung_cover_robot.gui --plc 192.168.1.10/0  # PLC driver + real PLC
+    python -m bung_cover_robot.gui --sim-ec              # EtherCAT vs simulated A6
     python -m bung_cover_robot.gui --config config/robot_config.yaml
 
---dry-run uses the in-process DryRunRobotDriver. --sim-plc exercises the real
-PlcRobotDriver handshake against an in-memory PLC (no hardware). --plc drives a
-CompactLogix over EtherNet/IP.
+--dry-run (default) is the in-process driver; --sim-ec runs the real
+EtherCatRobotDriver against an in-memory A6 network (no hardware).
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ from ..app.robot_test_controller import RobotTestController
 
 def _build_controller(args) -> RobotTestController:
     return build_controller(
-        config_path=args.config, sim_plc=args.sim_plc, plc=args.plc
+        config_path=args.config, sim_ec=args.sim_ec, ethercat=args.ethercat
     )
 
 
@@ -32,8 +30,10 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--config", help="path to robot_config.yaml")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="in-process sim (default)")
-    mode.add_argument("--sim-plc", action="store_true", help="PLC driver + simulated PLC")
-    mode.add_argument("--plc", metavar="IP/SLOT", help="PLC driver + real CompactLogix")
+    mode.add_argument("--sim-ec", action="store_true",
+                      help="EtherCAT driver against a simulated A6 network (no HW)")
+    mode.add_argument("--ethercat", action="store_true",
+                      help="real EtherCAT drives over pysoem (Stage 4)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 

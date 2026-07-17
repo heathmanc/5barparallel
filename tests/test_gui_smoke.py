@@ -18,10 +18,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from bung_cover_robot.app.robot_test_controller import (  # noqa: E402
     build_dry_run_controller,
 )
-from bung_cover_robot.app.app_settings import AppSettings  # noqa: E402
 from bung_cover_robot.gui.camera_tab import CameraTab  # noqa: E402
 from bung_cover_robot.gui.main_window import MainWindow  # noqa: E402
-from bung_cover_robot.gui.plc_tab import PlcTab  # noqa: E402
 from bung_cover_robot.gui.robot_test_tab import RobotTestTab  # noqa: E402
 
 
@@ -39,31 +37,7 @@ def test_main_window_has_all_tabs(qapp):
         "Calibration",
         "Robot Test",
         "Settings",
-        "PLC",
-        "Bypass",
-        "Diagnostics",
     ]
-
-
-def test_diagnostics_tab_formats_and_updates(qapp):
-    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
-    from bung_cover_robot.gui.diagnostics_tab import DiagnosticsTab
-
-    tab = DiagnosticsTab(build_dry_run_controller())
-    # No PLC client on the dry-run driver -> no poller thread started.
-    assert tab._poller is None
-
-    assert DiagnosticsTab._format(True, "bool") == "1"
-    assert DiagnosticsTab._format(None, "num") == "—"
-    assert DiagnosticsTab._format(4, "faultcode") == "4 (homing fail/timeout)"
-    assert "f85149" in DiagnosticsTab._color(1, "fault")          # fault true = red
-    assert "f85149" in DiagnosticsTab._color(0, "numwarn0")       # HOME_VEL 0 = red
-    assert DiagnosticsTab._color(2000, "numwarn0") == ""          # nonzero = plain
-
-    # Feeding a poll result updates the value labels off any thread.
-    tab._on_polled({"HOME_VEL_0": 0, "VisionRobot.Status.Faulted": True})
-    assert tab._value_labels["HOME_VEL_0"][0].text() == "0"
-    assert tab._value_labels["VisionRobot.Status.Faulted"][0].text() == "1"
 
 
 def test_theme_applies(qapp):
@@ -99,22 +73,27 @@ def test_vision_tab_detect_overlay(qapp):
     assert vt.cover_detector.config.method == "hough"
 
 
-def test_vision_tab_start_requires_auto_mode(qapp):
+def test_vision_tab_start_enabled_when_idle_and_running(qapp):
     win = MainWindow()
     vt = win.vision_tab
     win.controller.enable()
     win.controller.home_reference()
-    vt._set_mode(False)                       # Manual
-    vt._on_start()
-    assert "AUTO mode" in vt.status_label.text()   # gated before anything runs
-    assert not vt.start_btn.isEnabled()            # Cycle Start inert in Manual
+    vt.refresh()
+    # No Auto/Manual gate now: Cycle Start is available when idle, Stop is not.
+    assert vt.start_btn.isEnabled()
+    assert not vt.stop_btn.isEnabled()
+    # While a cycle is running, Start is inert and Stop is offered.
+    vt._running = True
+    vt._sync_run_buttons()
+    assert not vt.start_btn.isEnabled()
+    assert vt.stop_btn.isEnabled()
+    vt._running = False
 
 
 def test_vision_tab_start_requires_enable_and_home(qapp):
     win = MainWindow()
     vt = win.vision_tab
-    vt._set_mode(True)                        # Auto, but not enabled/referenced yet
-    vt._on_start()
+    vt._on_start()                            # not enabled/referenced yet
     assert "Cannot start" in vt.status_label.text()
 
 
@@ -125,18 +104,6 @@ def _wait_until(qapp, predicate, timeout_s=5.0):
     while time.monotonic() < deadline and not predicate():
         qapp.processEvents()
     return predicate()
-
-
-def test_plc_tab_remembers_ip(qapp, tmp_path):
-    s = AppSettings.load(tmp_path / "app_settings.yaml")
-    ctrl = build_dry_run_controller()
-    pt = PlcTab(ctrl, settings=s)
-    pt.path_edit.setText("10.0.0.5/0")
-    pt._on_connect_real()                     # connect fails w/o hardware, IP saved first
-    assert s.get("plc_ip") == "10.0.0.5/0"
-    # a fresh tab restores the saved IP into the field
-    pt2 = PlcTab(ctrl, settings=AppSettings.load(tmp_path / "app_settings.yaml"))
-    assert pt2.path_edit.text() == "10.0.0.5/0"
 
 
 def test_camera_settings_save_and_restore(qapp, tmp_path):
@@ -172,30 +139,11 @@ def test_vision_live_position_readout(qapp):
     assert re.search(r"\d", vt.pos_xy_label.text())       # shows an X/Y value
 
 
-def test_vision_mode_buttons_drive_controller(qapp):
-    win = MainWindow()
-    vt = win.vision_tab
-    # default Manual: Auto button not checked, Cycle Start inert
-    assert not win.controller.is_auto_mode
-    assert not vt.auto_btn.isChecked() and vt.manual_btn.isChecked()
-    assert not vt.start_btn.isEnabled()
-    # click Auto -> controller in auto, Cycle Start becomes available
-    vt._set_mode(True)
-    assert win.controller.is_auto_mode
-    assert vt.auto_btn.isChecked() and not vt.manual_btn.isChecked()
-    assert vt.start_btn.isEnabled()
-    # back to Manual
-    vt._set_mode(False)
-    assert not win.controller.is_auto_mode
-    assert vt.manual_btn.isChecked() and not vt.start_btn.isEnabled()
-
-
 def test_vision_tab_start_runs_cycle(qapp):
     win = MainWindow()
     vt = win.vision_tab
     win.controller.enable()
     win.controller.home_reference()
-    vt._set_mode(True)                        # Auto
     vt._on_start()
     # The cycle runs on a worker thread; wait for it to finish.
     assert _wait_until(qapp, lambda: not vt._running)
@@ -211,7 +159,6 @@ def test_vision_tab_bypass_runs_without_calibration(qapp):
     win.controller.home_reference()
     vt.set_calibration(None)          # no calibration at all
     vt.bypass_chk.setChecked(True)    # scripted targets
-    vt._set_mode(True)                # Auto
     vt._on_start()
     assert _wait_until(qapp, lambda: not vt._running)
     # cycle ran and placed covers despite no calibration/detection
@@ -289,144 +236,6 @@ def test_camera_tab_auto_exposure_toggle(qapp):
     ct._auto_checks["exposure_time_us"].setChecked(False)
     assert ct._sliders["exposure_time_us"].isEnabled()
     assert win.camera.get_control("exposure_auto") == "Off"
-
-
-def test_plc_tab_lists_every_tag(qapp):
-    from bung_cover_robot.plc import tags as T
-
-    win = MainWindow()
-    table = win.plc_tab.table
-    assert table.rowCount() == len(T.TAG_SPECS)
-    assert table.columnCount() == 5
-    # Spot-check a known row's tag + type appear.
-    cells = {
-        table.item(r, 1).text(): table.item(r, 2).text()
-        for r in range(table.rowCount())
-    }
-    assert cells["VisionRobot.Manual.MoveToTarget"] == "BOOL"
-    assert cells["VisionRobot.Status.ActualLeftDeg"] == "REAL"
-
-
-def test_plc_tab_connect_simulated_and_disconnect(qapp):
-    from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient
-    from bung_cover_robot.robot.driver import DryRunRobotDriver
-
-    win = MainWindow()  # dry-run by default
-    plc, rt = win.plc_tab, win.robot_test_tab
-    assert isinstance(win.controller.driver, DryRunRobotDriver)
-
-    # Reference against the dry-run driver first...
-    rt.enable_btn.click()
-    rt._on_home_reference()
-    rt._await_command()
-    assert win.controller.is_referenced
-
-    # ...then connecting the simulated PLC swaps the driver and forces re-home.
-    plc._on_connect_sim()
-    assert isinstance(win.controller.driver, PlcRobotDriver)
-    assert isinstance(win.controller.driver.client, SimulatedPlcClient)
-    assert "simulated PLC" in plc.status_label.text()
-    assert not win.controller.is_referenced
-    assert not rt.enable_btn.isChecked()  # refreshed after swap
-
-    # And it really drives: enable + home over the PLC handshake.
-    rt.enable_btn.click()
-    rt._on_home_reference()
-    rt._await_command()
-    assert win.controller.is_referenced
-
-    plc._on_disconnect()
-    assert isinstance(win.controller.driver, DryRunRobotDriver)
-    assert "dry-run" in plc.status_label.text()
-
-
-def test_plc_tab_push_constants_to_simulated_plc(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
-    from bung_cover_robot.plc import (
-        COMMISSIONING_CONSTANTS,
-        PlcConstantStore,
-        read_constants,
-    )
-
-    win = MainWindow()
-    plc = win.plc_tab
-    assert plc.const_table.rowCount() == len(COMMISSIONING_CONSTANTS)
-    # read/push are disabled until a PLC is connected
-    assert not plc.const_push_btn.isEnabled()
-    assert not plc.const_read_btn.isEnabled()
-
-    # isolate persistence to a tmp file and reseed from it
-    plc.const_store = PlcConstantStore.load(tmp_path / "plc_constants.yaml")
-    plc._seed_constants_table()
-
-    plc._on_connect_sim()
-    assert plc.const_push_btn.isEnabled()
-
-    idx = [c.name for c in COMMISSIONING_CONSTANTS].index("HOME_OFFSET_L")
-    plc.const_table.item(idx, 1).setText("3748")
-    monkeypatch.setattr(
-        QMessageBox, "question",
-        lambda *a, **k: QMessageBox.StandardButton.Yes)
-    plc._on_const_push()
-    assert "Pushed all" in plc.const_status.text()
-
-    client = win.controller.driver.client
-    assert read_constants(client)["HOME_OFFSET_L"] == 3748
-
-    # a snapshot reads them back and persists the backup file
-    plc._on_const_read()
-    assert (tmp_path / "plc_constants.yaml").exists()
-    reloaded = PlcConstantStore.load(tmp_path / "plc_constants.yaml")
-    assert reloaded.get("HOME_OFFSET_L") == 3748
-
-
-def test_plc_tab_home_offset_calculator(qapp):
-    from bung_cover_robot.plc import COMMISSIONING_CONSTANTS
-
-    win = MainWindow()
-    plc = win.plc_tab
-    plc._on_connect_sim()
-    client = win.controller.driver.client
-    # arm seated on the jig: commanded step counts from home (open-loop)
-    client.write("ClearLink:I1.Motor0_CommandedPosn", 42)
-    client.write("ClearLink:I1.Motor1_CommandedPosn", -33)
-
-    plc.cal_x.setValue(0.0)
-    plc.cal_y.setValue(250.0)
-    plc._on_offset_compute()
-    assert plc.cal_apply_btn.isEnabled()
-    assert "HOME_OFFSET_L=" in plc.cal_result.text()
-
-    plc._on_offset_apply()
-    kin = win.controller.kin
-    jt = kin.inverse(0.0, 250.0)
-    spd = kin.config.pulses_per_degree
-    names = [c.name for c in COMMISSIONING_CONSTANTS]
-    assert plc.const_table.item(names.index("HOME_OFFSET_L"), 1).text() == str(
-        round(jt.left_deg * spd - 42))
-    assert plc.const_table.item(names.index("HOME_OFFSET_R"), 1).text() == str(
-        round(jt.right_deg * spd + 33))
-
-
-def test_plc_tab_connect_real_without_pycomm3_shows_error(qapp):
-    from bung_cover_robot.robot.driver import DryRunRobotDriver
-
-    win = MainWindow()
-    plc = win.plc_tab
-    plc.path_edit.setText("192.168.1.10/0")
-    plc._on_connect_real()
-    # pycomm3 isn't installed here -> graceful error, driver unchanged.
-    assert "failed" in plc.status_label.text().lower()
-    assert isinstance(win.controller.driver, DryRunRobotDriver)
-
-
-def test_plc_tab_connect_real_requires_path(qapp):
-    win = MainWindow()
-    plc = win.plc_tab
-    plc.path_edit.setText("")
-    plc._on_connect_real()
-    assert "IP/slot" in plc.status_label.text()
 
 
 def test_jog_disabled_until_enabled_and_referenced(qapp):
@@ -996,45 +805,6 @@ def test_roi_image_view_set_and_clear(qapp):
     assert v.roi() is None
 
 
-def test_robot_test_reset_button_and_fault_banner(qapp):
-    from bung_cover_robot.app.robot_test_controller import RobotTestController
-    from bung_cover_robot.gui.robot_test_tab import RobotTestTab
-    from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient
-    from bung_cover_robot.plc import tags as T
-    from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
-
-    kin = FiveBarKinematics()
-    jt = kin.inverse(0.0, 250.0)
-    sim = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
-    drv = PlcRobotDriver(sim, command_timeout_s=1.0, pulse_hold_s=0.0)
-    tab = RobotTestTab(RobotTestController(drv, kin))
-
-    # latch a homing fault as the PLC would
-    sim.write(T.Status.FAULTED, True)
-    sim.write(T.Status.FAULT_CODE, 4)
-    tab._update_enable_state()
-    # isHidden() reflects the explicit show/hide flag (isVisible() is False for an
-    # unmapped widget in a headless test).
-    assert not tab.fault_banner.isHidden()
-    assert "FAULT 4" in tab.fault_banner.text()
-    assert tab.reset_btn.isEnabled()          # reset offered
-    assert not tab.enable_btn.isEnabled()     # enable blocked until reset
-
-    # forcing an enable while faulted must not leave the button stuck highlighted
-    tab.enable_btn.setChecked(True)
-    tab._on_enable_toggled(True)
-    assert not tab.enable_btn.isChecked()     # reverted to reality (still disabled)
-    assert not tab.controller.is_enabled
-
-    # reset clears the fault and re-arms enable (runs on the worker thread now)
-    tab._on_reset()
-    tab._await_command()
-    assert not tab.controller.is_faulted
-    assert tab.fault_banner.isHidden()
-    assert tab.enable_btn.isEnabled()
-    assert "reset ok" in tab.status_label.text().lower()
-
-
 def test_robot_test_home_fault_shows_message(qapp):
     from bung_cover_robot.app.robot_test_controller import RobotTestController
     from bung_cover_robot.gui.robot_test_tab import RobotTestTab
@@ -1050,39 +820,3 @@ def test_robot_test_home_fault_shows_message(qapp):
     tab._await_command()
     assert "code 4" in tab.status_label.text()
     assert not tab.controller.is_referenced
-
-
-def test_bypass_tab_writes_bench_overrides_to_plc(qapp):
-    from bung_cover_robot.app.robot_test_controller import RobotTestController
-    from bung_cover_robot.gui.bypass_tab import BypassTab, SAFE_INPUTS
-    from bung_cover_robot.plc import PlcRobotDriver, SimulatedPlcClient
-    from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
-
-    kin = FiveBarKinematics()
-    jt = kin.inverse(0.0, 250.0)
-    sim = SimulatedPlcClient(home_angles=(jt.left_deg, jt.right_deg)).connect()
-    tab = BypassTab(RobotTestController(PlcRobotDriver(sim), kin))
-    tab.refresh()
-    assert tab.force_safe_btn.isEnabled()          # a client is connected
-
-    tab._on_force_safe()
-    for tag, val in SAFE_INPUTS:                    # every safety input forced safe
-        assert bool(sim.read(tag)) == val
-
-    tab.homing_chk.setChecked(True)                 # toggled -> writes the tag
-    assert bool(sim.read("Bypass_Homing"))
-    tab.vision_chk.setChecked(True)
-    assert bool(sim.read("Bypass_Vision"))
-    tab.homing_chk.setChecked(False)
-    assert not bool(sim.read("Bypass_Homing"))
-
-
-def test_bypass_tab_disabled_without_plc(qapp):
-    from bung_cover_robot.app.robot_test_controller import build_dry_run_controller
-    from bung_cover_robot.gui.bypass_tab import BypassTab
-
-    tab = BypassTab(build_dry_run_controller())   # dry-run driver has no client
-    tab.refresh()
-    assert not tab.force_safe_btn.isEnabled()
-    assert not tab.homing_chk.isEnabled()
-    assert "No PLC" in tab.status_label.text()

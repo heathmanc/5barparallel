@@ -2,15 +2,15 @@
 hardware.
 
 The jog/home logic (app.robot_test_controller) computes and *validates* shoulder
-angles, then hands them to a RobotDriver to actuate. Today only DryRunRobotDriver
-exists (simulates instantly, no hardware), so the GUI and tests run with nothing
-connected. A PLC-backed driver comes later: jogging needs a small manual-move
-surface on the PLC (a manual/jog mode plus MoveTo-angles + InPosition tags),
-separate from the pick/place job handshake in Claude.md §11.
+angles, then hands them to a RobotDriver to actuate. Two implementations exist:
+``DryRunRobotDriver`` (simulates instantly, no hardware) and
+``ethercat.EtherCatRobotDriver`` (the real backend — the PC streams CSP setpoints
+to the two A6 servo drives over EtherCAT). The GUI and tests run against either.
 
 Contract: a driver never decides *where* to go — it only enables/disables the
 axes and moves to angles it is given. All reachability/singularity gating happens
-upstream in WorkspaceValidator (Claude.md §15).
+upstream in WorkspaceValidator (Claude.md §15); the EtherCAT driver additionally
+validates every point of the planned path before streaming it.
 """
 
 from __future__ import annotations
@@ -110,30 +110,20 @@ class RobotDriver(ABC):
 
     def set_home_angles(self, angles: Angles) -> None:
         """Tell the driver where the software home reference is, in shoulder
-        degrees. Used when the home pose is re-taught/recomputed. No-op for a
-        real PLC (home is the switch reference); the dry-run driver adopts it."""
-
-    def set_auto_mode(self, on: bool) -> None:
-        """Select Auto (automatic pick/place owns motion) vs Manual (jog/home)
-        mode. No-op for drivers with no mode concept."""
-
-    @property
-    def is_auto_mode(self) -> bool:
-        """True when the machine is in Auto mode. Default False (manual)."""
-        return False
+        degrees. Used when the home pose is re-taught/recomputed. The dry-run
+        driver adopts it; a servo driver homes to its switch reference."""
 
     @property
     def is_referenced(self) -> bool:
         """True if a home reference is currently established. Default: we know a
-        position. The PLC driver overrides to read Status.Homed live, so a
-        disable/fault (which clears the PLC's home) is reflected immediately -- an
-        open-loop stepper loses its datum on disable and must be re-homed."""
+        position. A servo driver overrides this to read the drive's homed state
+        live, so a disable/fault is reflected immediately."""
         return self.read_angles() is not None
 
     @property
     def is_faulted(self) -> bool:
         """True if a fault is latched. Default False for drivers with no fault
-        concept (overridden by the PLC driver)."""
+        concept (overridden by a real drive)."""
         return False
 
     def fault_code(self) -> Optional[int]:
@@ -149,7 +139,6 @@ class DryRunRobotDriver(RobotDriver):
         self._enabled = False
         self._angles: Optional[Angles] = None  # unknown until homed/moved
         self._home_angles = home_angles
-        self._auto = False
         self.command_log: List[Angles] = []
 
     @property
@@ -159,14 +148,6 @@ class DryRunRobotDriver(RobotDriver):
     def set_home_angles(self, angles: Angles) -> None:
         self._home_angles = (float(angles[0]), float(angles[1]))
         logger.info("[dry-run] home reference set to L=%.3f R=%.3f", *self._home_angles)
-
-    def set_auto_mode(self, on: bool) -> None:
-        self._auto = bool(on)
-        logger.info("[dry-run] mode = %s", "AUTO" if on else "MANUAL")
-
-    @property
-    def is_auto_mode(self) -> bool:
-        return self._auto
 
     def enable(self) -> None:
         self._enabled = True

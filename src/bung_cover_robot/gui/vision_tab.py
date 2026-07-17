@@ -12,7 +12,6 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -191,30 +190,6 @@ class VisionTab(QWidget):
         pv.addWidget(self.pos_deg_label)
         pv.addWidget(self.pos_xy_label)
         v.addWidget(pos_box)
-
-        # Mode select — like an HMI Manual/Auto selector. Auto is required before
-        # the cycle can start (only in Auto does the PLC scan the pick/place
-        # routine); the checked button shows the live mode.
-        mode_box = QGroupBox("Mode")
-        mh = QHBoxLayout(mode_box)
-        self.manual_btn = QPushButton("Manual")
-        self.manual_btn.setCheckable(True)
-        self.manual_btn.setToolTip("Manual mode — jog/home; the auto cycle is inhibited.")
-        self.manual_btn.clicked.connect(lambda: self._set_mode(False))
-        self.auto_btn = QPushButton("Auto")
-        self.auto_btn.setCheckable(True)
-        self.auto_btn.setToolTip("Auto mode — the PLC scans the pick/place routine; "
-                                 "required to run the cycle.")
-        self.auto_btn.clicked.connect(lambda: self._set_mode(True))
-        # Exclusive group so exactly one stays lit and a re-click on the active
-        # mode can't toggle it off (which read as a "missed" push).
-        self._mode_group = QButtonGroup(mode_box)
-        self._mode_group.setExclusive(True)
-        self._mode_group.addButton(self.manual_btn)
-        self._mode_group.addButton(self.auto_btn)
-        mh.addWidget(self.manual_btn)
-        mh.addWidget(self.auto_btn)
-        v.addWidget(mode_box)
 
         run_box = QGroupBox("Run")
         rb = QVBoxLayout(run_box)
@@ -728,42 +703,19 @@ class VisionTab(QWidget):
         if hasattr(self, "tune_min"):    # keep any live-tuned Hough settings
             self._apply_tuning()
 
-    # --- mode (Manual / Auto) ----------------------------------------------
-    def _set_mode(self, auto: bool) -> None:
-        # Reflect the press immediately so the HMI feels assertive even if the PLC
-        # write blocks for a scan or two -- the button never looks like it "missed."
-        self.auto_btn.setChecked(auto)
-        self.manual_btn.setChecked(not auto)
-        try:
-            self.controller.set_auto_mode(auto)
-        except Exception as exc:                       # noqa: BLE001 - surface any driver error
-            self._set_status(f"Mode change failed: {exc}", theme.DANGER)
-            self._sync_mode_buttons()                  # roll back to the real state
-            return
-        if not auto and self._running:
-            self._on_stop()                            # leaving Auto stops the cycle
-        self._sync_mode_buttons()
-        self._set_status(f"{'AUTO' if auto else 'MANUAL'} mode selected.", theme.INFO)
-
-    def _sync_mode_buttons(self) -> None:
-        auto = self.controller.is_auto_mode
-        self.auto_btn.setChecked(auto)
-        self.manual_btn.setChecked(not auto)
-        # Cycle Start only lives in Auto (and when idle); Stop only while running.
-        self.start_btn.setEnabled(auto and not self._running)
+    def _sync_run_buttons(self) -> None:
+        # Start when idle; Stop while running. The PC is the motion controller, so
+        # there's no Auto/Manual mode gate -- a running cycle just locks manual jog.
+        self.start_btn.setEnabled(not self._running)
         self.stop_btn.setEnabled(self._running)
 
     # --- automatic cycle ----------------------------------------------------
     def _on_start(self) -> None:
         if self._running:
             return
-        if not self.controller.is_auto_mode:
-            self._set_status(
-                "Switch to AUTO mode before starting the cycle.", theme.WARN)
-            return
         self.refresh()
         # Vision bypass: run the cycle against fixed, reachable targets so the
-        # plan -> PLC handshake loop can be tested with no camera/detection.
+        # plan -> move loop can be tested with no camera/detection.
         source = None
         if self.bypass_chk.isChecked():
             holes, covers = default_scripted_targets(self.controller)
@@ -781,7 +733,7 @@ class VisionTab(QWidget):
 
         # Run off the GUI thread — a real PLC handshake takes seconds per hole.
         self._running = True
-        self._sync_mode_buttons()
+        self._sync_run_buttons()
         mode = "scripted (vision bypass)" if source else "automatic"
         if self.single_step_chk.isChecked():
             mode += ", single step"
@@ -806,7 +758,7 @@ class VisionTab(QWidget):
     def _on_cycle_finished(self, result) -> None:
         self._teardown_thread()
         self._running = False
-        self._sync_mode_buttons()
+        self._sync_run_buttons()
         self._show_overlay()
         self.refresh()
         placed = len(result.placed)
@@ -867,7 +819,7 @@ class VisionTab(QWidget):
             "ok" if self.camera.is_open else "bad",
         )
         self._update_roi_buttons()
-        self._sync_mode_buttons()
+        self._sync_run_buttons()
 
     def _set_status(self, text: str, color: str) -> None:
         self.status_label.setText(text)

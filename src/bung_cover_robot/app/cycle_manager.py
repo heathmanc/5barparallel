@@ -14,14 +14,12 @@ the loose covers.
 
 The manager owns no Qt; the Vision tab is a thin view that calls ``run_cycle`` and
 renders the returned steps. Every target is validated before a job is built, so a
-bad pose can never reach the PLC.
+bad pose can never reach the drives.
 
-Two job runners let the same cycle run with or without a PLC:
-  * ``HandshakeJobRunner`` — the real §11 handshake over a PlcClient (also the
-    SimulatedPlcClient, so ``--sim-plc`` and tests exercise the full protocol).
-  * ``DryRunJobRunner`` — no PLC: drives the pick then drop angles through the
-    dry-run driver and always succeeds, so the orchestration/validation logic
-    runs end-to-end with nothing connected.
+The PC is the motion controller (EtherCAT): a job is just a pick move followed by
+a drop move, driven straight through the ``RobotDriver`` — ``DirectJobRunner``
+works for the dry-run driver and the real EtherCAT driver alike (the latter plans
+a coordinated straight-line move inside ``move_to_angles``).
 """
 
 from __future__ import annotations
@@ -30,7 +28,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
-from ..plc.handshake import JobResult, PickPlaceHandshake
 from ..robot.driver import RobotDriver
 from ..robot.planner import PickPlaceJob, PlanningError, make_job, sort_holes_along_conveyor
 from ..vision.calibration import HomographyTransform
@@ -45,29 +42,27 @@ Point = Tuple[float, float]
 # --------------------------------------------------------------------------- #
 # Job runners
 # --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class JobResult:
+    """Outcome of one pick/place job."""
+
+    ok: bool
+    reason: str
+    command_id: int = 0
+
+
 class JobRunner(ABC):
     @abstractmethod
     def run(self, job: PickPlaceJob) -> JobResult:
         ...
 
 
-class HandshakeJobRunner(JobRunner):
-    """Run each job through the real §11 pick/place handshake over a PlcClient."""
+class DirectJobRunner(JobRunner):
+    """Drive the RobotDriver straight through the pick then the drop pose.
 
-    def __init__(self, client, command_timeout_s: float = 30.0) -> None:
-        self.handshake = PickPlaceHandshake(client, command_timeout_s=command_timeout_s)
-
-    def run(self, job: PickPlaceJob) -> JobResult:
-        return self.handshake.send_job_and_wait(
-            (job.pick.left_deg, job.pick.right_deg),
-            (job.drop.left_deg, job.drop.right_deg),
-            job.hole_index,
-            job.cover_id,
-        )
-
-
-class DryRunJobRunner(JobRunner):
-    """No PLC: move the dry-run driver through pick then drop, always succeed."""
+    The PC owns motion now, so a job is just two coordinated moves. Works for the
+    dry-run driver (instant) and the EtherCAT driver (each ``move_to_angles``
+    plans + streams a coordinated move) with no protocol in between."""
 
     def __init__(self, driver: RobotDriver) -> None:
         self.driver = driver
@@ -77,16 +72,12 @@ class DryRunJobRunner(JobRunner):
         self._id += 1
         self.driver.move_to_angles(job.pick.left_deg, job.pick.right_deg)
         self.driver.move_to_angles(job.drop.left_deg, job.drop.right_deg)
-        return JobResult(True, "ok (dry-run)", self._id)
+        return JobResult(True, "ok", self._id)
 
 
-def make_job_runner(driver: RobotDriver, command_timeout_s: float = 30.0) -> JobRunner:
-    """A PlcClient-backed driver gets the real handshake; a dry-run driver the
-    simulated runner. Detected via the driver's optional ``client`` attribute."""
-    client = getattr(driver, "client", None)
-    if client is not None:
-        return HandshakeJobRunner(client, command_timeout_s=command_timeout_s)
-    return DryRunJobRunner(driver)
+def make_job_runner(driver: RobotDriver) -> JobRunner:
+    """Every driver runs jobs the same way now: move to pick, then to drop."""
+    return DirectJobRunner(driver)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,8 +118,8 @@ class TargetSource(ABC):
 
     Swapping the source is how vision is bypassed for testing: the real vision
     path detects+calibrates; the scripted path returns fixed coordinates so the
-    plan -> validate -> PLC pick/place handshake loop can be exercised with no
-    camera, detection, or calibration at all.
+    plan -> validate -> move loop can be exercised with no camera, detection, or
+    calibration at all.
     """
 
     label = "targets"
@@ -327,7 +318,7 @@ class CycleManager:
             else:
                 result.reason = f"job failed: {job_res.reason}"
                 result.ok = False
-                return result  # a PLC fault/timeout stops the cycle
+                return result  # a drive fault/timeout stops the cycle
 
         placed = len(result.placed)
         if not result.reason:
@@ -346,9 +337,9 @@ class CycleManager:
 
     # --- single job (vision + selection bypass) -----------------------------
     def run_single_job(self, pick_xy: Point, drop_xy: Point) -> CycleStep:
-        """Fire ONE pick->place job through the PLC handshake, from explicit
-        robot-frame points. No vision, no cover selection — the simplest way to
-        exercise IK + validation + the §11 handshake on hardware."""
+        """Fire ONE pick->place job from explicit robot-frame points. No vision,
+        no cover selection — the simplest way to exercise IK + validation + a
+        coordinated move on hardware."""
         block = self._motion_block()
         if block is not None:
             return CycleStep(0, drop_xy, 0, pick_xy, False, block)

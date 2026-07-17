@@ -17,9 +17,15 @@ joint_limits:
   max_deg: 200.0
 
 drivetrain:
-  pulses_per_rev: 3200    # drive pulses per motor revolution
-  belt_reduction: 3.0     # 3:1 GT3 (20T motor -> 60T shoulder)
-  # pulses_per_degree = 3200 * 3 / 360 = 26.6667 (derived, see config properties)
+  # A6 EtherCAT servo: 17-bit absolute encoder = 131072 counts per motor rev.
+  # In CSP the drive position unit is one encoder count, so this is the raw
+  # feedback resolution, not a microstep count. Confirm against the drive's
+  # position factor / electronic gearing at bring-up (docs/ethercat_bringup.md).
+  pulses_per_rev: 131072  # A6M80-750 17-bit encoder counts / motor rev
+  belt_reduction: 3.0     # 3:1 HTD-5M (20T motor -> 60T shoulder). NOTE: the A6M80
+                          # has a 19 mm shaft, so a 20T GT3 (19.1 mm pitch dia) will
+                          # NOT bore to 19 mm — use HTD-5M (20T pitch dia 31.8 mm).
+  # pulses_per_degree = 131072 * 3 / 360 = 1092.2667 (derived, see config properties)
 
 singularity:
   # Workspace guard thresholds (Claude.md §3.6, §9).
@@ -30,15 +36,16 @@ singularity:
 homing:
   # Home/limit switch reference — see docs/homing.md for the overhead figure.
   # The home flag is a small tab on the PROXIMAL link L1 (never L2) at
-  # flag_radius_mm from the shoulder pivot; the sensor mounts on a short base
-  # bracket at the home trip angle. Both shoulders share the same trip angles.
-  # Mid-travel centre home (TCP = home_tcp_mm); the flag passes the sensor during
-  # normal motion, so the PLC reads it only during the homing routine.
+  # flag_radius_mm from the shoulder pivot; the switch mounts on a short base
+  # bracket at the home trip angle and wires to the drive's homing digital input.
+  # Both shoulders share the same trip angles. Mid-travel centre home
+  # (TCP = home_tcp_mm). CiA 402 homing (mode 6) references to this switch and
+  # zeros the drive there; the A6 absolute encoder then holds the datum.
   home_left_deg: 140.5406   # left shoulder angle at the home reference pose
   home_right_deg: 39.4594   # right shoulder angle at the home reference pose
   home_tcp_mm: [0.0, 250.0] # TCP these angles correspond to (informational)
   flag_radius_mm: 40.0      # tab radius on L1 (sensor bracket reaches to this)
-  # Hard travel limits — mirror joint_limits above; document the switch angles
-  # for the PLC. Wire into the drive ENABLE/fault chain.
+  # Hard travel limits — mirror joint_limits above; wire the limit switches to
+  # the drives' inputs and into the STO/E-stop safety chain.
   limit_min_deg: -20.0
   limit_max_deg: 200.0

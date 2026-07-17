@@ -1,7 +1,7 @@
 """Runs a CycleManager off the GUI thread.
 
-A real PLC pick/place handshake takes seconds per hole, so ``run_cycle`` must not
-run on the Qt main thread or the HMI would freeze. This QObject is moved to a
+A pick/place job takes seconds per hole (coordinated moves + vacuum settle), so
+``run_cycle`` must not run on the Qt main thread or the HMI would freeze. This QObject is moved to a
 QThread; it emits ``stepDone`` after each hole and ``finished`` with the
 CycleResult. ``request_stop`` sets a flag the manager checks *between* holes, so
 Stop lets the in-flight pick finish safely (never aborts mid-transfer, which
