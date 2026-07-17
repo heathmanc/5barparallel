@@ -1,0 +1,69 @@
+# Mechanical BOM — 5-bar arm hardware
+
+Quantities are **per robot** (two shoulders, two arms of each link). Small
+bearings/pins are cheap in 10-packs — buy spares. Links are *starting points*
+(commodity parts, many equivalent vendors); confirm price/stock/tolerance before
+ordering. Prices omitted deliberately — they drift.
+
+The **motors** (2× StepperOnline A6M80-750, EtherCAT) are specced separately and
+are not in this list.
+
+## Bearings
+
+| Qty | Part | Size | Where it goes | Link |
+|---|---|---|---|---|
+| **4** | **7005** angular-contact | 25×47×12 | Shoulder axles — a back-to-back (DB) **pair per shaft**, lightly preloaded | [VXB 7005B](https://vxb.com/products/7005b-bearing-angular-contact-ball-bearing-25x47x1) · [Amazon](https://www.amazon.com/Bearing-Angular-25x47x12-Bearings-VXB/dp/B002UE8CW2) |
+| **4** | **688-2RS** | 8×16×5 | Proximal elbow bosses (2 per elbow) on the Ø8 elbow pins | [Amazon 10-pk](https://www.amazon.com/Bearing-688-2RS-Miniature-Bearings-VXB/dp/B002BBQCMQ) |
+| **2** | **6804-2RS** | 20×32×7 | TCP — one in each distal boss, on the hollow spindle | [Amazon (NSK)](https://www.amazon.com/NSK-6804-2RS-Bearing-20x32x7-Shielded/dp/B07WTQ9WMN) · [FastEddy](https://www.fasteddybearings.com/20x32x7-rubber-sealed-bearing-6804-2rs/) |
+
+> **7005 preload:** the pair must mount **back-to-back** with a small axial
+> preload (a ground spacer + locknut, or buy a *matched DB set*). A random pair
+> of singles gives you no defined preload — that's where the shoulder stiffness
+> comes from. For the printed prototype, plain 6005-2RS deep-groove (25×47×12,
+> same envelope) is a cheaper stand-in if you don't want to fuss preload yet.
+
+## Shafts & pins
+
+| Qty | Part | Spec | Note | Link |
+|---|---|---|---|---|
+| **2** | Shoulder shaft | Ø25 h6 × ~180 mm, steel/SS | **Semi-custom:** cut from 25 h6 ground stock, machine the long D-flat (see `shoulder_shaft.step`) | [Motedis 25 h6](https://www.motedis.com/en/Precision-shaft-25-mm-h6-steel-hardened-and-ground?products_id=6500) · [Ondrives](https://www.ondrivesus.com/precision-ground-stock-saw-cut-ends/metric) |
+| **2** | Elbow pin | Ø8 × 65 mm, hardened | DIN 6325 dowel (cut to length) or an Ø8 shoulder screw | [McMaster 8 mm dowel](https://www.mcmaster.com/products/dowel-pins/diameter~8-mm/) · [Huyett DIN 6325](https://www.huyett.com/dowmh-080-060) |
+| **1** | TCP spindle | Ø20 OD / Ø16 bore × ~75 mm, w/ flange | **Custom turned part** — see `dual_base_full.step` (`tcp_spindle`). Start from Ø20 tube/bar | (machine shop / lathe) |
+| — | TCP collar | Ø28 clamp collar, Ø20 bore | Off-the-shelf shaft collar retains the spindle | [McMaster shaft collars](https://www.mcmaster.com/products/shaft-collars/) |
+
+## Drive train (HTD-5M, 3:1) — Beltingonline (bepltd) has the whole set
+
+| Qty | Part | Spec | Note | Link |
+|---|---|---|---|---|
+| **2** | 60T shoulder pulley | 60-5M-15, pilot bore | Bore to Ø25 + keyway to the shoulder shaft | [60-5M-15](https://bepltd.com/products/60-5m-15-htd-pilot-bore-5m-timing-belt-pulley-60-tooth-x-15mm-wide) |
+| **2** | 20T motor pulley | 20-5M-15, pilot bore | Bore to Ø19 + keyway to the A6 shaft | [20-5M-15](https://bepltd.com/products/20-5m-15-htd-pilot-bore-5m-timing-belt-pulley-20-tooth-x-15mm-wide) |
+| **2** | Belt | 450-5M-15 (90T) | The stock length the layout was solved to (C = 120.8 mm) | [450-5M-15](https://bepltd.com/products/450-5m-15-htd-5m-timing-belt-450mm-long-x-15mm-wide) |
+
+> **20T bore watch-out:** the 20-5M-15's boss is Ø23, so boring to Ø19 + a
+> keyway leaves thin boss walls. The pitch dia (31.8 mm) has plenty of meat, but
+> confirm with the vendor — or step up to a **taper-bush** 20T pulley for a
+> secure grip on the 19 mm servo shaft. This is the one drive part to double-check.
+
+## Fasteners (McMaster-Carr — stable catalog)
+
+| Qty | Part | Use |
+|---|---|---|
+| 8 | M6 socket-head cap screw (into the Ø90 BCD flange slots) | Motor → motor plate |
+| ~24 | M5 SHCS | Motor plate → shear walls, walls → base plate |
+| 4 | M3 SHCS + nut | Distal elbow split-clamp pinch bolts (2 per clamp) |
+| 2 | M5 set screw (cup point) | Shoulder D-bore axial retention onto the shaft flat |
+| — | assorted M5/M6 washers | as needed |
+
+[McMaster metric SHCS](https://www.mcmaster.com/products/screws/socket-head-screws~/system-of-measurement~metric/) · [set screws](https://www.mcmaster.com/products/set-screws/system-of-measurement~metric/)
+
+## Quick shopping strategy
+
+- **One order covers the drive:** all pulleys + belts from Beltingonline.
+- **One order covers small bearings/pins/fasteners:** McMaster (688s, dowels,
+  all screws, shaft collar) — fastest single-source.
+- **Shoulder bearings + 25 h6 stock** are the two items worth spending a minute
+  on: get a **matched 7005 DB pair** (or accept the 6005 stand-in for the
+  prototype), and enough 25 h6 bar to make both shafts.
+- **Two custom parts** need a lathe: the **shoulder shaft** (flat) and the
+  **TCP spindle** (hollow + flange). Everything else is off-the-shelf or a
+  pilot-bore + keyway job.
