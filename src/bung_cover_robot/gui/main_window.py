@@ -1,6 +1,6 @@
 """Main application window — a tabbed dark-theme HMI.
 
-Vision (main screen) · Camera · Calibration · Robot Test · Settings.
+Vision (main screen) · Camera · Calibration · Robot Test · Drives · Settings.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from ..vision.calibration import CalibrationManager, CameraIntrinsics
 from ..vision.camera import Camera, CameraConfig, MockCamera
 from .calibration_tab import CalibrationTab
 from .camera_tab import CameraTab
+from .ethercat_tab import EtherCatTab
 from .imaging import demo_frame, demo_transform
 from .robot_test_tab import RobotTestTab
 from .settings_tab import SettingsTab
@@ -84,11 +85,14 @@ class MainWindow(QMainWindow):
             self.camera, self.calibration_manager, self.recipes
         )
         self.robot_test_tab = RobotTestTab(self.controller)
+        self.ethercat_tab = EtherCatTab(self.controller, settings=self.app_settings,
+                                        config_dir=cfg_dir)
         self.settings_tab = SettingsTab(self.controller, config_path=config_path)
         self.tabs.addTab(self.vision_tab, "Vision")
         self.tabs.addTab(self.camera_tab, "Camera")
         self.tabs.addTab(self.calibration_tab, "Calibration")
         self.tabs.addTab(self.robot_test_tab, "Robot Test")
+        self.tabs.addTab(self.ethercat_tab, "Drives")
         self.tabs.addTab(self.settings_tab, "Settings")
         self.setCentralWidget(self.tabs)
 
@@ -96,6 +100,10 @@ class MainWindow(QMainWindow):
         self.settings_tab.geometryChanged.connect(self.robot_test_tab.refresh_all)
         # New geometry -> the safe-zone overlay bounds change; drop its cache.
         self.settings_tab.geometryChanged.connect(self.vision_tab.invalidate_reach_cache)
+        # Swapping the motion backend (EtherCAT connect/disconnect) refreshes the
+        # tabs that show drive state.
+        self.ethercat_tab.connectionChanged.connect(self.robot_test_tab.refresh_all)
+        self.ethercat_tab.connectionChanged.connect(self.vision_tab.refresh)
         self.camera_tab.cameraChanged.connect(self._on_camera_changed)
         self.calibration_tab.calibrationSaved.connect(self._on_calibration_saved)
         self.calibration_tab.recipesChanged.connect(self._on_recipes_changed)

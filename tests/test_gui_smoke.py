@@ -36,6 +36,7 @@ def test_main_window_has_all_tabs(qapp):
         "Camera",
         "Calibration",
         "Robot Test",
+        "Drives",
         "Settings",
     ]
 
@@ -820,3 +821,37 @@ def test_robot_test_home_fault_shows_message(qapp):
     tab._await_command()
     assert "code 4" in tab.status_label.text()
     assert not tab.controller.is_referenced
+
+
+def test_drives_tab_sim_connect_params_and_disconnect(qapp, tmp_path):
+    from bung_cover_robot.ethercat.ethercat_driver import EtherCatRobotDriver
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    # connect the simulated network -> real EtherCAT driver behind the seam
+    tab._on_connect_sim()
+    assert isinstance(ctrl.driver, EtherCatRobotDriver)
+    ctrl.enable()
+    ctrl.home_reference()
+    # snapshot path: encoder counts + CiA402 state render into the panels
+    master = ctrl.driver.master
+    snap = [dict(sw=d.statusword, mode=d.mode_display, act=d.actual_position,
+                 tgt=d.target_position, di=d.digital_inputs) for d in master.drives]
+    tab._on_snapshot(snap)
+    assert "OPERATION ENABLED" in tab._drive_panels[0][1]["state"].text()
+    assert "counts" in tab._drive_panels[0][1]["counts"].text()
+    # parameter table: edit a value, save -> YAML persisted with the new value
+    tab.table.item(0, 1).setText("150")        # speed_mm_s
+    tab._on_save_params()
+    assert (tmp_path / "drive_parameters.yaml").exists()
+    from bung_cover_robot.ethercat.parameters import ParameterStore
+    assert ParameterStore.load(tmp_path / "drive_parameters.yaml").get("speed_mm_s") == 150.0
+    # apply pushes motion limits into the live driver
+    tab._on_apply_params()
+    assert ctrl.driver.limits.speed_mm_s == 150.0
+    # disconnect falls back to the dry-run driver
+    tab._on_disconnect()
+    assert isinstance(ctrl.driver, DryRunRobotDriver)
+    tab._stop_poller()

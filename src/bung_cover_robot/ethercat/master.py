@@ -101,6 +101,10 @@ class DriveProcessData:
     statusword: int = 0
     mode_display: int = 0
     actual_position: int = 0
+    # CiA 402 digital inputs (0x60FD): bit0 = negative limit, bit1 = positive
+    # limit, bit2 = home switch. Not in the Stage-4 PDO map yet — add 0x60FD to
+    # the TxPDO at bring-up so the Drives page shows live switch states.
+    digital_inputs: int = 0
 
 
 class EtherCatMaster(ABC):

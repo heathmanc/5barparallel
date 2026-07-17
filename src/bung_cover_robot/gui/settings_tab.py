@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..app.robot_test_controller import RobotTestController
+from . import theme
 from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics, KinematicsError
 from ..robot.workspace import (
     SingularityLimits,
@@ -204,7 +205,7 @@ class SettingsTab(QWidget):
             self.home_angles_label.setStyleSheet("")
         except (KinematicsError, ValueError):
             self.home_angles_label.setText("home unreachable with this geometry")
-            self.home_angles_label.setStyleSheet("color:#f85149;")
+            self.home_angles_label.setStyleSheet(f"color:{theme.WARN};")
 
     # --- actions ------------------------------------------------------------
     def _on_apply(self) -> bool:
@@ -306,5 +307,5 @@ class SettingsTab(QWidget):
     def _status(self, text: str, *, ok: bool) -> None:
         self.status_label.setText(text)
         self.status_label.setStyleSheet(
-            "color: #3fb950;" if ok else "color: #f85149; font-weight: bold;"
+            f"color: {theme.TEXT};" if ok else f"color: {theme.WARN}; font-weight: bold;"
         )
