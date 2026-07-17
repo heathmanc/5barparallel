@@ -37,7 +37,7 @@ shoulder shaft's long D-flat; the distals are the same part.
 |---|---|
 | Links | 6061-T6 pocketed-I from 30 mm plate (or PA12/PA-CF print for bring-up) |
 | Proximal (L1=200) | I 30×22, fl 3.5 / web 4.0 — Ø25 D-bore + M5 set screw at shoulder, 688 pockets at elbow. ~214 g Al / 80 g PA12 |
-| Distal (L2=230) | I 30×20, fl 3.0 / web 3.5 — Ø8 pin clamp at elbow, 688 pockets at TCP. ~174 g Al / 65 g PA12 |
+| Distal (L2=230) | I 30×20, fl 3.0 / web 3.5 — Ø8 split clamp at elbow (slit into the bore, 2× M3 pinch bolts), 688 pockets at TCP. ~174 g Al / 65 g PA12 |
 | Shoulder shafts | Ø25 h6 × 180, one D-flat z109–178 (serves both clamp heights) |
 | Shoulder bearings | 4× **7005 angular-contact** (25×47×12), back-to-back pair per shaft, light preload |
 | Elbow / TCP bearings | 688-2RS (8×16×5) in the pockets; Ø8 pins (elbow pins 65 mm) |

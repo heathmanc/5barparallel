@@ -135,10 +135,19 @@ def brg_pocket(arm, x, r, H, od=16.0, w=5.0):
 
 def pin_clamp(arm, x, r, H):
     arm = arm.cut(zcyl(x, 0, 4.0, -H, 2 * H))
-    arm = arm.cut(cq.Workplane("XY").box(r + 2.5, 1.4, H).translate((x - (r + 1.0), 0, 0)))
-    bolt = (cq.Workplane("XY").circle(1.7).extrude(2 * r + 6)
-            .rotate((0, 0, 0), (1, 0, 0), -90).translate((x - r * 0.55, -(r + 3), 0)))
-    return arm.cut(bolt)
+    # The slit must run from OUTSIDE the boss all the way into the bore, or the
+    # clamp can't compress: span x-(r+5) .. x+1 (through the bore center), and
+    # taller than the boss so the cut is unambiguously through top and bottom.
+    arm = arm.cut(cq.Workplane("XY").box(r + 6, 1.4, H + 2)
+                  .translate((x - (r + 6) / 2 + 1.0, 0, 0)))
+    # Two M3 pinch bolts, stacked at +/-H/4, both crossing the slit so the
+    # clamp compresses evenly along the pin instead of cocking.
+    for dz in (-H / 4, H / 4):
+        bolt = (cq.Workplane("XY").circle(1.7).extrude(2 * r + 6)
+                .rotate((0, 0, 0), (1, 0, 0), -90)
+                .translate((x - r * 0.55, -(r + 3), dz)))
+        arm = arm.cut(bolt)
+    return arm
 
 
 def proximal():
@@ -159,10 +168,12 @@ def distal():
 
 
 def shoulder_shaft():
-    """O25 x 180. One long D-flat (z109-178) so the SAME part serves both sides:
-    the left arm clamps at plane A (111-141), the right at plane B (146-176)."""
+    """O25 x 180. One long D-flat so the SAME part serves both sides: the left
+    arm clamps at plane A (111-141), the right at plane B (146-176). The flat
+    runs THROUGH the top end (z109 -> past 180) — any full-round section above
+    the flat would make it impossible to slide the D-bore arm on from the top."""
     s = cq.Workplane("XY").circle(12.5).extrude(180)
-    return s.cut(cq.Workplane("XY").box(40, 40, 70).translate((0, 10.5 + 20, 109 + 35)))
+    return s.cut(cq.Workplane("XY").box(40, 40, 76).translate((0, 10.5 + 20, 109 + 38)))
 
 
 def ring(od, idd, w):
@@ -247,7 +258,12 @@ P.append((cq.Workplane("XY").pushPoints([(x, y) for x in (-92, 0, 92) for y in (
 
 for sgn, tag, zp, mp_top, so_len in ((-1, "L", ZL, MPL_TOP, SO_L), (1, "R", ZR, MPR_TOP, SO_R)):
     x, xm = sgn * HX, sgn * XM
-    P.append((shaft.translate((x, 0, 0)), (0.55, 0.55, 0.58), f"shaft_{tag}"))
+    # Rotate the shaft with its arm's home angle so the D-flat actually mates
+    # with the arm's D-bore at the home pose (the flat's azimuth on the shaft is
+    # set at assembly; the model shows the assembled home state).
+    arm_ang = jt.left_deg if sgn < 0 else jt.right_deg
+    P.append((shaft.rotate((0, 0, 0), (0, 0, 1), arm_ang).translate((x, 0, 0)),
+              (0.55, 0.55, 0.58), f"shaft_{tag}"))
     P.append((ring(47, 25, 12).translate((x, 0, 45)), (0.85, 0.68, 0.2), f"brg7005_lo_{tag}"))
     P.append((ring(47, 25, 12).translate((x, 0, 98)), (0.85, 0.68, 0.2), f"brg7005_up_{tag}"))
     P.append((pulley(60, 25, zp).translate((x, 0, 0)), (0.30, 0.32, 0.36), f"pulley60T_{tag}"))
