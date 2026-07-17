@@ -63,6 +63,13 @@ MP_T = 8.0                             # motor plate thickness
 SO = 46.0                              # motor standoff half-pitch (square)
 MPL_TOP, MPR_TOP = 1.0, 21.0           # motor plate top faces
 SO_L, SO_R = 45.0 - MPL_TOP, 45.0 - MPR_TOP   # standoff lengths 44 / 24
+# TCP joint: hollow spindle so a miniature air cylinder runs through the axis.
+# Default cylinder: ISO 6432 O10 bore (O15 barrel) — CHANGE CYL_BARREL_OD to
+# your actual cylinder and keep SPINDLE_ID ~1 mm larger.
+SPINDLE_OD, SPINDLE_ID = 20.0, 16.2    # hollow TCP spindle (rides in 6804s)
+TCP_BRG_OD, TCP_BRG_W = 32.0, 7.0      # 6804-2RS 20x32x7, one per distal boss
+CYL_BARREL_OD = 15.0                   # ISO 6432 O10-bore mini cylinder barrel
+assert SPINDLE_ID >= CYL_BARREL_OD + 1.0, "cylinder must clear the spindle bore"
 
 # ------------------------------------------------------------------- checks
 def check_cross_pairs(grid: float = 8.0) -> float:
@@ -127,10 +134,17 @@ def dbore(arm, x, r, H, bore, flat, ss):
     return arm.cut(hole)
 
 
-def brg_pocket(arm, x, r, H, od=16.0, w=5.0):
-    arm = arm.cut(zcyl(x, 0, 4.0, -H, 2 * H))
-    arm = arm.cut(zcyl(x, 0, od / 2, H / 2 - w, H / 2 + 2))
-    return arm.cut(zcyl(x, 0, od / 2, -H / 2 - 2, -H / 2 + w))
+def brg_pocket(arm, x, r, H, od=16.0, w=5.0, thru=4.0, faces="both"):
+    """Bearing pocket(s) of OD ``od`` x width ``w`` with a ``thru`` radius
+    clearance bore. ``faces``: 'both' (688 pair), 'top' or 'bottom' (single
+    bearing pocketed from that face — used at the TCP so the two distals'
+    bearings sit in the OUTER faces for maximum span on the spindle)."""
+    arm = arm.cut(zcyl(x, 0, thru, -H, 2 * H))
+    if faces in ("both", "top"):
+        arm = arm.cut(zcyl(x, 0, od / 2, H / 2 - w, H / 2 + 2))
+    if faces in ("both", "bottom"):
+        arm = arm.cut(zcyl(x, 0, od / 2, -H / 2 - 2, -H / 2 + w))
+    return arm
 
 
 def pin_clamp(arm, x, r, H):
@@ -159,12 +173,18 @@ def proximal():
 
 
 def distal():
-    """L2 link: O8 pin clamp at elbow -> 688 bearing pockets at TCP. Full height
-    everywhere — the cross level assignment needs no lap joint."""
+    """L2 link: O8 pin clamp at elbow -> 6804 bearing at TCP (single pocket,
+    outer face). Full height everywhere — the cross level assignment needs no
+    lap joint. The TCP boss is O40 around a hollow O20 spindle so a miniature
+    air cylinder can run THROUGH the TCP axis (cup on-axis = immune to the
+    platform's free spin). The plane-A distal is this same part flipped about
+    its long axis, which puts its pocket on the bottom face — bearings land in
+    the OUTER faces for maximum span."""
     b = cq.Workplane("YZ").polyline(i_pts(20, 30, 3.0, 3.5)).close().extrude(CFG.l2_mm)
     b = b.union(cq.Workplane("XY").workplane(offset=-15).circle(12).extrude(30))
-    b = b.union(cq.Workplane("XY").workplane(offset=-15).moveTo(CFG.l2_mm, 0).circle(12).extrude(30))
-    return brg_pocket(pin_clamp(b, 0, 12, 30), CFG.l2_mm, 12, 30)
+    b = b.union(cq.Workplane("XY").workplane(offset=-15).moveTo(CFG.l2_mm, 0).circle(20).extrude(30))
+    return brg_pocket(pin_clamp(b, 0, 12, 30), CFG.l2_mm, 20, 30,
+                      od=TCP_BRG_OD, w=TCP_BRG_W, thru=SPINDLE_OD / 2 + 0.5, faces="top")
 
 
 def shoulder_shaft():
@@ -285,13 +305,30 @@ P.append((prox.rotate((0, 0, 0), (0, 0, 1), jt.right_deg).translate((HX, 0, PLAN
           (0.80, 0.82, 0.84), "proximal_R_planeB"))
 P.append((dist.rotate((0, 0, 0), (0, 0, 1), dLa).translate((eL[0], eL[1], PLANE_B)),
           (0.68, 0.72, 0.76), "distal_L_planeB"))
-P.append((dist.rotate((0, 0, 0), (0, 0, 1), dRa).translate((eR[0], eR[1], PLANE_A)),
-          (0.68, 0.72, 0.76), "distal_R_planeA"))
+# Same part flipped about its long axis -> TCP bearing pocket faces DOWN, so
+# the two bearings sit in the outer faces of the stacked bosses (max span).
+P.append((dist.rotate((0, 0, 0), (1, 0, 0), 180).rotate((0, 0, 0), (0, 0, 1), dRa)
+          .translate((eR[0], eR[1], PLANE_A)), (0.68, 0.72, 0.76), "distal_R_planeA"))
 P.append((zcyl(eL[0], eL[1], 4, 111, 176), (0.5, 0.5, 0.52), "elbow_pin_L_65mm"))
 P.append((zcyl(eR[0], eR[1], 4, 111, 176), (0.5, 0.5, 0.52), "elbow_pin_R_65mm"))
-P.append((zcyl(0, 250, 4, 95, 181), (0.5, 0.5, 0.52), "tcp_pin"))
-P.append((ring(14, 8.2, 5).translate((0, 250, 141)), (0.5, 0.5, 0.52), "tcp_spacer_5mm"))
-P.append((zcyl(0, 250, 13, 95, 110), (0.75, 0.45, 0.30), "tool_mount_boss"))
+# --- TCP: hollow spindle + through-axis mini air cylinder -------------------
+P.append((ring(TCP_BRG_OD, SPINDLE_OD, TCP_BRG_W).translate((0, 250, 111)),
+          (0.85, 0.68, 0.2), "brg6804_tcp_lower"))
+P.append((ring(TCP_BRG_OD, SPINDLE_OD, TCP_BRG_W).translate((0, 250, 176 - TCP_BRG_W)),
+          (0.85, 0.68, 0.2), "brg6804_tcp_upper"))
+spindle = (zcyl(0, 250, SPINDLE_OD / 2, 107, 182)
+           .union(zcyl(0, 250, 12, 106.5, 111))            # bottom retaining flange
+           .cut(zcyl(0, 250, SPINDLE_ID / 2, 100, 190)))
+P.append((spindle, (0.55, 0.55, 0.58), "tcp_spindle_O20xO16"))
+P.append((ring(28, SPINDLE_OD + 0.2, 8).translate((0, 250, 176.5)),
+          (0.5, 0.5, 0.52), "tcp_collar"))
+cyl = (zcyl(0, 250, CYL_BARREL_OD / 2, 128, 190)           # barrel (ports up top)
+       .union(zcyl(0, 250, 4, 122, 128))                   # nose
+       .union(zcyl(0, 250, 2, 70, 122)))                   # rod, extended
+P.append((cyl, (0.42, 0.44, 0.5), "air_cyl_ISO6432_O10"))
+P.append((cq.Workplane("XY").workplane(offset=58).moveTo(0, 250).circle(9)
+          .workplane(offset=10).moveTo(0, 250).circle(3).loft(),
+          (0.75, 0.45, 0.30), "vacuum_cup"))
 
 assy = Assembly()
 for s, c, n in P:
@@ -355,7 +392,8 @@ paint("base_front.png", lambda p: (p[0], -p[2]), lambda p: -p[1], (1560, 760), 1
       np.array([-0.25, -0.75, 0.55]), np.array([0.15, -1.0, 0.25]))
 near_tcp = lambda t: sum(np.linalg.norm(t[j][:2] - np.array([0.0, 250.0])) < 240 for j in range(3)) == 3
 paint("tcp_closeup.png", iso, lambda p: p[0] + p[1] + p[2], (1240, 780), 2.4,
-      "TCP - nested distal ends (cross planes)",
-      ["distal L (plane B) stacks over distal R (plane A): shared O8 pin, 5mm spacer, tool boss below"],
+      "TCP - through-axis air cylinder in a hollow spindle",
+      ["O20/O16 spindle rides 2x 6804 in the stacked bosses' outer faces; mini cylinder drops through,",
+       "cup on the joint axis (immune to platform spin); barrel + port stay accessible above the collar"],
       np.array([-0.3, -0.5, 0.81]), np.array([0.75, 0.7, 1.2]), keep=near_tcp)
 print("previews written to docs/cad/")

@@ -40,7 +40,8 @@ shoulder shaft's long D-flat; the distals are the same part.
 | Distal (L2=230) | I 30×20, fl 3.0 / web 3.5 — Ø8 split clamp at elbow (slit into the bore, 2× M3 pinch bolts), 688 pockets at TCP. ~174 g Al / 65 g PA12 |
 | Shoulder shafts | Ø25 h6 × 180, one D-flat z109–178 (serves both clamp heights) |
 | Shoulder bearings | 4× **7005 angular-contact** (25×47×12), back-to-back pair per shaft, light preload |
-| Elbow / TCP bearings | 688-2RS (8×16×5) in the pockets; Ø8 pins (elbow pins 65 mm) |
+| Elbow bearings | 688-2RS (8×16×5) in the proximal elbow pockets; Ø8 × 65 mm pins |
+| TCP joint | Hollow spindle Ø20 OD / Ø16 bore in **2× 6804-2RS (20×32×7)** — one in each distal's outer face for max span. A miniature air cylinder (default ISO 6432 Ø10, Ø15 barrel — set `CYL_BARREL_OD`) drops through the spindle; the cup sits ON the joint axis, immune to the platform's free spin. Barrel + port stay above the collar (single-acting spring-return assumed; for double-acting, use a rear-ported cylinder or shorten the spindle). |
 | Drive | HTD-5M 3:1 — 20T (Ø19 bore, on the motor) → 60T (Ø25 bore); belt **450-5M-15**, C = 120.8 mm, ±4 mm tension slots |
 | Belt planes | left z5–20, right z25–40 (60T pulleys stagger to pass at 80 mm spacing) |
 | Motors | 2× StepperOnline A6M80-750 under the base plate, shafts up, splayed outboard |
