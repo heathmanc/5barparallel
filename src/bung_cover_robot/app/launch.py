@@ -18,7 +18,31 @@ from typing import Optional
 from ..robot.driver import HomingConfig
 from ..robot.fivebar_kinematics import FiveBarConfig, FiveBarKinematics
 from ..robot.workspace import WorkspaceValidator
+from .app_settings import AppSettings
 from .robot_test_controller import RobotTestController, build_dry_run_controller
+
+_CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
+
+
+def _ethercat_connection(config_path: Optional[str | Path]):
+    """Read the persisted EtherCAT interface + drive count for --ethercat.
+
+    The Drives tab saves these to app_settings; --ethercat reuses them so the CLI
+    binds the same NIC (e.g. ``ecat0``) instead of a hardcoded default."""
+    cfg_dir = Path(config_path).parent if config_path else _CONFIG_DIR
+    settings = AppSettings.load(cfg_dir / "app_settings.yaml")
+    ifname = str(settings.get("ethercat_ifname", "") or "").strip()
+    if not ifname:
+        raise RuntimeError(
+            "no EtherCAT interface configured — set it on the Drives tab (or in "
+            "config/app_settings.yaml as 'ethercat_ifname', e.g. ecat0) before "
+            "using --ethercat. Or launch without --ethercat and connect from the "
+            "Drives tab.")
+    try:
+        n_drives = int(settings.get("ethercat_num_drives", 2) or 2)
+    except (TypeError, ValueError):
+        n_drives = 2
+    return ifname, max(1, min(2, n_drives))
 
 
 def build_controller(
@@ -39,10 +63,12 @@ def build_controller(
 
         kin = FiveBarKinematics(config) if config else FiveBarKinematics()
         validator = WorkspaceValidator(kin)
-        if ethercat:  # pragma: no cover - real hardware path (Stage 4)
+        if ethercat:
             from ..ethercat.master import PysoemMaster
 
-            master = PysoemMaster().open()
+            ifname, n_drives = _ethercat_connection(config_path)
+            master = PysoemMaster(  # pragma: no cover - needs real drives + RT
+                ifname=ifname, num_drives=n_drives).open()
         else:
             master = SimulatedEtherCatMaster().open()
         driver = EtherCatRobotDriver(
