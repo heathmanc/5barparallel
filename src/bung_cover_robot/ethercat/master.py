@@ -401,6 +401,9 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
             raise MasterError(
                 f"expected {self._num} EtherCAT slaves, found {found} on {self.ifname}")
         self._slaves = list(m.slaves)[: self._num]
+        # Assign before config_map(): config_map() invokes _configure_slave, which
+        # reaches through self._master.slaves — so the reference must exist already.
+        self._master = m
         for s in self._slaves:
             s.config_func = self._configure_slave      # PDO map + CSP setup per drive
         m.config_map()
@@ -414,8 +417,8 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         m.write_state()
         if m.state_check(pysoem.OP_STATE, 50_000) != pysoem.OP_STATE:
             m.close()
+            self._master = None
             raise MasterError("slaves did not reach OP state")
-        self._master = m
         self._open = True
         self._rt_stop.clear()
         self._rt_thread = threading.Thread(
