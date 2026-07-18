@@ -74,6 +74,9 @@ OD_STATUSWORD = 0x6041
 OD_MODES_OF_OPERATION = 0x6060
 OD_MODES_DISPLAY = 0x6061
 OD_TARGET_POSITION = 0x607A
+OD_PROFILE_VELOCITY = 0x6081
+OD_PROFILE_ACCEL = 0x6083
+OD_PROFILE_DECEL = 0x6084
 OD_POSITION_ACTUAL = 0x6064
 OD_TORQUE_ACTUAL = 0x6077
 OD_HOMING_METHOD = 0x6098
@@ -350,19 +353,30 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         rt_priority: int = 80,
         recv_timeout_us: int = 2000,
         use_dc: bool = False,
+        mode: int = cia402.MODE_CSP,
+        pp_velocity: int = 50_000,
+        pp_accel: int = 200_000,
     ) -> None:
         self.ifname = ifname
         self.cycle_dt_s = cycle_dt_s
         self.rt_priority = rt_priority
         self.recv_timeout_us = recv_timeout_us
+        # Operating mode written to every drive (0x6060). CSP (8) is the production
+        # coordinated-motion mode and needs DC/SYNC0. Profile Position (1) is
+        # asynchronous — no SYNC0, so it avoids the A6 Er741 sync fault — and is
+        # the right choice for single-axis bench jogging (the drive runs its own
+        # trapezoid from pp_velocity / pp_accel, in counts/s and counts/s^2).
+        self.mode = mode
+        self.pp_velocity = pp_velocity
+        self.pp_accel = pp_accel
         # Distributed-clock SYNC0. A time.sleep-paced Python loop cannot phase-lock
-        # to SYNC0, so with DC on the drive faults on a sync error (e.g. A6 Er741).
-        # Default OFF = free-run (SM-synchronous): the drive acts on each PDO as it
-        # arrives — right for a Python master and fine for bench + CSP jogging.
-        # Proper DC-synced CSP is a future production step needing a DC-aware loop.
+        # to SYNC0, so DC is off by default (free-run). Note: CSP *requires* SYNC0,
+        # so CSP+free-run faults the A6 (Er741) — use mode=Profile Position for
+        # bench, or implement DC-synced CSP (use_dc + a DC-aware loop) for production.
         self.use_dc = use_dc
         self._num = num_drives
-        self._drives = [DriveProcessData() for _ in range(num_drives)]
+        self._drives = [DriveProcessData(mode_of_operation=mode)
+                        for _ in range(num_drives)]
         self._master = None
         self._slaves: List[object] = []
         self._open = False
@@ -454,11 +468,16 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
     def _configure_slave(self, slave_pos: int) -> None:
         """Per-drive SDO setup run by pysoem during config_map. The AS715N's native
         fixed PDO map (0x1701 / 0x1B01) already carries what we need, so we don't
-        remap it — we just select CSP over SDO, since mode-of-operation (0x6060) is
-        not a cyclic object in this map. (Verified with scripts/ec_inspect.py; see
-        docs/ethercat_bringup.md §3.)"""
+        remap it — we just select the operating mode over SDO, since 0x6060 is not
+        a cyclic object in this map. In Profile Position we also seed the profile
+        velocity/accel the drive uses for its internal trapezoid. (Verified with
+        scripts/ec_inspect.py; see docs/ethercat_bringup.md §3/§5c.)"""
         s = self._master.slaves[slave_pos]
-        s.sdo_write(OD_MODES_OF_OPERATION, 0, bytes([cia402.MODE_CSP]))
+        s.sdo_write(OD_MODES_OF_OPERATION, 0, bytes([self.mode & 0xFF]))
+        if self.mode == cia402.MODE_PROFILE_POSITION:
+            s.sdo_write(OD_PROFILE_VELOCITY, 0, struct.pack("<I", self.pp_velocity))
+            s.sdo_write(OD_PROFILE_ACCEL, 0, struct.pack("<I", self.pp_accel))
+            s.sdo_write(OD_PROFILE_DECEL, 0, struct.pack("<I", self.pp_accel))
 
     # --- real-time loop ---------------------------------------------------- #
     def _rt_loop(self) -> None:
