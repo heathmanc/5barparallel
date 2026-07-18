@@ -19,9 +19,11 @@ Full platform build (RT kernel, NIC, core isolation, cyclictest acceptance) is i
 - Linux with a **PREEMPT_RT** kernel (`uname -v` shows `PREEMPT_RT`). Without it,
   CSP following error will grow under load.
 - A **dedicated Intel NIC** for EtherCAT, wired point-to-point to drive 1's IN
-  port, drive 1 OUT → drive 2 IN. The interface name (reference machine:
-  `enp0s31f6`, `e1000e`) is the `ifname` for `PysoemMaster` and the Drives tab
-  `ethercat_ifname` field. Keep IP traffic on a separate interface (WiFi).
+  port, drive 1 OUT → drive 2 IN. The interface name (reference machine: the
+  I219-V `e1000e` port, MAC-pinned to `ecat0` via a systemd `.link` file — see
+  [`control_pc_setup.md`](control_pc_setup.md) §2) is the `ifname` for
+  `PysoemMaster` and the Drives tab `ethercat_ifname` field. Keep IP traffic on a
+  separate interface (WiFi).
 - Isolate CPU cores for the RT thread (reference machine, 8-core no-HT:
   `isolcpus=6,7 nohz_full=6,7 rcu_nocbs=6,7`), then pin the process; grant
   `CAP_SYS_NICE` (or run the master as root) so `SCHED_FIFO` + `mlockall` take
