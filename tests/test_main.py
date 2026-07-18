@@ -51,6 +51,16 @@ def test_build_controller_backends():
     assert isinstance(build_controller(config_path=None).driver, DryRunRobotDriver)
 
 
+def test_ethercat_without_interface_gives_clear_error(tmp_path):
+    # --ethercat with no configured interface must fail with actionable guidance,
+    # not a hardcoded-eth0 ConnectionError.
+    (tmp_path / "app_settings.yaml").write_text("plc_ip: unused\n")
+    cfg = tmp_path / "robot_config.yaml"
+    cfg.write_text("{}\n")
+    with pytest.raises(RuntimeError, match="ethercat_ifname"):
+        build_controller(config_path=cfg, ethercat=True)
+
+
 def test_build_camera_mock_is_none():
     # mock mode leaves camera to the window (which builds the demo scene)
     assert M.build_camera(M.parse_args([])) is None
