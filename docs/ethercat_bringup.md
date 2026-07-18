@@ -111,22 +111,28 @@ stays in `switch_on_disabled` until you deliberately enable it, so viewing is
 safe with no power-stage interlock in place. Enabling/jogging is *not* safe until
 the stop interlock below exists.
 
-## 5c. Distributed clocks vs free-run (why Er741 happens)
+## 5c. CSP needs DC/SYNC0 — bench uses Profile Position (the Er741 story)
 
-`PysoemMaster` runs **free-run (SM-synchronous)** by default (`use_dc=False`):
-the drive acts on each PDO as it arrives. A `time.sleep`-paced Python RT loop
-**cannot** phase-lock to the DC **SYNC0** hardware pulse, so if DC is enabled the
-drive faults on a sync error the instant it enters OP — on the AS715N this shows
-as **`Er741`**. Free-run avoids that and is correct for bench work and CSP jogging
-(slightly more jitter, which a Python master has regardless).
+**CSP (mode 8) is a synchronous mode: the drive expects a DC `SYNC0` hardware
+pulse every cycle.** A `time.sleep`-paced Python master can't provide a valid
+phase-locked SYNC0, so a drive left in CSP without proper DC faults on a
+**synchronization-signal error** the instant it enters OP — on the AS715N (an
+ANCTL/Leadshine-family drive) that's **`Er741`**. This bites whether DC is
+"configured but SYNC0 never programmed" *or* fully off — CSP wants the pulse.
 
-Proper **DC-synced CSP** (`use_dc=True`) is a *future production* step: it needs
-the RT loop to program SYNC0 (`slave.dc_sync(...)`) and phase-align its sends to
-the DC. Don't enable it until that loop exists — free-run is the right default now.
+So for **single-axis bench** work `PysoemMaster` uses **Profile Position (mode 1)**
+instead (`mode=cia402.MODE_PROFILE_POSITION`, what the Drives tab selects when
+Drives = 1). PP is **asynchronous** — no SYNC0 — so it reaches OP cleanly and jogs
+one axis with the drive running its own trapezoid from `pp_velocity` / `pp_accel`
+(0x6081 / 0x6083-4). Free-run (`use_dc=False`) is fine here because PP doesn't need
+the clock.
 
-> If you *do* see `Er741` (or any sync fault): power-cycle the drive to clear it,
-> confirm the master is free-run, and reconnect. Look the exact code up in the A6
-> servo software's **Fault Dictionary** (or the A6-EC manual) to confirm.
+The assembled **2-drive robot** needs **DC-synced CSP** for coordinated straight
+lines: enable DC and program SYNC0 (`slave.dc_sync(True, cycle_ns)`) with a
+DC-aware RT loop. That's a production step; PP mode covers bench bring-up.
+
+> If you see `Er741`: it's the sync fault. Power-cycle the drive to clear it,
+> confirm you're in **Profile Position** (Drives = 1 bench mode), and reconnect.
 
 ## 6. First-motion checklist (do this once, slowly)
 

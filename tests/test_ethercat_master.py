@@ -75,6 +75,16 @@ def test_run_csp_raises_on_fault():
 
 
 # --- pysoem master (no hardware) -------------------------------------------- #
+def test_pysoem_master_mode_selects_profile_position_for_bench():
+    # Bench single-axis uses Profile Position (async, no SYNC0) to avoid the A6
+    # CSP sync fault; the drive images carry that mode for the display.
+    pp = PysoemMaster(mode=cia402.MODE_PROFILE_POSITION, num_drives=1)
+    assert pp.mode == cia402.MODE_PROFILE_POSITION
+    assert pp.drives[0].mode_of_operation == cia402.MODE_PROFILE_POSITION
+    # Default is CSP (production coordinated motion).
+    assert PysoemMaster().mode == cia402.MODE_CSP
+
+
 def test_pysoem_master_requires_pysoem_or_reports_clearly():
     m = PysoemMaster(ifname="eth-does-not-exist")
     # Without pysoem installed (or without hardware), open() must fail loudly

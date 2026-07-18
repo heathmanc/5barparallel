@@ -270,14 +270,17 @@ class EtherCatTab(QWidget):
         if self.settings is not None:
             self.settings.set("ethercat_ifname", ifname)
             self.settings.set("ethercat_num_drives", n_drives)
+        # Single-axis bench uses Profile Position (async, no SYNC0) to sidestep the
+        # A6 CSP sync fault; the assembled 2-drive robot uses CSP.
+        mode = cia402.MODE_PROFILE_POSITION if n_drives == 1 else cia402.MODE_CSP
         try:
-            master = PysoemMaster(ifname=ifname, num_drives=n_drives,
+            master = PysoemMaster(ifname=ifname, num_drives=n_drives, mode=mode,
                                   cycle_dt_s=self.store.get("cycle_dt_s")).open()
         except MasterError as exc:
             self._status(f"Connect failed: {exc}", theme.DANGER)
             return
         self._adopt(master)  # pragma: no cover - real hardware path
-        bench = "  [single-axis bench]" if n_drives == 1 else ""
+        bench = "  [single-axis bench — Profile Position]" if n_drives == 1 else ""
         self._status(f"Connected — EtherCAT on {ifname}.{bench}", theme.TEXT)
 
     def _on_connect_sim(self) -> None:
