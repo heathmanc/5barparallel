@@ -32,7 +32,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import List, NamedTuple, Sequence, Tuple
 
 from . import cia402
 
@@ -48,41 +48,67 @@ class MasterError(Exception):
 # --------------------------------------------------------------------------- #
 # PDO layout  (pure, testable — no pysoem needed)
 # --------------------------------------------------------------------------- #
-# The A6-EC drives exchange these objects as fixed PDOs. The BYTE ORDER BELOW
-# MUST MATCH the drive's actual PDO assignment (0x1C12/0x1C13 -> 0x1600/0x1A00);
-# confirm/set it over SDO at bring-up (docs/ethercat_bringup.md). Little-endian,
-# packed (no alignment padding):
+# Matches the ANCTL AS715N (StepperOnline A6-EC) *native* fixed PDO map, verified
+# on the bench with scripts/ec_inspect.py. Little-endian, packed:
 #
-#   RxPDO (PC -> drive): Controlword(U16) | Modes(S8) | TargetPosition(S32)
-#   TxPDO (drive -> PC): Statusword(U16)  | ModesDisp(S8) | ActualPosition(S32)
-_RX_FMT = "<HbI"      # controlword, mode, target_position (target packed as U32 two's-comp)
-_TX_FMT = "<HbI"      # statusword, mode_display, actual_position
-RX_SIZE = struct.calcsize(_RX_FMT)   # 7 bytes
-TX_SIZE = struct.calcsize(_TX_FMT)   # 7 bytes
+#   RxPDO 0x1701 (PC->drive, 12 B):
+#       Controlword(0x6040,U16) | TargetPosition(0x607A,S32)
+#       | TouchProbe(0x60B8,U16) | DigitalOutputs(0x60FE:1,U32)
+#   TxPDO 0x1B01 (drive->PC, 28 B):
+#       ErrorCode(0x603F,U16) | Statusword(0x6041,U16) | PositionActual(0x6064,S32)
+#       | TorqueActual(0x6077,S16) | FollowingError(0x60F4,S32)
+#       | TouchProbeStatus(0x60B9,U16) | TouchProbe1(0x60BA,S32)
+#       | TouchProbe2(0x60BC,S32) | DigitalInputs(0x60FD,U32)
+#
+# Mode of operation (0x6060) is NOT cyclic in this map — it's written once over
+# SDO in _configure_slave (the drive powers up in CSP=8). The touch-probe and
+# touch-probe-status words are unused here (packed/ignored as 0).
+_RX_FMT = "<HiHI"        # controlword, target_position, touch_probe, digital_outputs
+_TX_FMT = "<HHihiHiiI"   # errcode, statusword, actual, torque, foll_err, tp_status, tp1, tp2, dig_in
+RX_SIZE = struct.calcsize(_RX_FMT)   # 12 bytes
+TX_SIZE = struct.calcsize(_TX_FMT)   # 28 bytes
 
-# CiA 402 object dictionary indices for the PDO map (documented for bring-up).
+# CiA 402 object dictionary indices (documented for bring-up / SDO access).
 OD_CONTROLWORD = 0x6040
 OD_STATUSWORD = 0x6041
 OD_MODES_OF_OPERATION = 0x6060
 OD_MODES_DISPLAY = 0x6061
 OD_TARGET_POSITION = 0x607A
 OD_POSITION_ACTUAL = 0x6064
+OD_TORQUE_ACTUAL = 0x6077
 OD_HOMING_METHOD = 0x6098
 OD_FOLLOWING_ERROR = 0x60F4
 OD_ERROR_CODE = 0x603F
+OD_DIGITAL_INPUTS = 0x60FD
+OD_DIGITAL_OUTPUTS = 0x60FE
 
 
-def pack_outputs(controlword: int, mode: int, target_position: int) -> bytes:
-    """Pack a drive's RxPDO output image to bytes (target as 32-bit two's comp)."""
-    return struct.pack(_RX_FMT, controlword & 0xFFFF, mode, target_position & 0xFFFFFFFF)
+class DriveInputs(NamedTuple):
+    """Decoded TxPDO fields the app cares about (the touch-probe words are dropped)."""
+
+    statusword: int
+    actual_position: int
+    following_error: int
+    digital_inputs: int
+    error_code: int
+    torque_actual: int
 
 
-def unpack_inputs(data: bytes) -> Tuple[int, int, int]:
-    """Unpack a drive's TxPDO input image -> (statusword, mode_display, actual).
-    Actual position is decoded as signed 32-bit."""
-    sw, mode, actual_u = struct.unpack(_TX_FMT, data[:TX_SIZE])
-    actual = actual_u - (1 << 32) if actual_u >= (1 << 31) else actual_u
-    return sw, mode, actual
+def pack_outputs(controlword: int, target_position: int,
+                 digital_outputs: int = 0, touch_probe: int = 0) -> bytes:
+    """Pack a drive's RxPDO (0x1701) output image to bytes."""
+    return struct.pack(_RX_FMT, controlword & 0xFFFF, int(target_position),
+                       touch_probe & 0xFFFF, digital_outputs & 0xFFFFFFFF)
+
+
+def unpack_inputs(data: bytes) -> DriveInputs:
+    """Unpack a drive's TxPDO (0x1B01) input image. Signed fields (position,
+    following error, torque) come back signed straight from struct."""
+    (errcode, status, actual, torque, foll_err,
+     _tp_status, _tp1, _tp2, dig_in) = struct.unpack(_TX_FMT, data[:TX_SIZE])
+    return DriveInputs(statusword=status, actual_position=actual,
+                       following_error=foll_err, digital_inputs=dig_in,
+                       error_code=errcode, torque_actual=torque)
 
 
 @dataclass
@@ -97,13 +123,17 @@ class DriveProcessData:
     controlword: int = 0
     mode_of_operation: int = cia402.MODE_CSP
     target_position: int = 0
+    digital_outputs: int = 0        # RxPDO 0x60FE:1 (drive DOs — e.g. vacuum, later)
     # inputs
     statusword: int = 0
     mode_display: int = 0
     actual_position: int = 0
+    following_error: int = 0        # TxPDO 0x60F4
+    error_code: int = 0             # TxPDO 0x603F (0 = healthy)
+    torque_actual: int = 0          # TxPDO 0x6077
     # CiA 402 digital inputs (0x60FD): bit0 = negative limit, bit1 = positive
-    # limit, bit2 = home switch. Not in the Stage-4 PDO map yet — add 0x60FD to
-    # the TxPDO at bring-up so the Drives page shows live switch states.
+    # limit, bit2 = home switch. Live in the AS715N TxPDO, so the Drives page
+    # shows real switch states.
     digital_inputs: int = 0
 
 
@@ -409,11 +439,12 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         self._open = False
 
     def _configure_slave(self, slave_pos: int) -> None:
-        """Per-drive SDO setup run by pysoem during config_map: select CSP and map
-        the PDOs. Object indices are documented in docs/ethercat_bringup.md; the
-        exact 0x1C12/0x1C13 assignment may need to match your A6 firmware."""
+        """Per-drive SDO setup run by pysoem during config_map. The AS715N's native
+        fixed PDO map (0x1701 / 0x1B01) already carries what we need, so we don't
+        remap it — we just select CSP over SDO, since mode-of-operation (0x6060) is
+        not a cyclic object in this map. (Verified with scripts/ec_inspect.py; see
+        docs/ethercat_bringup.md §3.)"""
         s = self._master.slaves[slave_pos]
-        # Modes of operation -> CSP (also settable cyclically via the PDO).
         s.sdo_write(OD_MODES_OF_OPERATION, 0, bytes([cia402.MODE_CSP]))
 
     # --- real-time loop ---------------------------------------------------- #
@@ -433,15 +464,21 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                     self._csp_running = False
             # pack outputs -> send -> receive -> unpack inputs
             for pd, s in zip(self._drives, self._slaves):
-                s.output = pack_outputs(pd.controlword, pd.mode_of_operation,
-                                        pd.target_position)
+                s.output = pack_outputs(pd.controlword, pd.target_position,
+                                        pd.digital_outputs)
             self._master.send_processdata()
             wkc = self._master.receive_processdata(self.recv_timeout_us)
             if wkc < len(self._slaves):
                 self._wkc_bad += 1
             for pd, s in zip(self._drives, self._slaves):
-                sw, mode, actual = unpack_inputs(bytes(s.input))
-                pd.statusword, pd.mode_display, pd.actual_position = sw, mode, actual
+                inp = unpack_inputs(bytes(s.input))
+                pd.statusword = inp.statusword
+                pd.actual_position = inp.actual_position
+                pd.following_error = inp.following_error
+                pd.digital_inputs = inp.digital_inputs
+                pd.error_code = inp.error_code
+                pd.torque_actual = inp.torque_actual
+                pd.mode_display = pd.mode_of_operation   # mode isn't cyclic in this map
             if self._faulted():
                 self._fault = True
                 self._csp_running = False
