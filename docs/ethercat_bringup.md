@@ -48,17 +48,32 @@ or moves land at the wrong angle.
 
 ## 3. PDO map (0x1C12 / 0x1C13)
 
-`PysoemMaster` packs/unpacks these fixed images (little-endian, packed):
+**Verified on the bench** (`scripts/ec_inspect.py`): the ANCTL AS715N (the
+StepperOnline A6-EC) ships a fixed native map that `master.py` now matches
+exactly — little-endian, packed:
 
 ```
-RxPDO 0x1600 (PC → drive):  Controlword 0x6040 (U16) | Modes 0x6060 (S8) | TargetPosition 0x607A (S32)
-TxPDO 0x1A00 (drive → PC):  Statusword  0x6041 (U16) | ModesDisp 0x6061 (S8) | PositionActual 0x6064 (S32)
+RxPDO 0x1701 (PC → drive, 12 B):
+  Controlword 0x6040 (U16) | TargetPosition 0x607A (S32)
+  | TouchProbe 0x60B8 (U16) | DigitalOutputs 0x60FE:1 (U32)
+TxPDO 0x1B01 (drive → PC, 28 B):
+  ErrorCode 0x603F (U16) | Statusword 0x6041 (U16) | PositionActual 0x6064 (S32)
+  | TorqueActual 0x6077 (S16) | FollowingError 0x60F4 (S32)
+  | TouchProbeStatus 0x60B9 (U16) | TouchProbe1 0x60BA (S32)
+  | TouchProbe2 0x60BC (S32) | DigitalInputs 0x60FD (U32)
 ```
 
-Confirm the drive's actual assignment matches this order and width. If your A6
-firmware ships a different default PDO, either re-map it in `_configure_slave()`
-(SDO writes to 0x1C12/0x1C13 + the 0x1600/0x1A00 entries) or adjust `_RX_FMT` /
-`_TX_FMT`. `tests/test_ethercat_master.py` checks the pack/unpack is self-consistent.
+Notes:
+
+- **Mode of operation (0x6060) is not cyclic** in this map, so `_configure_slave()`
+  writes CSP (8) once over SDO. The drive already powers up in CSP.
+- The map hands us **following error** and **digital inputs (0x60FD)** for free —
+  the Drives page shows real switch states and following error — plus a **digital
+  output (0x60FE:1)** reserved for the vacuum later.
+- The touch-probe words are carried but unused (packed/ignored as 0).
+- If a future drive ships a *different* default PDO, re-verify with
+  `scripts/ec_inspect.py` and adjust `_RX_FMT`/`_TX_FMT`.
+  `tests/test_ethercat_master.py` pins the pack/unpack layout.
 
 ## 4. Homing
 

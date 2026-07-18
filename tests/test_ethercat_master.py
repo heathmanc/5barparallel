@@ -1,5 +1,7 @@
 """EtherCAT PDO pack/unpack + run_csp streaming (the parts testable off-HW)."""
 
+import struct
+
 import pytest
 
 from bung_cover_robot.ethercat import cia402
@@ -14,23 +16,34 @@ from bung_cover_robot.ethercat.master import (
 )
 
 
-# --- PDO layout ------------------------------------------------------------- #
-def test_pack_outputs_size_and_roundtrip():
-    data = pack_outputs(cia402.CW_ENABLE_OPERATION, cia402.MODE_CSP, 123456)
-    assert len(data) == RX_SIZE == 7
-    # the input image has the same layout; unpack recovers the fields
-    sw, mode, actual = unpack_inputs(data)
-    assert sw == cia402.CW_ENABLE_OPERATION
-    assert mode == cia402.MODE_CSP
-    assert actual == 123456
+# --- PDO layout (ANCTL AS715N native map: RxPDO 0x1701 12B / TxPDO 0x1B01 28B) - #
+def test_pack_outputs_size_and_fields():
+    data = pack_outputs(cia402.CW_ENABLE_OPERATION, 123456, digital_outputs=0)
+    assert len(data) == RX_SIZE == 12
+    cw, target, _tp, _do = struct.unpack("<HiHI", data)
+    assert cw == cia402.CW_ENABLE_OPERATION
+    assert target == 123456
 
 
-def test_unpack_decodes_negative_position():
-    # a negative actual position must come back signed
-    data = pack_outputs(0, cia402.MODE_CSP, -5000 & 0xFFFFFFFF)
-    _, _, actual = unpack_inputs(data)
-    assert actual == -5000
-    assert TX_SIZE == 7
+def test_pack_outputs_encodes_negative_target_signed():
+    data = pack_outputs(0, -5000)
+    _cw, target, _tp, _do = struct.unpack("<HiHI", data)
+    assert target == -5000
+
+
+def test_unpack_inputs_decodes_txpdo_fields():
+    # Build a 0x1B01 image: errcode, status, actual, torque, foll_err, tp_status,
+    # tp1, tp2, dig_in — signed fields must come back signed.
+    status = cia402.SW_OPERATION_ENABLED | cia402.SW_VOLTAGE_ENABLED
+    img = struct.pack("<HHihiHiiI", 0, status, -5000, 12, -3, 0, 0, 0, 0b101)
+    assert len(img) == TX_SIZE == 28
+    inp = unpack_inputs(img)
+    assert inp.statusword == status
+    assert inp.actual_position == -5000
+    assert inp.following_error == -3
+    assert inp.torque_actual == 12
+    assert inp.digital_inputs == 0b101
+    assert inp.error_code == 0
 
 
 # --- run_csp on the simulator ----------------------------------------------- #
