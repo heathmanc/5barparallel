@@ -14,9 +14,9 @@ are the statusword, the mode display, and the actual position.
     machine and, in CSP, follow the streamed target position. Used by tests and
     the ``--sim-ec`` backend.
   * ``PysoemMaster`` — the real master over ``pysoem`` (Stage 4): a free-running
-    real-time thread owns the cyclic PDO exchange and the CSP setpoint streaming,
-    synchronized to the EtherCAT distributed clock. BENCH-UNTESTED — it needs the
-    actual A6-EC drives and a PREEMPT_RT kernel; see docs/ethercat_bringup.md.
+    real-time thread owns the cyclic PDO exchange and the CSP setpoint streaming.
+    Runs free-run (SM-synchronous) by default; distributed-clock SYNC0 is opt-in
+    (``use_dc``) and needs a DC-aware loop. See docs/ethercat_bringup.md.
 
 ``run_csp`` is the streaming primitive: give it the per-cycle (left, right) drive
 targets and it plays them out one per PDO cycle. The simulator runs it
@@ -332,7 +332,7 @@ def set_realtime(priority: int = 80) -> bool:
 class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
     """Real EtherCAT master over pysoem. BENCH-UNTESTED — validate on hardware.
 
-    A background real-time thread owns the whole cyclic exchange: every DC cycle
+    A background real-time thread owns the whole cyclic exchange: every cycle
     it packs each drive's output image, ``send_processdata`` / ``receive_processdata``,
     and unpacks the inputs back. The main thread only mutates the drive images
     (controlword / target) and reads status; ``run_csp`` loads a setpoint array
@@ -349,11 +349,18 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         num_drives: int = 2,
         rt_priority: int = 80,
         recv_timeout_us: int = 2000,
+        use_dc: bool = False,
     ) -> None:
         self.ifname = ifname
         self.cycle_dt_s = cycle_dt_s
         self.rt_priority = rt_priority
         self.recv_timeout_us = recv_timeout_us
+        # Distributed-clock SYNC0. A time.sleep-paced Python loop cannot phase-lock
+        # to SYNC0, so with DC on the drive faults on a sync error (e.g. A6 Er741).
+        # Default OFF = free-run (SM-synchronous): the drive acts on each PDO as it
+        # arrives — right for a Python master and fine for bench + CSP jogging.
+        # Proper DC-synced CSP is a future production step needing a DC-aware loop.
+        self.use_dc = use_dc
         self._num = num_drives
         self._drives = [DriveProcessData() for _ in range(num_drives)]
         self._master = None
@@ -407,8 +414,11 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         for s in self._slaves:
             s.config_func = self._configure_slave      # PDO map + CSP setup per drive
         m.config_map()
-        if m.config_dc():                              # distributed clocks
-            logger.info("EtherCAT DC configured")
+        if self.use_dc:                                # distributed clocks (SYNC0)
+            if m.config_dc():
+                logger.info("EtherCAT DC configured")
+        else:
+            logger.info("EtherCAT DC disabled — free-run (SM-synchronous)")
         # SAFE_OP -> OP; OP requires processdata already flowing, so prime it.
         m.state_check(pysoem.SAFEOP_STATE, 50_000)
         m.send_processdata()
