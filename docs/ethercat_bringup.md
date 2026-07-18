@@ -80,8 +80,22 @@ Notes:
 CiA 402 homing mode (mode 6): `home()` puts both drives in Homing mode and sets
 the start bit; the drive runs its own homing method to the switch and zeros its
 position there. The recorded `home_angles` (from `robot_config.yaml`) map that
-zero to the shoulder angle. Because the A6 encoder is **absolute**, the datum
-survives a disable — no re-home after every enable (unlike the old steppers).
+zero to the shoulder angle.
+
+**Encoder type matters (drive param C00.07).** Set it to match the motor:
+
+- **Single-turn absolute** (current bench motors): the datum survives a *disable*
+  (drive stays powered), so no re-home on a mid-session enable. But a full
+  **power-off** loses the multi-turn count — with the 3:1 reduction the drive
+  then only knows the shoulder angle modulo 120°, so **re-home after every power
+  cycle**.
+- **Multi-turn absolute** (battery-backed): the revolution count survives
+  power-off too, so the datum is truly persistent — home once, ever.
+
+Either way the software requires a home on each program launch (`is_referenced`
+starts `False`), so start-up is safe; the difference is only whether a routine
+power cycle forces an operator re-home. If C00.07 is left on **incremental**, the
+drive ignores the absolute datum entirely and homes from wherever it powered up.
 
 ## 5. Safety (hardware, not software)
 
