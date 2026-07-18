@@ -12,7 +12,7 @@ OS-and-platform half of bring-up; the fieldbus/drive half lives in
 | RAM | 16 GB (ample; vision + pysoem + HMI don't approach it) |
 | OS | **Debian 13 (Trixie)**, 13.6, **XFCE on X11** |
 | Kernel | `6.12.94+deb13-rt-amd64` — mainline **PREEMPT_RT** (`linux-image-rt-amd64`) |
-| EtherCAT NIC | Intel **I219-V**, PCI `00:1f.6`, iface **`enp0s31f6`**, driver `e1000e` |
+| EtherCAT NIC | Intel **I219-V**, PCI `00:1f.6`, driver `e1000e`, pinned to iface **`ecat0`** |
 | LAN / dev | onboard **WiFi** (EtherCAT and IP traffic stay on separate interfaces) |
 
 The **no-HT** part is a real advantage: every core is standalone, so an isolated
@@ -36,19 +36,42 @@ uname -v                                   # contains PREEMPT_RT
 
 ## 2. NIC — dedicate the Intel port to EtherCAT
 
-Find the interface and confirm the driver:
+Find the interface and confirm the driver. **Don't trust a predicted name** — the
+kernel may use the onboard-index form (`eno2`) or the PCI-path form
+(`enp0s31f6`), and it can flip across BIOS/kernel updates. Ask the tools:
 
 ```
 lspci | grep -i ethernet                   # Intel I219-V at 00:1f.6
-ip -br link                                # its iface name (Z390: enp0s31f6)
-ethtool -i enp0s31f6                        # driver: e1000e
+ip -br link                                # the real name (here it was eno2)
+sudo .venv/bin/python -c "import pysoem; [print(a.name) for a in pysoem.find_adapters()]"
+ethtool -i eno2                            # driver: e1000e, bus-info 0000:00:1f.6
 ```
 
-`enp0s31f6` is the `ifname` for `PysoemMaster` and the value for the Drives tab
-`ethercat_ifname` field. Bring it **up with no IP** (EtherCAT doesn't use IP):
+**Pin it to a stable name** so `ethercat_ifname` can never drift. A systemd
+`.link` file renames the port by MAC to `ecat0` for good:
 
 ```
-sudo ip link set enp0s31f6 up
+cat /sys/class/net/eno2/address            # the port's MAC, e.g. 04:92:26:bd:5f:fe
+sudo tee /etc/systemd/network/10-ecat.link >/dev/null <<'EOF'
+[Match]
+MACAddress=04:92:26:bd:5f:fe
+
+[Link]
+Name=ecat0
+EOF
+sudo update-initramfs -u
+sudo reboot
+# after reboot:
+ip -br link                                # now: ecat0 ...
+ethtool -i ecat0                           # driver: e1000e, 00:1f.6
+```
+
+`ecat0` is the `ifname` for `PysoemMaster` and the value for the Drives tab
+`ethercat_ifname` field. It self-documents the port's job and survives renaming.
+Bring it **up with no IP** (EtherCAT doesn't use IP):
+
+```
+sudo ip link set ecat0 up
 ```
 
 No `dhclient`/static IP on this interface. Get WiFi associated and internet
@@ -152,9 +175,28 @@ pip install pysoem                         # in the project venv
 ```
 
 Keep the whole Python stack (pysoem, PySide6, OpenCV, PyYAML) in a **venv** so an
-`apt` upgrade never disturbs the robot's interpreter. Grant the master
-`CAP_SYS_NICE` (or run as root) so `SCHED_FIFO` + `mlockall` take — `set_realtime()`
-logs a warning if they don't.
+`apt` upgrade never disturbs the robot's interpreter.
+
+pysoem opens a **raw L2 socket** and the RT thread needs scheduling privilege, so
+the master needs two capabilities:
+
+- **`CAP_NET_RAW`** — to open the EtherCAT socket on `ecat0`.
+- **`CAP_SYS_NICE`** — so `SCHED_FIFO` + `mlockall` take (`set_realtime()` logs a
+  warning if they don't).
+
+Quickest for the bench is to run under sudo with the venv's interpreter
+(`sudo .venv/bin/python …`) — plain `sudo python` uses system Python and won't
+find pysoem. To run the HMI as your normal user without sudo, grant the caps to a
+**copied** venv interpreter (`python -m venv --copies .venv`, then
+`sudo setcap cap_net_raw,cap_sys_nice+eip .venv/bin/python3`) so the caps scope to
+the venv, not the shared system interpreter.
+
+Empty-bus sanity check (returns 0 slaves, no exception = the NIC/socket are good):
+
+```
+sudo ip link set ecat0 up
+sudo .venv/bin/python -c "import pysoem; m=pysoem.Master(); m.open('ecat0'); print(m.config_init()); m.close()"
+```
 
 ---
 
