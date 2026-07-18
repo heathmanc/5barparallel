@@ -82,13 +82,20 @@ sudo apt install linux-cpupower
 sudo cpupower frequency-set -g performance
 ```
 
-**BIOS settings** (K-series board exposes them all):
+**BIOS settings** (K-series board exposes them all). These are the biggest lever
+for the latency *tail* — kernel flags can't substitute, because the spikes come
+from firmware the OS can't see:
 
 - Disable **C-states** (or cap at C1) — deep-sleep wakeup is the classic tail spike.
-- Disable **SpeedStep / EIST** and set a fixed core frequency.
 - Disable **Turbo Boost** — its frequency transitions add jitter; determinism
   beats a few % peak clock here.
+- Disable **SpeedStep / EIST** and set a fixed core frequency.
 - Leave hyperthreading alone — the 9700K has none.
+
+> **Measured on the reference machine:** with **Turbo on + C-states auto** the
+> isolated-core Max was **~84 µs**; turning **Turbo off + C-states disabled**
+> dropped it to **~47 µs** — the tail was firmware, exactly what these settings
+> fix. Do the BIOS pass; don't try to chase it in software.
 
 ## 4. Validate with cyclictest
 
@@ -105,17 +112,37 @@ sudo cyclictest -m -S -p 90 -i 200 -d 0 -D 30s
 **RT-core soak (pin to isolated core 6, run long, under load):**
 
 ```
-sudo cyclictest -m -S -p 90 -i 200 -d 0 -a 6 -t 1 -D 30m
+sudo cyclictest -m -p 90 -i 200 -d 0 -a 6 -t 1 -D 30m
 ```
 
-Run a build or the vision stack *while it runs* — that's the realistic worst case.
+> Do **not** combine `-S` (SMP mode) with `-a`/`-t` — `-S` forces one thread per
+> CPU and *ignores* the affinity flags ("ignored due to smp mode"). Drop `-S` to
+> pin a single thread to one core.
+
+Load cores 0–5 *while it runs* — that's the realistic worst case:
+
+```
+stress-ng --cpu 6 --io 2 --timeout 30m       # or run the vision stack + a build
+```
+
+(Heavy `--vm` memory load is pessimistic: it contends on the shared memory
+controller/L3, which isolation does **not** cover, so it overstates the real
+vision workload. `--cpu` load or the actual vision stack is the honest test.)
+
+If you want to confirm whether a residual spike is firmware, `hwlatdetect
+--duration=5m` measures SMI/hardware latency directly — what cyclictest attributes
+but can't fix.
 
 **Acceptance:** worst-case **Max** must sit well under the CSP cycle time
-(`cycle_dt_s` = **2 ms** by default). Comfortable = Max under ~100 µs; this
-machine measured **~28 µs Max at loadavg 6.7 with no isolation**, i.e. **1.4% of
-a 2 ms cycle** — isolation only tightens the tail from there. If a long soak stays
-double-digit µs, the platform is not the limiting factor and you could shorten the
-cycle (1 ms / 500 µs) if ever needed.
+(`cycle_dt_s` = **2 ms** by default). Comfortable = Max under ~100 µs.
+
+**Reference machine result:** ~28–53 µs unisolated (30 s windows) → **84 µs**
+once soaked with Turbo/C-states still on → **47 µs** after the BIOS pass (Turbo
+off, C-states disabled) on isolated core 6. That's **~2.4% of a 2 ms cycle** —
+signed off. A longer soak always finds a higher Max than a short one, so judge on
+the long isolated run under load, not a 30 s window. With this much headroom the
+platform is not the limiting factor; the cycle could be shortened (1 ms / 500 µs)
+if ever needed.
 
 ## 5. pysoem
 
