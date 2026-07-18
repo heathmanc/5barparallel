@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -152,11 +153,23 @@ class EtherCatTab(QWidget):
         if self.settings is not None:
             self.if_edit.setText(str(self.settings.get("ethercat_ifname", "") or ""))
         g.addWidget(self.if_edit, 0, 1)
+        g.addWidget(QLabel("Drives on bus"), 1, 0)
+        self.drives_spin = QSpinBox()
+        self.drives_spin.setRange(1, 2)
+        try:
+            n = int(self.settings.get("ethercat_num_drives", 2)) if self.settings else 2
+        except (TypeError, ValueError):
+            n = 2
+        self.drives_spin.setValue(max(1, min(2, n)))
+        self.drives_spin.setToolTip(
+            "Drives expected on the EtherCAT chain. Set 1 for single-axis bench "
+            "bring-up; 2 for the assembled robot.")
+        g.addWidget(self.drives_spin, 1, 1, Qt.AlignmentFlag.AlignLeft)
         note = QLabel("EtherCAT is not IP-based: the master owns this interface "
                       "directly (raw frames). Dedicate a NIC to the drive chain.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{theme.TEXT_DIM};")
-        g.addWidget(note, 1, 0, 1, 2)
+        g.addWidget(note, 2, 0, 1, 2)
         row = QHBoxLayout()
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self._on_connect_real)
@@ -170,7 +183,7 @@ class EtherCatTab(QWidget):
         self.conn_label = QLabel("DISCONNECTED")
         self.conn_label.setStyleSheet(f"color:{theme.TEXT_DIM}; font-weight:600;")
         row.addWidget(self.conn_label)
-        g.addLayout(row, 2, 0, 1, 2)
+        g.addLayout(row, 3, 0, 1, 2)
         return box
 
     def _build_drive_panel(self, title: str):
@@ -253,19 +266,23 @@ class EtherCatTab(QWidget):
         if not ifname:
             self._status("Enter the EtherCAT network interface first.", theme.WARN)
             return
+        n_drives = self.drives_spin.value()
         if self.settings is not None:
             self.settings.set("ethercat_ifname", ifname)
+            self.settings.set("ethercat_num_drives", n_drives)
         try:
-            master = PysoemMaster(ifname=ifname,
+            master = PysoemMaster(ifname=ifname, num_drives=n_drives,
                                   cycle_dt_s=self.store.get("cycle_dt_s")).open()
         except MasterError as exc:
             self._status(f"Connect failed: {exc}", theme.DANGER)
             return
         self._adopt(master)  # pragma: no cover - real hardware path
-        self._status(f"Connected — EtherCAT on {ifname}.", theme.TEXT)
+        bench = "  [single-axis bench]" if n_drives == 1 else ""
+        self._status(f"Connected — EtherCAT on {ifname}.{bench}", theme.TEXT)
 
     def _on_connect_sim(self) -> None:
         self._adopt(SimulatedEtherCatMaster(
+            num_drives=self.drives_spin.value(),
             cycle_dt_s=self.store.get("cycle_dt_s")).open())
         self._status("Connected to the SIMULATED drive network.", theme.TEXT)
 
@@ -330,8 +347,19 @@ class EtherCatTab(QWidget):
             return
         drv = self.controller.driver
         ppd = self.controller.kin.config.pulses_per_degree
-        for (panel, w), d, home in zip(self._drive_panels, snap,
-                                       getattr(drv, "_home_counts", [0, 0])):
+        home_counts = getattr(drv, "_home_counts", [0, 0])
+        for i, (panel, w) in enumerate(self._drive_panels):
+            if i >= len(snap):
+                # Fewer drives on the bus than panels (single-axis bench): mark absent.
+                w["state"].setText("state: — (not on bus)")
+                w["state"].setStyleSheet(f"color:{theme.TEXT_DIM}; font-weight:600;")
+                w["counts"].setText("encoder: —")
+                w["detail"].setText("—")
+                for _src, _mask, bit in w["bits"]:
+                    bit.set_active(False)
+                continue
+            d = snap[i]
+            home = home_counts[i] if i < len(home_counts) else 0
             state = cia402.decode_state(d["sw"])
             w["state"].setText(f"state: {state.value.replace('_', ' ').upper()}")
             w["state"].setStyleSheet(

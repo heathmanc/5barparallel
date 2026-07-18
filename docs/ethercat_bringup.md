@@ -85,13 +85,31 @@ survives a disable — no re-home after every enable (unlike the old steppers).
 
 ## 5. Safety (hardware, not software)
 
-- **E-stop → safety relay → both drives' STO.** STO removes torque independently
-  of the master, so an E-stop stops motion even if the PC hangs. This is the
-  primary stop; the software `stop()` (hold position) is secondary.
+- **E-stop → hardwired torque removal, independent of the PC.** Two cases:
+  - *Drive has STO:* E-stop → safety relay → both drives' STO. STO removes torque
+    directly. Preferred.
+  - *Drive has no STO* (the bench AS715N): E-stop → safety relay → **contactor
+    that drops the drives' motor/bus power**. Slower than STO (the axis brakes /
+    coasts as the bus collapses) but still a real stop that works even if the PC
+    or drive firmware hangs. **Do not enable or jog a drive until this exists and
+    is tested**, and keep the motor mechanically secured on the bench.
+  Either way, this hardwired stop is primary; the software `stop()` (hold
+  position) is secondary.
 - Home/limit switches → the drives' digital inputs (used by the homing method and
   as hard travel limits).
 - Vacuum + blow-off → a drive DO or a small EtherCAT I/O slice; wire the vacuum
   confirwith switch back to a DI so the cycle can verify a cover is held.
+
+## 5b. Single-axis bench bring-up
+
+For bench work on **one drive** before the robot is assembled, set **Drives on
+bus = 1** in the Drives-tab Connection box (persisted as `ethercat_num_drives`).
+The master then expects a single slave, the Drives page shows that axis live
+(state, encoder counts, following error, I/O, parameter table) and marks the
+absent second panel "not on bus". **Connecting produces no torque** — the drive
+stays in `switch_on_disabled` until you deliberately enable it, so viewing is
+safe with no power-stage interlock in place. Enabling/jogging is *not* safe until
+the stop interlock below exists.
 
 ## 6. First-motion checklist (do this once, slowly)
 

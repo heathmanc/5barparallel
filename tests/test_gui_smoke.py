@@ -855,3 +855,24 @@ def test_drives_tab_sim_connect_params_and_disconnect(qapp, tmp_path):
     tab._on_disconnect()
     assert isinstance(ctrl.driver, DryRunRobotDriver)
     tab._stop_poller()
+
+
+def test_drives_tab_single_axis_bench_mode(qapp, tmp_path):
+    """Drives=1 (single-axis bench): the master has one drive, panel 0 shows it
+    live, and the absent second panel is marked 'not on bus' — no stale data."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab.drives_spin.setValue(1)
+    tab._on_connect_sim()
+    assert ctrl.driver.master.num_drives == 1
+    snap = [dict(sw=d.statusword, mode=d.mode_display, act=d.actual_position,
+                 tgt=d.target_position, di=d.digital_inputs)
+            for d in ctrl.driver.master.drives]
+    assert len(snap) == 1
+    tab._on_snapshot(snap)
+    assert "counts" in tab._drive_panels[0][1]["counts"].text()
+    assert "not on bus" in tab._drive_panels[1][1]["state"].text()
+    tab._on_disconnect()
+    tab._stop_poller()
