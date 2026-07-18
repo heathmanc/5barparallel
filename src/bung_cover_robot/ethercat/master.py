@@ -433,16 +433,29 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                 logger.info("EtherCAT DC configured")
         else:
             logger.info("EtherCAT DC disabled — free-run (SM-synchronous)")
-        # SAFE_OP -> OP; OP requires processdata already flowing, so prime it.
+        # SAFE_OP -> OP. The drive's sync-manager watchdog needs *continuous*
+        # process data, so pump frames while requesting OP and waiting for it. A
+        # single prime isn't enough: with no sustained data the drive refuses/drops
+        # OP and faults on a sync error (e.g. A6 Er741). Seed valid (disabled)
+        # outputs first so the frames carry a sane controlword.
         m.state_check(pysoem.SAFEOP_STATE, 50_000)
-        m.send_processdata()
-        m.receive_processdata(self.recv_timeout_us)
+        for pd, s in zip(self._drives, self._slaves):
+            s.output = pack_outputs(pd.controlword, pd.target_position, pd.digital_outputs)
         m.state = pysoem.OP_STATE
         m.write_state()
-        if m.state_check(pysoem.OP_STATE, 50_000) != pysoem.OP_STATE:
+        reached = False
+        for _ in range(200):                       # ~0.4 s of pumping at cycle_dt_s
+            m.send_processdata()
+            m.receive_processdata(self.recv_timeout_us)
+            if m.state_check(pysoem.OP_STATE, 2_000) == pysoem.OP_STATE:
+                reached = True
+                break
+            time.sleep(self.cycle_dt_s)
+        if not reached:
+            als = self._al_status(m)
             m.close()
             self._master = None
-            raise MasterError("slaves did not reach OP state")
+            raise MasterError(f"slaves did not reach OP state ({als})")
         self._open = True
         self._rt_stop.clear()
         self._rt_thread = threading.Thread(
@@ -464,6 +477,20 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                 self._master.close()
                 self._master = None
         self._open = False
+
+    @staticmethod
+    def _al_status(m) -> str:
+        """Per-slave EtherCAT state + AL status code, for OP-transition failures
+        (e.g. 0x001B = sync-manager watchdog). Best-effort — never raises."""
+        try:
+            m.read_state()
+            parts = []
+            for i, s in enumerate(m.slaves):
+                code = getattr(s, "al_status_code", 0)
+                parts.append(f"slave{i}: state=0x{s.state:02X} al=0x{code:04X}")
+            return "; ".join(parts) if parts else "no slaves"
+        except Exception as exc:  # noqa: BLE001
+            return f"AL status unavailable: {exc}"
 
     def _configure_slave(self, slave_pos: int) -> None:
         """Per-drive SDO setup run by pysoem during config_map. The AS715N's native
