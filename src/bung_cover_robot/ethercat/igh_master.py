@@ -91,6 +91,12 @@ class IgHMaster(EtherCatMaster):
         if not os.path.exists(_SHM_PATH) and self.auto_launch:
             self._launch_daemon()
         self._map_shm()
+        running_n = self._u32(_H_NUM)
+        if running_n != self._num:
+            self.close()
+            raise MasterError(
+                f"a daemon is already running with {running_n} drive(s), not "
+                f"{self._num}. Stop it first: sudo pkill ec_master_daemon")
         # wait for the daemon to reach OP (INIT->PREOP->SAFEOP->OP + DC settle)
         deadline = time.perf_counter() + self.op_timeout_s
         while self._u32(_H_OP) != 1:
