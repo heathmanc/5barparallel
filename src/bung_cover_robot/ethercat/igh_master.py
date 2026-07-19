@@ -55,6 +55,11 @@ class IgHMaster(EtherCatMaster):
     out one entry per DC cycle.
     """
 
+    #: seconds to wait for the daemon to climb INIT->...->OP (DC settle takes ~5 s)
+    op_timeout_s = 20.0
+    #: where the auto-launched daemon's stderr goes, for diagnostics
+    log_path = "/tmp/bcr_ec_daemon.log"
+
     def __init__(self, num_drives: int = 2, cycle_dt_s: float = 0.002,
                  auto_launch: bool = True,
                  daemon_path: str | Path = _DEFAULT_DAEMON) -> None:
@@ -64,6 +69,7 @@ class IgHMaster(EtherCatMaster):
         self.auto_launch = auto_launch
         self.daemon_path = Path(daemon_path)
         self._proc: subprocess.Popen | None = None
+        self._logf = None
         self._mm: mmap.mmap | None = None
         self._open = False
 
@@ -80,14 +86,15 @@ class IgHMaster(EtherCatMaster):
         if not os.path.exists(_SHM_PATH) and self.auto_launch:
             self._launch_daemon()
         self._map_shm()
-        # wait for the daemon to reach OP
-        deadline = time.perf_counter() + 5.0
+        # wait for the daemon to reach OP (INIT->PREOP->SAFEOP->OP + DC settle)
+        deadline = time.perf_counter() + self.op_timeout_s
         while self._u32(_H_OP) != 1:
             if time.perf_counter() > deadline:
                 self.close()
-                raise MasterError("IgH daemon did not reach OP within 5 s "
-                                  "(check the daemon's stderr / drive power)")
-            time.sleep(0.02)
+                raise MasterError(
+                    f"IgH daemon did not reach OP within {self.op_timeout_s:.0f} s "
+                    f"(see {self.log_path}; check drive power / the ethercat master)")
+            time.sleep(0.05)
         self._open = True
         self.exchange()
         return self
@@ -106,6 +113,12 @@ class IgHMaster(EtherCatMaster):
             except Exception:  # noqa: BLE001
                 self._proc.terminate()
             self._proc = None
+        if self._logf not in (None, subprocess.DEVNULL):
+            try:
+                self._logf.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._logf = None
         self._open = False
 
     def exchange(self) -> None:
@@ -159,7 +172,11 @@ class IgHMaster(EtherCatMaster):
                "--cycle-ns", str(int(round(self.cycle_dt_s * 1e9)))]
         if os.geteuid() != 0:
             cmd = ["sudo"] + cmd
-        self._proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
+        try:
+            self._logf = open(self.log_path, "w")
+        except OSError:
+            self._logf = subprocess.DEVNULL
+        self._proc = subprocess.Popen(cmd, stderr=self._logf, stdout=self._logf)
         deadline = time.perf_counter() + 5.0
         while not os.path.exists(_SHM_PATH):
             if self._proc.poll() is not None:
