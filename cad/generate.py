@@ -20,10 +20,11 @@ Layout (this revision):
     block pushes the carriage away from the shoulder to tension. Fins, bolts,
     and block all stay outside the belt corridor and inside the deck outline
     (all asserted in params.check_layout()).
-  * Each 7005 angular-contact bearing is trapped by a printed cap on the top
-    AND bottom face of its plate, bolted together on a Ø58 BCD (cap OD Ø72 so
-    the bolt holes keep a full >=1.5d rim) — the outer race is captured both
-    ways; shaft preload is by shim + locknut.
+  * Each 7005 angular-contact bearing sits FLUSH in its plate (both plates are
+    12 thick = the race width) and is trapped by a flat printed Ø72 cap on the
+    top AND bottom face, bolted together on a Ø58 BCD (>=1.5d rim). Each cap's
+    0.3 mm proud pad presses the outer race only — the disc seats on the
+    plate, so the clamp crush is defined. Shaft preload is by shim + locknut.
   * The elbow pins get a bottom head and a top retaining clip so no link (the
     flipped lower distal included) can walk off its pin.
 
@@ -193,21 +194,23 @@ def ring(od, idd, w):
 
 
 def bearing_cap():
-    """Printed retainer that traps a 7005 outer race. Bolts on a Ø58 BCD; a
-    Ø46.6 register spigot centers it in the Ø47 bore; the spigot's outer ring
-    (Ø41-46.6) presses ONLY the outer race, relieved inboard to clear the
-    rotating inner race; Ø27 shaft clearance. Built spigot-up; flip for the top
-    cap so top+bottom bolt together through the plate and capture the race both
-    ways. OD Ø72 so the Ø58-BCD bolt holes keep a full >=1.5d edge margin
-    (the old Ø62 disc let the holes break out of the rim)."""
+    """Printed retainer that traps a 7005 outer race. A FLAT Ø72 disc that
+    bolts down onto the plate face (4x M4 on the Ø58 BCD, >=1.5d rim — the old
+    Ø62 disc let the holes break out), with a 0.3 mm PROUD annular pad
+    (Ø41-46.5) that lands on the outer race only. The race is flush with the
+    plate faces (plate thickness = race width = 12), so torquing the bolts
+    seats the disc on the plate and the pad gives a small, defined clamp crush
+    on the race — no register spigot, no cap standing off the plate. Built
+    pad-up; flip for the top cap so top+bottom bolt together through the
+    plate and capture the race both ways."""
     cap = zcyl(0, 0, CAP_OD / 2, 0, CAP_T)                    # Ø72 disc
-    cap = cap.union(zcyl(0, 0, CAP_SPIGOT / 2, CAP_T, CAP_T + 2))
-    cap = cap.cut(zcyl(0, 0, CAP_SHAFT_CLR / 2, -1, CAP_T + 3))
-    cap = cap.cut(zcyl(0, 0, CAP_RELIEF / 2, CAP_T + 0.5, CAP_T + 3))
+    cap = cap.union(zcyl(0, 0, CAP_PAD_OD / 2, CAP_T, CAP_T + CAP_PAD_H)
+                    .cut(zcyl(0, 0, CAP_PAD_ID / 2, CAP_T - 1, CAP_T + 1)))
+    cap = cap.cut(zcyl(0, 0, CAP_SHAFT_CLR / 2, -1, CAP_T + 1))
     for a in (45, 135, 225, 315):
         bx = CAP_BCD / 2 * math.cos(math.radians(a))
         by = CAP_BCD / 2 * math.sin(math.radians(a))
-        cap = cap.cut(zcyl(bx, by, CAP_BOLT_D / 2, -1, CAP_T + 3))
+        cap = cap.cut(zcyl(bx, by, CAP_BOLT_D / 2, -1, CAP_T + 1))
     return cap
 
 
@@ -377,9 +380,12 @@ P.append((deck, (0.35, 0.5, 0.65), "bottom_deck"))
 # --- top plate (small, over the shoulders) --------------------------------- #
 plate_t = (cq.Workplane("XY").box(TOPP_W, TOPP_H, TOPP_T).edges("|Z").fillet(8)
            .faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47)
-           .faces(">Z").workplane().pushPoints([(sx + bx, by) for sx in (HX, -HX) for bx, by in BCD]).hole(4.4)
+           .faces(">Z").workplane().pushPoints([(sx + bx, by) for sx in (HX, -HX) for bx, by in BCD]).hole(CAP_BOLT_D)
            .faces(">Z").workplane().pushPoints(STANDOFF_PTS).hole(5.2))
-P.append((plate_t.translate((0, 0, TOPP_Z0)), (0.35, 0.5, 0.65), "top_plate"))
+# box() is CENTERED on z — offset by half the thickness so the plate's BOTTOM
+# face lands on the standoff tops (it used to sit 5 mm sunk into them).
+P.append((plate_t.translate((0, 0, TOPP_Z0 + TOPP_T / 2)), (0.35, 0.5, 0.65),
+          "top_plate"))
 
 standoffs = cq.Workplane("XY")
 for px, py in STANDOFF_PTS:
@@ -403,12 +409,11 @@ for sgn, tag, zp, mp_top in ((-1, "L", ZL, MPL_TOP), (1, "R", ZR, MPR_TOP)):
     P.append((ring(47, 25, BRG_W).translate((sx, 0, DECK_Z0)), (0.85, 0.68, 0.2), f"brg7005_lo_{tag}"))
     P.append((ring(47, 25, BRG_W).translate((sx, 0, TOPP_Z0 + TOPP_T / 2 - BRG_W / 2)),
               (0.85, 0.68, 0.2), f"brg7005_up_{tag}"))
-    # lower: bottom cap under the deck (spigot up), top cap on the deck (spigot down)
-    P.append((cap.translate((sx, 0, DECK_Z0 - CAP_T - 2)), (0.5, 0.5, 0.52), f"brgcap_lo_bot_{tag}"))
+    # caps seat FLUSH on the plate faces (pad-up below, flipped pad-down above)
+    P.append((cap.translate((sx, 0, DECK_Z0 - CAP_T)), (0.5, 0.5, 0.52), f"brgcap_lo_bot_{tag}"))
     P.append((cap.rotate((0, 0, 0), (1, 0, 0), 180).translate((sx, 0, DECK_Z1 + CAP_T)),
               (0.5, 0.5, 0.52), f"brgcap_lo_top_{tag}"))
-    # upper: caps on both faces of the top plate
-    P.append((cap.translate((sx, 0, TOPP_Z0 - CAP_T - 2)), (0.5, 0.5, 0.52), f"brgcap_up_bot_{tag}"))
+    P.append((cap.translate((sx, 0, TOPP_Z0 - CAP_T)), (0.5, 0.5, 0.52), f"brgcap_up_bot_{tag}"))
     P.append((cap.rotate((0, 0, 0), (1, 0, 0), 180).translate((sx, 0, TOPP_Z1 + CAP_T)),
               (0.5, 0.5, 0.52), f"brgcap_up_top_{tag}"))
     # shaft preload locknut, on top of the upper top cap (clears the arm above)
