@@ -134,8 +134,7 @@ class IgHMaster(EtherCatMaster):
             self._reader = None
         if self._mm is not None:
             try:
-                if self._proc is not None:
-                    self._u32_set(_H_STOP, 1)        # ask the daemon to exit
+                self._u32_set(_H_STOP, 1)            # always ask the daemon to exit
             finally:
                 self._mm.close()
                 self._mm = None

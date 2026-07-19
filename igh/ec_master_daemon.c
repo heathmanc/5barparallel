@@ -217,7 +217,27 @@ int main(int argc, char **argv)
                     shm->drive[0].actual_position, shm->wkc_bad);
     }
 
-    fprintf(stderr, "ec_master_daemon: stopping\n");
+    /* Safety: command the drives disabled (controlword=0 -> torque off) for a
+     * short burst, with DC maintained, before tearing down — so a stop via the
+     * flag, SIGTERM, or pkill leaves the drives disabled cleanly rather than
+     * relying on the drive's comms-loss watchdog. */
+    fprintf(stderr, "ec_master_daemon: stopping (commanding disable)\n");
+    for (int i = 0; i < 50; i++) {
+        wk.tv_nsec += cycle_ns;
+        while (wk.tv_nsec >= NSEC_PER_SEC) { wk.tv_nsec -= NSEC_PER_SEC; wk.tv_sec++; }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wk, NULL);
+        ecrt_master_receive(master);
+        ecrt_domain_process(domain);
+        for (int d = 0; d < num_drives; d++) {
+            EC_WRITE_U16(pd + off[d].ctrl, 0x0000);       /* disable voltage */
+            EC_WRITE_S32(pd + off[d].target, shm->drive[d].actual_position);
+        }
+        ecrt_master_application_time(master, TS2NS(wk));
+        ecrt_master_sync_reference_clock(master);
+        ecrt_master_sync_slave_clocks(master);
+        ecrt_domain_queue(domain);
+        ecrt_master_send(master);
+    }
     ecrt_master_deactivate(master);
     ecrt_release_master(master);
     munmap(shm, sizeof(*shm));

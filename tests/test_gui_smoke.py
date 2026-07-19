@@ -899,3 +899,23 @@ def test_drives_tab_bench_jog(qapp, tmp_path):
     assert ctrl.driver.master.drives[0].actual_position == 0
     tab._on_disconnect()
     tab._stop_poller()
+
+
+def test_drives_tab_disconnect_disables_and_stops_master(qapp, tmp_path):
+    """Safety: disconnect (and app close) must disable the drive and close the
+    master, not just swap drivers."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+    from bung_cover_robot.robot.driver import DryRunRobotDriver
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab.drives_spin.setValue(1)
+    tab._on_connect_sim()
+    tab._on_enable()
+    master = ctrl.driver.master
+    assert ctrl.driver.is_enabled
+    tab._on_disconnect()
+    assert not master.is_open                       # master/daemon stopped
+    assert isinstance(ctrl.driver, DryRunRobotDriver)
+    # shutdown() is safe to call again (idempotent, not connected)
+    tab.shutdown()

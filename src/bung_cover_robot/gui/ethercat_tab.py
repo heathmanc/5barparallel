@@ -403,14 +403,35 @@ class EtherCatTab(QWidget):
         except Exception as exc:  # noqa: BLE001
             self._status(f"Reset failed: {exc}", theme.DANGER)
 
-    def _on_disconnect(self) -> None:
+    def _stop_jog(self) -> None:
+        if self._jog_worker is not None:
+            self._jog_worker.wait(3000)
+            self._jog_worker = None
+
+    def _teardown_master(self) -> None:
+        """Disable the drives (torque off) and stop the master/daemon. Safe to
+        call when not connected."""
+        self._stop_jog()
         self._stop_poller()
+        drv = self._ec_driver()
+        if drv is not None:
+            try:
+                drv.close()            # disable() then master.close() (stops daemon)
+            except Exception:  # noqa: BLE001 - shutdown must not raise
+                pass
+
+    def shutdown(self) -> None:
+        """App is closing: always leave the drives disabled and the master down."""
+        self._teardown_master()
+
+    def _on_disconnect(self) -> None:
+        self._teardown_master()
         from ..robot.driver import DryRunRobotDriver
 
         self.controller.set_driver(DryRunRobotDriver())
         self.connectionChanged.emit()
         self.refresh()
-        self._status("Disconnected — back on the dry-run driver.", theme.TEXT)
+        self._status("Disconnected — drives disabled, master stopped.", theme.TEXT)
 
     # --- parameters -----------------------------------------------------------
     def _read_table(self) -> bool:
@@ -509,8 +530,5 @@ class EtherCatTab(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self._jog_worker is not None:
-            self._jog_worker.wait(3000)
-            self._jog_worker = None
-        self._stop_poller()
+        self._teardown_master()          # disable drives + stop the daemon
         super().closeEvent(event)
