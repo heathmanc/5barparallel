@@ -34,26 +34,26 @@ sudo depmod
 ```
 
 Point the master at the EtherCAT NIC (the MAC we pinned to `ecat0`) with the
-generic driver:
+generic driver. **The config lives under the install prefix**, i.e.
+`/opt/etherlab/etc/sysconfig/ethercat` (NOT `/etc/sysconfig`):
 
 ```bash
-sudo mkdir -p /etc/sysconfig
-sudo tee /etc/sysconfig/ethercat >/dev/null <<'EOF'
+sudo tee /opt/etherlab/etc/sysconfig/ethercat >/dev/null <<'EOF'
 MASTER0_DEVICE="04:92:26:bd:5f:fe"
 DEVICE_MODULES="generic"
 EOF
-# install the systemd unit shipped by IgH (path may vary by version):
-sudo cp /opt/etherlab/etc/init.d/ethercat /etc/init.d/ 2>/dev/null || true
-sudo cp script/ethercat.service /etc/systemd/system/ 2>/dev/null || true
 ```
 
-Load + start, and confirm the drive enumerates:
+The `ethercat` tool is at `/opt/etherlab/bin` — add it to PATH. Take the EtherCAT
+port off the IP stack (IgH's generic driver talks to the MAC directly), then start
+the master and confirm the drive enumerates:
 
 ```bash
-sudo modprobe ec_master
-sudo /etc/init.d/ethercat start   # or: sudo systemctl start ethercat
-ethercat master                    # master should be "up"
-ethercat slaves                    # <-- must list the AS715N (0x00400000 / 0x0715)
+export PATH=$PATH:/opt/etherlab/bin
+sudo ip link set ecat0 down
+sudo /etc/init.d/ethercat start    # (install put the script at /etc/init.d/ethercat)
+sudo ethercat master               # master "up", link "UP"
+sudo ethercat slaves               # <-- must list the AS715N (0x00400000 / 0x0715)
 ```
 
 > **`ethercat slaves` showing the drive is milestone #1.** If it doesn't appear:
