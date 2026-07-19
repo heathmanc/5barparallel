@@ -119,6 +119,10 @@ class IgHMaster(EtherCatMaster):
             try:
                 for d, pd in enumerate(self._drives):
                     self._read_inputs(d, pd)
+                    # Never command a stale target: while the drive is disabled,
+                    # hold target = actual so enabling can't jump (drive Er87.1).
+                    if not cia402.is_operation_enabled(pd.statusword):
+                        pd.target_position = pd.actual_position
             except Exception:  # noqa: BLE001 - display refresh must not die
                 pass
             self._reader_stop.wait(0.01)     # ~100 Hz
