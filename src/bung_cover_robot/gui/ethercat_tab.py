@@ -697,9 +697,11 @@ class EtherCatTab(QWidget):
             self._refresh_custom_table()
         except Exception:  # noqa: BLE001 - readback is best-effort
             pass
-        self._status("Applied to drives + read back: "
-                     + "; ".join(notes[:2]) + (" …" if len(notes) > 2 else ""),
-                     theme.TEXT)
+        # The last note is the "N written, M unchanged" summary; lead with it.
+        summary = notes[-1] if notes else "nothing to apply"
+        failed = [n for n in notes if "FAILED" in n]
+        msg = f"Applied: {summary}" + (f" — {len(failed)} failed" if failed else "")
+        self._status(msg, theme.DANGER if failed else theme.TEXT)
 
     # --- live status ----------------------------------------------------------
     def _start_poller(self) -> None:

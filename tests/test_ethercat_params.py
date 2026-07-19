@@ -70,6 +70,29 @@ def test_apply_writes_both_drives_and_reads_back(tmp_path):
     assert rb["machine_stiffness"] == [17, 17]
 
 
+def test_apply_only_writes_changed_parameters(tmp_path):
+    """Apply reads each object first and writes only what differs. A second
+    Apply with no edits must write nothing."""
+    from bung_cover_robot.ethercat import EtherCatRobotDriver, SimulatedEtherCatMaster
+
+    class CountingSim(SimulatedEtherCatMaster):
+        writes = 0
+
+        def sdo_write(self, index, sub, value, size=4, drive=0):
+            type(self).writes += 1
+            super().sdo_write(index, sub, value, size=size, drive=drive)
+
+    drv = EtherCatRobotDriver(CountingSim(num_drives=2).open())
+    s = ParameterStore.load(tmp_path / "p.yaml")
+    notes1 = s.apply(drv)
+    first = CountingSim.writes
+    assert first > 0 and notes1[-1].endswith("unchanged")
+    assert "0 written" not in notes1[-1]              # first pass wrote things
+    notes2 = s.apply(drv)                              # nothing changed
+    assert CountingSim.writes == first                # no new writes
+    assert notes2[-1].startswith("0 written")
+
+
 def test_parse_drive_address_forms():
     # Cxx.NN maps to 0x20xx : NN+1 (the A6-EC rule, e.g. C0A.08 -> 0x200A:09).
     assert parse_drive_address("C0A.08") == (0x200A, 0x09)
