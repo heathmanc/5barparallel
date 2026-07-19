@@ -205,6 +205,12 @@ int main(int argc, char **argv)
         ec_master_state_t ms; ecrt_master_state(master, &ms);
         shm->op = (ms.al_states & 0x08) ? 1 : 0;
         shm->cycle_count++;
+
+        /* ~1 Hz heartbeat so the daemon can be verified standalone */
+        if (shm->cycle_count % (uint64_t)(NSEC_PER_SEC / cycle_ns) == 0)
+            fprintf(stderr, "  op=%u  d0 status=0x%04X err=0x%04X pos=%d  wkc_bad=%u\n",
+                    shm->op, shm->drive[0].statusword, shm->drive[0].error_code,
+                    shm->drive[0].actual_position, shm->wkc_bad);
     }
 
     fprintf(stderr, "ec_master_daemon: stopping\n");
