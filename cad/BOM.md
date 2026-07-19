@@ -63,7 +63,7 @@ are not in this list.
 | 8 | M6 × 18 SHCS (Ø90 BCD) | Motor flange → carriage, fitted **from below** through the flange into M6 inserts/taps in the carriage (full 8 mm engagement) |
 | 2 | M6 × 40 jackscrew + jam nut | Belt tensioner — through the cradle's block, tip pushes the carriage pad |
 | 8 | M5 × 16 SHCS + washer | Carriage lock bolts — through the ±6 mm slots into M5 inserts in the cradle frame (4 per side) |
-| 12 | M5 × 20 SHCS | Cradle fin flanges → deck underside (3 per fin, deck holes Ø5.2 thru, 10-deep flange with full M5 heat-set) |
+| 12 | M5 × 20 SHCS | Cradle fin walls → deck underside (3 per fin, deck holes Ø5.2 thru, full-depth heat-sets in the solid walls) |
 | 16 | M4 × 30 SHCS + nyloc + washers | Bearing caps — 4 per bore, top+bottom cap bolted **through** each plate on the Ø58 BCD (grip 22 mm at both plates) |
 | 2 | M25×1.5 shaft locknut (or KM5 + tab washer) | Shoulder bearing preload, above the upper cap |
 | 4 | M5 × 75 SHCS + nyloc | Top plate → standoff → deck through-bolts (one per standoff, grip 64 mm — the Ø12 standoffs are clearance-bored Ø5.2, no threads) |

@@ -34,7 +34,7 @@ from params import (A0, B1, BED, BELT_LEN, BLK_A0, BLK_A1, BLK_B, BLK_H, C,
                     CAP_BCD, CAP_BOLT_D, CAP_OD, CAP_SHAFT_CLR,
                     CAP_PAD_H, CAP_PAD_ID, CAP_PAD_OD, CAP_T, CAR_L, CAR_W, DECK_PTS, DECK_T, DECK_Z0,
                     FIN_A_INN, FIN_A_OUT, FIN_BI, FIN_BO, FIN_BOLT_B,
-                    FIN_BOLTS_INN, FIN_BOLTS_OUT, FLG_A_INN, FLG_B, FLG_T,
+                    FIN_BOLTS_INN, FIN_BOLTS_OUT, FLG_B,
                     FR_A, FR_B, FR_T, HX, JACK_Z_OFF, LOCK_A, LOCK_B,
                     MOTOR_BCD, MOTOR_BORE, MP_T, MPL_TOP, MPR_TOP, MXx, MXy,
                     PD_DRV, PD_MOT, PILOT_D, PW, SLOT_L, SLOT_W, SPLAY,
@@ -293,13 +293,14 @@ def sheet_cradle(pdf):
         notes=(
             "ONE printed part per motor = window frame + two shear fins + jack block. The RH part is the "
             "exact MIRROR of the LH drawn here; fin/wall heights differ per the table (belt planes stagger).",
-            "Fin top flanges (10 thick - full-depth M5 heat-set) bolt UP into the deck underside: 3x M5 per fin, "
-            "M5x20 SHCS from the deck top (deck holes 5.2 THRU; ~8 mm engagement).",
+            "Fins are SOLID full-depth walls (9.5 thick, guide face to frame edge). They bolt UP into the deck "
+            "underside: 3x M5 full-depth heat-set per fin, M5x20 SHCS from the deck top (deck holes 5.2 THRU).",
             "The four M5 positions in the frame border take the carriage lock bolts — fit heat-set inserts.",
             "M6 heat-set (or tapped) jackscrew boss in the block; jam nut on the screw against the block face.",
             "The chamfered corner keeps the two cradles clear of the machine centreline — do not 'square it up'.",
-            f"FIN WALLS: inner faces at b = ±{52.5:g}, {5:g} thick, rising to the deck underside. Outboard wall "
-            f"spans a = -66..+62, inboard a = -66..+30. The inner faces guide the carriage edges (0.5 nominal).",
+            f"FIN WALLS: solid, inner (guide) faces at b = ±{FIN_BI:g}, {FLG_B - FIN_BI:g} thick out to the frame "
+            f"edge. Outboard wall spans a = -66..+{FIN_A_OUT:g}, inboard a = -66..+{FIN_A_INN:g}. Inner faces "
+            "guide the carriage edges (0.5 nominal).",
             "Install the belt around both pulleys BEFORE bolting the deck down (the fins close the corridor).",
         ))
     v = View(ax, 118, 158, 0.9)
@@ -308,10 +309,8 @@ def sheet_cradle(pdf):
     v.rect(-WIN_A, -WIN_B, WIN_A, WIN_B)
     # fins (top flanges seen from above; walls dashed underneath)
     v.rect(-FR_A, FIN_BI, FIN_A_OUT, FLG_B)
-    v.line([(-FR_A, FIN_BO), (FIN_A_OUT, FIN_BO)], lw=THIN, ls="--")
-    v.rect(-FR_A, -FLG_B, FLG_A_INN, -FIN_BI)
-    v.line([(-FR_A, -FIN_BO), (FIN_A_INN, -FIN_BO)], lw=THIN, ls="--")
-    v.line([(FLG_A_INN, -FIN_BI), (FIN_A_INN, -FIN_BI)], lw=THIN, ls="--")
+    v.rect(-FR_A, -FLG_B, FIN_A_INN, -FIN_BI)
+    v.dimv(FIN_BI, FLG_B, -FR_A - 8, -4, f"{FLG_B - FIN_BI:g}", size=6)
     for a in FIN_BOLTS_OUT:
         v.circle(a, FIN_BOLT_B, 4.2); v.cmark(a, FIN_BOLT_B, 3.5)
     for a in FIN_BOLTS_INN:
@@ -356,7 +355,7 @@ def sheet_cradle(pdf):
     e.text(0, DECK_Z0 + 7, "DECK UNDERSIDE z52", size=6)
     e.dimv(ftL - FR_T, DECK_Z0, -FR_A, -10, "H (table)")
     e.dimv(ftL - FR_T, ftL, FR_A, 10, f"{FR_T:g}")
-    e.dimv(DECK_Z0 - FLG_T, DECK_Z0, -FR_A, -26, f"{FLG_T:g} FLANGE")
+    
     e.leader(BLK_A1, ftL + JACK_Z_OFF, -56, -34,
              f"M6 AXIS +{JACK_Z_OFF:g} ABOVE FRAME TOP", ha="right")
     e.dimv(ftL, ftL + BLK_H, BLK_A1, 30, f"{BLK_H:g} BLOCK")
@@ -376,9 +375,9 @@ def sheet_cradle(pdf):
     hy = ty - 30
     ax.text(262, hy, "HOLE TABLE (a, b) — LH part; RH = same with b negated",
             fontsize=7, weight="bold", color=INK)
-    hrows = ([("H%d" % (i + 1), a, FIN_BOLT_B, "M5 heat-set, fin flange (outboard)")
+    hrows = ([("H%d" % (i + 1), a, FIN_BOLT_B, "M5 heat-set, fin wall (outboard)")
               for i, a in enumerate(FIN_BOLTS_OUT)]
-             + [("H%d" % (i + 4), a, -FIN_BOLT_B, "M5 heat-set, fin flange (inboard)")
+             + [("H%d" % (i + 4), a, -FIN_BOLT_B, "M5 heat-set, fin wall (inboard)")
                 for i, a in enumerate(FIN_BOLTS_INN)]
              + [("L%d" % (i + 1), sa, sb, "M5 heat-set, carriage lock")
                 for i, (sa, sb) in enumerate(
@@ -547,7 +546,7 @@ def sheet_assy(pdf):
     hw = [
         ("16x", "M4 x 30 SHCS + nyloc + washers", "bearing cap pairs, 4 per bore stack (grip 22 both plates)"),
         ("8x", "M5 x 16 SHCS + washer", "carriage lock bolts (4 per side)"),
-        ("12x", "M5 x 20 SHCS", "fin flanges -> deck underside (10-deep flange, full heat-set)"),
+        ("12x", "M5 x 20 SHCS", "fin walls -> deck underside (full-depth heat-sets)"),
         ("4x", "M5 x 75 SHCS + nyloc", "top plate -> standoff -> deck through-bolt (one per standoff, grip 64)"),
         ("8x", "M6 x 18 SHCS", "motor flange -> carriage from below (full 8 mm engagement)"),
         ("2x", "M6 x 40 jackscrew + jam nut", "tensioner"),
