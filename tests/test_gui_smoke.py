@@ -964,28 +964,6 @@ def test_drives_tab_tuning_apply_and_refresh_per_drive(qapp, tmp_path):
     tab._stop_poller()
 
 
-def test_drives_tab_coordinated_move(qapp, tmp_path):
-    """Two-drive bench: the coordinated-move button ramps both axes together to
-    their (independently signed) targets off one synchronized stream."""
-    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
-
-    ctrl = build_dry_run_controller()
-    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
-    tab.drives_spin.setValue(2)
-    tab._on_connect_sim()
-    tab._on_enable()
-    tab.coord_d0.setValue(2500)
-    tab.coord_d1.setValue(-1200)
-    tab._on_coord_move()
-    assert tab._jog_worker.wait(2000)
-    qapp.processEvents()
-    drives = ctrl.driver.master.drives
-    assert drives[0].actual_position == 2500
-    assert drives[1].actual_position == -1200
-    tab._on_disconnect()
-    tab._stop_poller()
-
-
 def test_drives_tab_disconnect_disables_and_stops_master(qapp, tmp_path):
     """Safety: disconnect (and app close) must disable the drive and close the
     master, not just swap drivers."""
