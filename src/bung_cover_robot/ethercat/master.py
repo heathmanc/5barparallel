@@ -269,6 +269,9 @@ class SimulatedEtherCatMaster(EtherCatMaster):
         self.cycle_dt_s = cycle_dt_s
         self._drives = [DriveProcessData() for _ in range(num_drives)]
         self._sim = [_SimDrive() for _ in range(num_drives)]
+        # In-memory SDO dictionary per drive so Apply/Refresh round-trip in sim
+        # exactly as they would over the real mailbox (write then read back).
+        self._sdo: List[dict] = [dict() for _ in range(num_drives)]
         self._open = False
 
     @property
@@ -301,6 +304,18 @@ class SimulatedEtherCatMaster(EtherCatMaster):
             self.exchange()
             if self._faulted():
                 raise MasterError("drive faulted during CSP stream")
+
+    # --- SDO (in-memory, mirrors the real per-drive mailbox) --------------- #
+    def sdo_write(self, index: int, sub: int, value: int, size: int = 4,
+                  drive: int = 0) -> None:
+        if not 0 <= drive < len(self._drives):
+            raise MasterError(f"no such drive {drive}")
+        self._sdo[drive][(index, sub)] = int(value)
+
+    def sdo_read(self, index: int, sub: int, size: int = 4, drive: int = 0) -> int:
+        if not 0 <= drive < len(self._drives):
+            raise MasterError(f"no such drive {drive}")
+        return int(self._sdo[drive].get((index, sub), 0))
 
     # --- test / bench helpers ---------------------------------------------- #
     def inject_fault(self, drive: int = 0) -> None:

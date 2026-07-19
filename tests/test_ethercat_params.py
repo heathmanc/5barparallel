@@ -45,13 +45,29 @@ def test_trajectory_limits_from_store():
 def test_apply_to_sim_driver_updates_limits():
     from bung_cover_robot.ethercat import EtherCatRobotDriver, SimulatedEtherCatMaster
 
-    drv = EtherCatRobotDriver(SimulatedEtherCatMaster().open())
+    drv = EtherCatRobotDriver(SimulatedEtherCatMaster(num_drives=2).open())
     s = ParameterStore()
     s.set("speed_mm_s", 75.0)
     s.set("position_tol_counts", 9)
     notes = s.apply(drv)
     assert drv.limits.speed_mm_s == 75.0 and drv.position_tol_counts == 9
-    assert any("sim master" in n for n in notes)  # honest about no SDO channel
+    assert notes[0].startswith("motion limits")
+
+
+def test_apply_writes_both_drives_and_reads_back(tmp_path):
+    from bung_cover_robot.ethercat import EtherCatRobotDriver, SimulatedEtherCatMaster
+
+    drv = EtherCatRobotDriver(SimulatedEtherCatMaster(num_drives=2).open())
+    s = ParameterStore.load(tmp_path / "p.yaml")   # preloaded tuning params
+    s.set_custom_value("machine_stiffness", 17)
+    s.apply(drv)
+    # both drives got the value over SDO
+    idx, sub = 0x2000, 0x04                          # C00.03 -> 0x2000:(3+1)
+    assert drv.master.sdo_read(idx, sub, drive=0) == 17
+    assert drv.master.sdo_read(idx, sub, drive=1) == 17
+    # read-back surfaces per-drive actuals for the table
+    rb = s.read_custom_from_drives(drv)
+    assert rb["machine_stiffness"] == [17, 17]
 
 
 def test_parse_drive_address_forms():
@@ -79,10 +95,11 @@ def test_custom_parameters_roundtrip_and_apply(tmp_path):
     names = [c.name for c in s2.custom_parameters()]
     assert "rigidity" in names
     assert next(c for c in s2.custom_parameters() if c.name == "rigidity").value == 15
-    # Applies alongside the built-ins; sim master has no SDO channel.
-    drv = EtherCatRobotDriver(SimulatedEtherCatMaster().open())
+    # Applies alongside the built-ins; the sim master now round-trips SDO.
+    drv = EtherCatRobotDriver(SimulatedEtherCatMaster(num_drives=2).open())
     notes = s2.apply(drv)
-    assert any("rigidity" in n and "sim master" in n for n in notes)
+    assert any("rigidity" in n for n in notes)
+    assert drv.master.sdo_read(0x2009, 0x01, drive=0) == 15
     s2.remove_custom("rigidity")
     assert "rigidity" not in [c.name for c in s2.custom_parameters()]
 
