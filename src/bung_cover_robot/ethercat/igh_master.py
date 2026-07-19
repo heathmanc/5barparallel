@@ -191,10 +191,20 @@ class IgHMaster(EtherCatMaster):
         self._u32_set(_H_CSP_START, 1)               # daemon latches + streams
         deadline = time.perf_counter() + n * self.cycle_dt_s + 1.0
         # wait until the daemon finishes playing the buffer (csp_running -> 0)
+        fault_hits = 0
         while self._u32(_H_CSP_RUN) == 1 or self._u32(_H_CSP_START) == 1:
+            # A real fault LATCHES — require it on two consecutive samples so a
+            # single torn/transient statusword read can't abort a good stream.
             if self._faulted():
-                self.exchange()
-                raise MasterError("drive faulted during CSP stream")
+                fault_hits += 1
+                if fault_hits >= 2:
+                    self.exchange()
+                    detail = ", ".join(
+                        f"drive {i}: sw=0x{pd.statusword:04X} err=0x{pd.error_code:04X}"
+                        for i, pd in enumerate(self._drives))
+                    raise MasterError(f"drive faulted during CSP stream ({detail})")
+            else:
+                fault_hits = 0
             if time.perf_counter() > deadline:
                 raise MasterError("CSP stream did not complete in time")
             time.sleep(self.cycle_dt_s)
