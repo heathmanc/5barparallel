@@ -113,6 +113,18 @@ class RobotDriver(ABC):
         degrees. Used when the home pose is re-taught/recomputed. The dry-run
         driver adopts it; a servo driver homes to its switch reference."""
 
+    # --- end-effector I/O (pick tooling) ------------------------------------
+    # The pick head is an air cylinder (plunger) carrying a vacuum cup. The
+    # cycle actuates both through these seams; a driver with no end-effector
+    # I/O leaves them as no-ops. A real servo driver maps them to drive digital
+    # outputs (0x60FE).
+    def set_vacuum(self, on: bool) -> None:
+        """Energize (grip) or vent (release) the vacuum cup. Default no-op."""
+
+    def set_plunger(self, extended: bool) -> None:
+        """Extend the pick air cylinder down onto the part (True) or retract it
+        clear (False). Default no-op."""
+
     @property
     def is_referenced(self) -> bool:
         """True if a home reference is currently established. Default: we know a
@@ -140,6 +152,8 @@ class DryRunRobotDriver(RobotDriver):
         self._angles: Optional[Angles] = None  # unknown until homed/moved
         self._home_angles = home_angles
         self.command_log: List[Angles] = []
+        self.vacuum_on = False
+        self.plunger_extended = False
 
     @property
     def is_enabled(self) -> bool:
@@ -180,3 +194,11 @@ class DryRunRobotDriver(RobotDriver):
 
     def reset(self) -> None:
         logger.info("[dry-run] reset (no fault to clear)")
+
+    def set_vacuum(self, on: bool) -> None:
+        self.vacuum_on = bool(on)
+        logger.info("[dry-run] vacuum %s", "ON" if on else "OFF")
+
+    def set_plunger(self, extended: bool) -> None:
+        self.plunger_extended = bool(extended)
+        logger.info("[dry-run] plunger %s", "DOWN" if extended else "UP")

@@ -24,11 +24,12 @@ a coordinated straight-line move inside ``move_to_angles``).
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
-from ..robot.driver import RobotDriver
+from ..robot.driver import RobotDriver, RobotDriverError
 from ..robot.planner import PickPlaceJob, PlanningError, make_job, sort_holes_along_conveyor
 from ..vision.calibration import HomographyTransform
 from ..vision.camera import Camera, CameraError
@@ -57,27 +58,84 @@ class JobRunner(ABC):
         ...
 
 
+@dataclass(frozen=True)
+class PickSequence:
+    """Timing for the air-cylinder + vacuum pick head.
+
+    The dwells cover the real pneumatics: the cylinder needs a moment to finish
+    extending/retracting, and the vacuum needs a moment to build (grip) or bleed
+    (release). Zero them in tests to keep the sim fast."""
+
+    plunge_dwell_s: float = 0.15    # let the cylinder finish extending/retracting
+    grip_dwell_s: float = 0.20      # let vacuum build before lifting
+    release_dwell_s: float = 0.20   # let the part drop before lifting
+
+
 class DirectJobRunner(JobRunner):
-    """Drive the RobotDriver straight through the pick then the drop pose.
+    """Drive the RobotDriver through a full pick-and-place, actuating the pick
+    head's air cylinder and vacuum along the way.
 
-    The PC owns motion now, so a job is just two coordinated moves. Works for the
-    dry-run driver (instant) and the EtherCAT driver (each ``move_to_angles``
-    plans + streams a coordinated move) with no protocol in between."""
+    The PC owns motion, so each move is one coordinated ``move_to_angles``. The
+    sequence is: travel to the cover, plunge the cylinder onto it, pull vacuum,
+    lift, travel to the hole, plunge, vent the vacuum to release, lift. Works for
+    the dry-run driver (instant, I/O no-ops) and the EtherCAT driver (streamed
+    moves, DO-driven tooling) alike.
 
-    def __init__(self, driver: RobotDriver) -> None:
+    On any error the head is left safe — vacuum vented and cylinder retracted —
+    so a fault mid-move can't strand a cover on the cup or the plunger down."""
+
+    def __init__(self, driver: RobotDriver,
+                 sequence: Optional[PickSequence] = None,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
         self.driver = driver
+        self.sequence = sequence or PickSequence()
+        self._sleep = sleep
         self._id = 0
 
     def run(self, job: PickPlaceJob) -> JobResult:
         self._id += 1
-        self.driver.move_to_angles(job.pick.left_deg, job.pick.right_deg)
-        self.driver.move_to_angles(job.drop.left_deg, job.drop.right_deg)
+        try:
+            # Pick: travel over the cover, plunge, grip, lift.
+            self.driver.move_to_angles(job.pick.left_deg, job.pick.right_deg)
+            self._grip()
+            # Place: travel over the hole, plunge, release, lift.
+            self.driver.move_to_angles(job.drop.left_deg, job.drop.right_deg)
+            self._release()
+        except RobotDriverError as exc:
+            self._make_safe()
+            return JobResult(False, str(exc), self._id)
         return JobResult(True, "ok", self._id)
 
+    def _grip(self) -> None:
+        seq = self.sequence
+        self.driver.set_plunger(True)
+        self._sleep(seq.plunge_dwell_s)
+        self.driver.set_vacuum(True)
+        self._sleep(seq.grip_dwell_s)
+        self.driver.set_plunger(False)
 
-def make_job_runner(driver: RobotDriver) -> JobRunner:
-    """Every driver runs jobs the same way now: move to pick, then to drop."""
-    return DirectJobRunner(driver)
+    def _release(self) -> None:
+        seq = self.sequence
+        self.driver.set_plunger(True)
+        self._sleep(seq.plunge_dwell_s)
+        self.driver.set_vacuum(False)
+        self._sleep(seq.release_dwell_s)
+        self.driver.set_plunger(False)
+
+    def _make_safe(self) -> None:
+        """Best-effort: vent vacuum and retract the cylinder after a failure."""
+        try:
+            self.driver.set_vacuum(False)
+            self.driver.set_plunger(False)
+        except RobotDriverError:
+            pass
+
+
+def make_job_runner(driver: RobotDriver,
+                    sequence: Optional[PickSequence] = None) -> JobRunner:
+    """Every driver runs jobs the same way: travel to the cover, grip, travel to
+    the hole, release — actuating the pick head at each end."""
+    return DirectJobRunner(driver, sequence)
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +284,7 @@ class CycleManager:
         job_runner: Optional[JobRunner] = None,
         config: Optional[CycleConfig] = None,
         target_source: Optional[TargetSource] = None,
+        pick_sequence: Optional[PickSequence] = None,
     ) -> None:
         self.controller = controller
         self.camera = camera
@@ -234,6 +293,7 @@ class CycleManager:
         self.hole_detector = hole_detector or HoleDetector()
         self.cover_detector = cover_detector or CoverDetector()
         self.job_runner = job_runner
+        self.pick_sequence = pick_sequence
         self.config = config or CycleConfig()
         # Where targets come from. Default = the real vision path; pass a
         # ScriptedTargetSource to bypass vision for testing.
@@ -265,7 +325,8 @@ class CycleManager:
         if block is not None:
             return CycleResult(ok=False, reason=block)
 
-        runner = self.job_runner or make_job_runner(self.controller.driver)
+        runner = self.job_runner or make_job_runner(
+            self.controller.driver, self.pick_sequence)
         kin, validator = self.controller.kin, self.controller.validator
 
         # Holes -> ordered drop targets (robot frame), from vision or a bypass.
@@ -343,7 +404,8 @@ class CycleManager:
         block = self._motion_block()
         if block is not None:
             return CycleStep(0, drop_xy, 0, pick_xy, False, block)
-        runner = self.job_runner or make_job_runner(self.controller.driver)
+        runner = self.job_runner or make_job_runner(
+            self.controller.driver, self.pick_sequence)
         try:
             job = make_job(self.controller.kin, self.controller.validator,
                            hole_index=0, cover_id=0, pick_xy=pick_xy, drop_xy=drop_xy)
