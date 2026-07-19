@@ -63,7 +63,30 @@ def test_render_delta_mode_labels_baseline():
     assert "12 error(s)" in out           # only the growth, not the 100 baseline
 
 
+def test_resolve_prefers_explicit_then_env(monkeypatch, tmp_path):
+    fake = tmp_path / "ethercat"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    # an explicit path is honoured even when nothing is on PATH
+    monkeypatch.setattr(ec_crc.shutil, "which", lambda _n: None)
+    assert ec_crc.resolve_ethercat(str(fake)) == str(fake)
+    # else the env var
+    monkeypatch.setenv("ETHERCAT_BIN", str(fake))
+    assert ec_crc.resolve_ethercat(None) == str(fake)
+
+
+def test_resolve_returns_none_when_absent(monkeypatch):
+    monkeypatch.delenv("ETHERCAT_BIN", raising=False)
+    monkeypatch.setattr(ec_crc.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(ec_crc.os.path, "isfile", lambda _p: False)
+    assert ec_crc.resolve_ethercat(None) is None
+
+
 def test_no_cli_returns_guard_code(monkeypatch, capsys):
+    monkeypatch.delenv("ETHERCAT_BIN", raising=False)
     monkeypatch.setattr(ec_crc.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(ec_crc.os.path, "isfile", lambda _p: False)
     assert ec_crc.main([]) == 2
-    assert "ethercat` CLI is not on PATH" in capsys.readouterr().err
+    err = capsys.readouterr().err.lower()
+    assert "ethercat` cli was not found" in err
+    assert "/opt/etherlab/bin/ethercat" in err     # tells them where it usually is

@@ -38,13 +38,38 @@ drive's state, never commands motion.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 import time
 from typing import Dict, List, Optional
 
+# The IgH EtherLab `ethercat` CLI. It rarely sits on a default PATH (it installs
+# under the EtherLab prefix), and `sudo` strips PATH via secure_path — so we
+# auto-discover it and accept an explicit path / env var. Resolved in main().
 ETHERCAT = "ethercat"
+_ETHERCAT_CANDIDATES = (
+    "/opt/etherlab/bin/ethercat",       # this project's build prefix
+    "/usr/local/etherlab/bin/ethercat",
+    "/usr/local/bin/ethercat",
+    "/usr/bin/ethercat",
+)
+
+
+def resolve_ethercat(explicit: Optional[str] = None) -> Optional[str]:
+    """Find the `ethercat` CLI: an explicit path/name, then $ETHERCAT_BIN, then
+    PATH, then the usual EtherLab install locations. Returns None if not found."""
+    for cand in (explicit, os.environ.get("ETHERCAT_BIN")):
+        if cand and (shutil.which(cand) or os.path.isfile(cand)):
+            return cand
+    onpath = shutil.which("ethercat")
+    if onpath:
+        return onpath
+    for path in _ETHERCAT_CANDIDATES:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
 
 # ESC error-counter registers.
 _RX_ERR_BASE = 0x0300       # +2*port, uint16: [15:8] rx error, [7:0] invalid frame
@@ -172,13 +197,27 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="ports to read per slave (default 2: IN + OUT)")
     ap.add_argument("--slaves", type=int, default=None,
                     help="override slave count (default: auto from `ethercat slaves`)")
+    ap.add_argument("--ethercat", metavar="PATH", default=None,
+                    help="path to the IgH `ethercat` CLI (default: auto-discover)")
     args = ap.parse_args(argv)
 
-    if shutil.which(ETHERCAT) is None:
-        print("error: the IgH `ethercat` CLI is not on PATH. Install the IgH\n"
-              "EtherLab userspace tool (see igh/README.md) and ensure the RT\n"
-              "daemon is running so /dev/EtherCAT0 exists.", file=sys.stderr)
+    global ETHERCAT
+    tool = resolve_ethercat(args.ethercat)
+    if tool is None:
+        print(
+            "error: the IgH `ethercat` CLI was not found.\n"
+            "  looked on PATH and at: " + ", ".join(_ETHERCAT_CANDIDATES) + "\n"
+            "It ships with IgH EtherLab (this project builds against "
+            "/opt/etherlab), so it is usually /opt/etherlab/bin/ethercat.\n"
+            "Fix any one of:\n"
+            "  * pass it:      python scripts/ec_crc.py --ethercat /opt/etherlab/bin/ethercat\n"
+            "  * set the env:  export ETHERCAT_BIN=/opt/etherlab/bin/ethercat\n"
+            "  * add to PATH:  export PATH=$PATH:/opt/etherlab/bin\n"
+            "Running under sudo? sudo resets PATH — use --ethercat with the full\n"
+            "path, or `sudo env \"PATH=$PATH\" python scripts/ec_crc.py ...`.",
+            file=sys.stderr)
         return 2
+    ETHERCAT = tool
 
     try:
         n = args.slaves if args.slaves is not None else slave_count()
