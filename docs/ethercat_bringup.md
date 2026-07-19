@@ -56,6 +56,28 @@ drive: set the drivetrain to the servo (`pulses_per_rev: 131072`, belt ratio as
 built). The planner and driver share `pulses_per_degree`, so this must be right
 or moves land at the wrong angle.
 
+### Object dictionary is the source of truth — not the panel Cxx.NN
+
+`esi/STEPPERONLINE_A6_Servo_V0.02.xml` is the drive's EtherCAT Slave Info: the
+real object dictionary (indices, subindices, ranges, sizes). The panel's
+`Cxx.NN` numbering does **not** track the SDO subindex in group `0x2000` — the
+subindex is the entry's *position* in the ESI object, not `NN+1`. Always read
+the address from the ESI. The Drives-tab tuning table is preloaded from it:
+
+| Tuning object | CoE | Default | Range | Notes |
+|---|---|---|---|---|
+| Load inertia ratio | `0x2000:05` | 100 | 0–12000 % | set first |
+| Auto-tuning mode | `0x2000:03` | 1 | 0=Manual/1=Standard/2=Positioning | 0 to hand-tune gains |
+| Stiffness level | `0x2000:04` | 12 | 1–31 | main dial in Standard mode |
+| 1st position loop gain | `0x2001:01` | 400 | 0–20000 (0.1 rad/s) | |
+| 1st speed loop gain | `0x2001:02` | 250 | 1–20000 (0.1 Hz) | raise before position gain |
+| 1st speed loop integral time | `0x2001:03` | 3184 | 1–51200 (0.01 ms) | lower = stronger integral |
+| 1st torque ref filter | `0x2001:04` | 200 | 5–16000 Hz (cutoff) | lower = more damping |
+
+All U16, modifiable during operation, effective immediately. In Standard mode
+(auto-tune = 1) the loop gains are derived from the stiffness level, so stiffness
+is the primary knob; set auto-tune = 0 to write the loop gains directly.
+
 ## 3. PDO map (0x1C12 / 0x1C13)
 
 **Verified on the bench** (`scripts/ec_inspect.py`): the ANCTL AS715N (the

@@ -138,24 +138,26 @@ class CustomParameter:
         return f"0x{self.index:04X}:{self.sub}"
 
 
-# Preloaded tuning objects for the AS715N (A6-EC), addresses + defaults taken
-# straight from the drive manual's Gain Tuning chapter. The manual states
-# "C00.01 (2000.02h)" and "F31.10 (2031.11h)", confirming the map
-#   Cxx.NN -> CoE index 0x20xx (group), subindex NN+1 (offset, both hex).
-# Objects are U16 and "modifiable during operation, effective immediately".
-#   (name, Cxx.NN address, default value, dtype, description)
+# Preloaded tuning objects for the AS715N (A6-EC). Addresses come from the ESI
+# (STEPPERONLINE_A6_Servo) object dictionary — the drive's real subindices — NOT
+# the panel's Cxx.NN numbering, which does NOT track the subindex in group 0x2000
+# (e.g. "auto-tune mode" is the 3rd config entry -> 0x2000:03, though the panel
+# labels it C00.04). Group 0x2001 (gains) happens to line up with C01.NN -> NN+1.
+# All are U16 (object 0x2000 = 256 bits / 15 entries) and modifiable during
+# operation, effective immediately.
+#   (name, CoE address, default value, dtype, description)
 DEFAULT_TUNING: List[Tuple[str, str, float, str, str]] = [
-    ("load_inertia_ratio", "C00.06", 100,  "int16", "Load inertia ratio (%, 0-12000) — set this FIRST; gains scale off it (F30.10 auto-tunes it)"),
-    ("auto_tuning_mode",   "C00.04", 1,     "int16", "Auto-tune mode: 0=Manual, 1=Standard (by stiffness), 2=Positioning. Set 0 to hand-tune the C01 gains"),
-    ("stiffness_level",    "C00.05", 12,    "int16", "Stiffness level (1-31) — the main 'make it stiffer' dial in Standard mode; too high oscillates"),
-    ("pos_loop_gain",      "C01.00", 400,   "int16", "1st position loop gain (0.1 rad/s, 0-20000) — raise to cut following error (Manual mode)"),
-    ("speed_loop_gain",    "C01.01", 250,   "int16", "1st speed loop gain (0.1 Hz, 1-20000) — raise this before position gain"),
-    ("speed_integ_time",   "C01.02", 3184,  "int16", "1st speed loop integral time (0.01 ms, 1-51200) — lower kills steady-state error"),
-    ("torque_filter",      "C01.03", 200,   "int16", "1st torque ref filter cutoff (Hz, 5-16000) — LOWER to damp high-freq buzz (more delay)"),
+    ("load_inertia_ratio", "0x2000:05", 100,  "int16", "Load inertia ratio (%, 0-12000) — set this FIRST; gains scale off it"),
+    ("auto_tuning_mode",   "0x2000:03", 1,     "int16", "Gain auto-tuning mode: 0=Manual, 1=Standard (by stiffness), 2=Positioning. Set 0 to hand-tune the gains"),
+    ("stiffness_level",    "0x2000:04", 12,    "int16", "Stiffness level (1-31) — the main 'make it stiffer' dial in Standard mode; too high oscillates"),
+    ("pos_loop_gain",      "0x2001:01", 400,   "int16", "1st position loop gain (0.1 rad/s, 0-20000) — raise to cut following error (Manual mode)"),
+    ("speed_loop_gain",    "0x2001:02", 250,   "int16", "1st speed loop gain (0.1 Hz, 1-20000) — raise this before position gain"),
+    ("speed_integ_time",   "0x2001:03", 3184,  "int16", "1st speed loop integral time (0.01 ms, 1-51200) — lower kills steady-state error"),
+    ("torque_filter",      "0x2001:04", 200,   "int16", "1st torque ref filter time constant (Hz, 5-16000) — LOWER to damp high-freq buzz (more delay)"),
 ]
 
 # Bump when DEFAULT_TUNING addresses/values change so a saved config re-seeds.
-TUNING_SEED_VERSION = 2
+TUNING_SEED_VERSION = 3
 # Names used by earlier (wrong-address) seed sets, dropped on migration.
 _LEGACY_TUNING_NAMES = {"inertia_ratio", "machine_stiffness", "realtime_autotune",
                         "pos_loop_gain", "vel_loop_gain", "vel_integ_time", "torque_filter"}
