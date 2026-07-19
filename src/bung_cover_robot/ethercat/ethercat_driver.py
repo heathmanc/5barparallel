@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import time
 from typing import List, Optional
 
 from ..robot.driver import Angles, RobotDriver, RobotDriverError
@@ -303,12 +304,30 @@ class EtherCatRobotDriver(RobotDriver):
         except MasterError as exc:
             raise RobotDriverError(f"move aborted: {exc}") from exc
         want = targets[-1]
-        got = (self.master.drives[0].actual_position,
-               self.master.drives[1].actual_position)
-        if (abs(got[0] - want[0]) > self.position_tol_counts
-                or abs(got[1] - want[1]) > self.position_tol_counts):
+        got = self._settle(want)
+        if got is None:
+            final = (self.master.drives[0].actual_position,
+                     self.master.drives[1].actual_position)
             raise RobotDriverError(
-                f"move did not reach target (following error: want {want}, got {got})")
+                f"move did not reach target (following error: want {want}, got {final})")
+
+    def _settle(self, want, timeout_s: float = 0.5):
+        """Wait for the servos to catch up to the final CSP target after the
+        stream ends. A real drive lags its target (following error) and needs a
+        few ms to settle; the check used to read the actual position immediately,
+        which tripped 'did not reach target' at random. The simulator is
+        instantaneous, so it passes on the first read. Returns the settled
+        position tuple, or None on timeout."""
+        deadline = time.perf_counter() + timeout_s
+        while True:
+            got = tuple(d.actual_position for d in self.master.drives)
+            if all(abs(got[i] - want[i]) <= self.position_tol_counts
+                   for i in range(min(len(got), len(want)))):
+                return got
+            if time.perf_counter() > deadline:
+                return None
+            self.master.exchange()       # refresh the process image while it settles
+            time.sleep(0.005)
 
     def read_angles(self) -> Optional[Angles]:
         if not self._referenced:
