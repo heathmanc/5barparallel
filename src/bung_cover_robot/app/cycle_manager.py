@@ -24,6 +24,8 @@ a coordinated straight-line move inside ``move_to_angles``).
 
 from __future__ import annotations
 
+import math
+import random
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -268,6 +270,125 @@ def default_scripted_targets(controller, hole_count: int = 6) -> "tuple":
     if len(covers) < len(holes):                 # fall back to the hole row's Y
         covers = row(home_y, max(hole_count, 6))
     return holes, covers
+
+
+# --------------------------------------------------------------------------- #
+# Bench demo — fixed pick nest + a variably-placed cover row (vision bypass)
+# --------------------------------------------------------------------------- #
+def demo_pick_and_place_targets(
+    validator,
+    home_xy: Point,
+    holes: int = 6,
+    spacing_mm: float = 26.0,
+    rng: Optional[random.Random] = None,
+) -> Tuple[Point, List[Point]]:
+    """A fixed supply nest + a variably-placed row of ``holes`` bung-cover holes,
+    every point workspace-validated. Stands in for vision while calibration is
+    pending: the robot picks from the same nest each time and drops into the six
+    holes of a cover that sits somewhere (and at some tilt) different each call.
+
+    The row's centre and angle are randomised (via ``rng``); if a random pose
+    can't fit all holes inside the reachable envelope we fall back to a centred,
+    axis-aligned row (shrinking the spacing until it fits), so the demo always
+    returns something drivable."""
+    rng = rng or random.Random()
+    hx, hy = float(home_xy[0]), float(home_xy[1])
+
+    # Fixed supply nest: the first reachable candidate off to the near side.
+    nest = _first_valid(validator, [
+        (hx + 110.0, hy - 40.0), (hx + 90.0, hy - 20.0),
+        (hx - 90.0, hy - 20.0), (hx, hy - 60.0), (hx, hy),
+    ]) or (hx, hy)
+
+    def row_at(cx: float, cy: float, theta: float, s: float) -> List[Point]:
+        pts = []
+        for i in range(holes):
+            off = (i - (holes - 1) / 2.0) * s
+            pts.append((round(cx + off * math.cos(theta), 1),
+                        round(cy + off * math.sin(theta), 1)))
+        return pts
+
+    def all_valid(pts: List[Point]) -> bool:
+        return all(validator.validate(x, y).ok for x, y in pts)
+
+    # Random placements first — a spread of centres and tilts to exercise motion.
+    for _ in range(60):
+        cx = hx + rng.uniform(-40.0, 40.0)
+        cy = hy + rng.uniform(-30.0, 30.0)
+        theta = rng.uniform(-0.35, 0.35)          # +/- ~20 deg tilt
+        pts = row_at(cx, cy, theta, spacing_mm)
+        if all_valid(pts):
+            return nest, pts
+
+    # Deterministic fallback: a centred horizontal row, shrinking to fit.
+    for s in (spacing_mm, spacing_mm * 0.75, spacing_mm * 0.5):
+        pts = row_at(hx, hy, 0.0, s)
+        if all_valid(pts):
+            return nest, pts
+    # Last resort: whatever holes of the centred row validate.
+    return nest, [p for p in row_at(hx, hy, 0.0, spacing_mm)
+                  if validator.validate(*p).ok]
+
+
+def _first_valid(validator, candidates: List[Point]) -> Optional[Point]:
+    for x, y in candidates:
+        if validator.validate(x, y).ok:
+            return (round(x, 1), round(y, 1))
+    return None
+
+
+def run_demo_cycle(
+    controller: RobotTestController,
+    pick_xy: Point,
+    drops: List[Point],
+    *,
+    pick_sequence: Optional[PickSequence] = None,
+    runner: Optional[JobRunner] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    on_step: Optional[Callable[[CycleStep], None]] = None,
+) -> CycleResult:
+    """Drive a fixed-pick -> each-drop pick&place with full head actuation.
+
+    The bench demo (vision bypass): every pick is the same supply ``pick_xy``
+    nest, every drop is one hole of the cover row. Unlike ``run_cycle`` there is
+    no camera, detection, or cover-selection — just plan -> validate -> move for
+    each hole in turn. Enforces a motion preflight (enabled + referenced) so it
+    can never move an unhomed robot. The gate reads the driver's live state (the
+    same source the bench Set Home / jog use), not the controller's home cache."""
+    driver = controller.driver
+    if not driver.is_enabled:
+        return CycleResult(ok=False, reason="drives are disabled — Enable them first")
+    if not driver.is_referenced:
+        return CycleResult(ok=False, reason="robot is not referenced — Set Home first")
+    runner = runner or make_job_runner(driver, pick_sequence)
+    kin, validator = controller.kin, controller.validator
+    result = CycleResult()
+    for i, drop_xy in enumerate(drops):
+        if should_stop is not None and should_stop():
+            result.reason = "stopped by operator"
+            break
+        try:
+            job = make_job(kin, validator, hole_index=i, cover_id=i,
+                           pick_xy=pick_xy, drop_xy=drop_xy)
+        except PlanningError as exc:
+            step = CycleStep(i, drop_xy, i, pick_xy, False, str(exc))
+            result.steps.append(step)
+            if on_step is not None:
+                on_step(step)
+            continue
+        res = runner.run(job)
+        step = CycleStep(i, drop_xy, i, pick_xy, res.ok, res.reason)
+        result.steps.append(step)
+        if on_step is not None:
+            on_step(step)
+        if not res.ok:
+            result.reason = f"job failed: {res.reason}"
+            return result
+    placed = len(result.placed)
+    if not result.reason:
+        result.reason = f"placed {placed}/{len(drops)} covers"
+    result.ok = placed > 0
+    return result
 
 
 # --------------------------------------------------------------------------- #

@@ -20,6 +20,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QGridLayout,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..app.cycle_manager import PickSequence, demo_pick_and_place_targets
 from ..app.robot_test_controller import RobotTestController
 from ..ethercat import cia402
 from ..ethercat.ethercat_driver import EtherCatRobotDriver
@@ -119,6 +121,58 @@ class _JogWorker(QThread):
             self.done.emit(str(exc))
 
 
+class _DemoWorker(QThread):
+    """Runs the sample pick&place demo off the GUI thread: pick from a fixed
+    nest, drop into each hole of a variably-placed 6-hole cover row, actuating
+    the vacuum/cylinder along the way. Loops until stopped when ``loop`` is set;
+    re-randomises the cover row each pass."""
+
+    step = Signal(str)   # per-hole progress line
+    done = Signal(str)   # final message (prefixed 'FAIL:' on failure)
+
+    def __init__(self, controller, make_targets, loop: bool,
+                 pick_sequence=None, parent=None) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self._make_targets = make_targets
+        self._loop = loop
+        self._pick_sequence = pick_sequence
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:  # pragma: no cover - GUI/hardware thread
+        from ..app.cycle_manager import run_demo_cycle
+
+        try:
+            passes = 0
+            while not self._stop:
+                pick, drops = self._make_targets()
+
+                def _on_step(s):
+                    tag = "placed" if s.ok else "skipped"
+                    self.step.emit(
+                        f"pass {passes + 1}: hole {s.hole_index + 1}/{len(drops)} "
+                        f"{tag} — {s.reason}")
+
+                res = run_demo_cycle(
+                    self._controller, pick, drops,
+                    pick_sequence=self._pick_sequence,
+                    should_stop=lambda: self._stop, on_step=_on_step,
+                )
+                passes += 1
+                if not res.ok and "stopped" not in res.reason:
+                    self.done.emit(f"FAIL:{res.reason}")
+                    return
+                if not self._loop or self._stop:
+                    self.done.emit(f"Demo finished — {res.reason} "
+                                   f"[{passes} pass(es)]")
+                    return
+        except Exception as exc:  # noqa: BLE001
+            self.done.emit(f"FAIL:{exc}")
+
+
 class EtherCatTab(QWidget):
     connectionChanged = Signal()
 
@@ -132,6 +186,10 @@ class EtherCatTab(QWidget):
         self.store = ParameterStore.load(cfg_dir / "drive_parameters.yaml")
         self._poller: Optional[_StatusPoller] = None
         self._jog_worker: Optional[_JogWorker] = None
+        self._demo_worker: Optional[_DemoWorker] = None
+        # Pick-head dwell timing for the demo. None = the driver's real-hardware
+        # defaults; tests set a zero-dwell PickSequence to run instantly.
+        self._demo_sequence: Optional[PickSequence] = None
 
         # This is an HMI — the whole page must NOT scroll. Keep the sections
         # compact and let only the (tall) parameter tables scroll internally.
@@ -291,6 +349,20 @@ class EtherCatTab(QWidget):
         warn.setWordWrap(True)
         warn.setStyleSheet(f"color:{theme.WARN}; font-weight:600;")
         g.addWidget(warn, 4, 0, 1, 5)
+        # Sample pick&place demo (vision bypass): pick a fixed nest, drop into a
+        # variably-placed 6-hole cover row. Exercises the arm + pick head before
+        # vision calibration exists. Needs the drives enabled + Set Home.
+        self.sim_demo_btn = QPushButton("Simulate pick && place")
+        self.sim_demo_btn.setToolTip(
+            "Run a sample pick&place: pick from a fixed nest and drop into the six "
+            "holes of a randomly-placed bung cover. Needs Enable + Set Home. "
+            "Vision bypass — no camera/calibration required.")
+        self.sim_demo_btn.clicked.connect(self._on_simulate)
+        self.demo_loop_chk = QCheckBox("loop")
+        self.demo_loop_chk.setToolTip("Keep repeating the demo (re-placing the "
+                                      "cover each pass) until stopped.")
+        g.addWidget(self.sim_demo_btn, 5, 0, 1, 3)
+        g.addWidget(self.demo_loop_chk, 5, 3, 1, 2, Qt.AlignmentFlag.AlignLeft)
         return box
 
     def _ec_driver(self):
@@ -355,6 +427,59 @@ class EtherCatTab(QWidget):
             self._status(f"Jog failed: {err}", theme.DANGER)
         else:
             self._status("Jog complete.", theme.TEXT)
+
+    # --- demo (sample pick & place) -----------------------------------------
+    def _on_simulate(self) -> None:
+        # Second press = stop a running demo.
+        if self._demo_worker is not None and self._demo_worker.isRunning():
+            self._demo_worker.stop()
+            self.sim_demo_btn.setText("Stopping…")
+            self.sim_demo_btn.setEnabled(False)
+            return
+        if self._jog_worker is not None and self._jog_worker.isRunning():
+            self._status("Wait for the jog to finish before running the demo.",
+                         theme.WARN)
+            return
+        ctrl = self.controller
+        drv = ctrl.driver
+        if not drv.is_enabled:
+            self._status("Enable the drives before running the demo.", theme.WARN)
+            return
+        if not drv.is_referenced:
+            self._status("Set Home before running the demo.", theme.WARN)
+            return
+
+        def make_targets():
+            return demo_pick_and_place_targets(ctrl.validator, ctrl.home_xy)
+
+        loop = self.demo_loop_chk.isChecked()
+        self._set_motion_enabled(False)          # no jog/enable while it runs
+        self.sim_demo_btn.setText("Stop demo")
+        self._status("Running sample pick & place…", theme.TEXT)
+        self._demo_worker = _DemoWorker(ctrl, make_targets, loop,
+                                        pick_sequence=self._demo_sequence)
+        self._demo_worker.step.connect(lambda m: self._status(m, theme.TEXT))
+        self._demo_worker.done.connect(self._on_demo_done)
+        self._demo_worker.start()
+
+    def _on_demo_done(self, msg: str) -> None:
+        self._set_motion_enabled(True)
+        self.sim_demo_btn.setText("Simulate pick && place")
+        self.sim_demo_btn.setEnabled(True)
+        if msg.startswith("FAIL:"):
+            self._status(f"Demo failed: {msg[5:]}", theme.DANGER)
+        else:
+            self._status(msg, theme.TEXT)
+
+    def _stop_demo(self) -> None:
+        if self._demo_worker is not None:
+            self._demo_worker.stop()
+            self._demo_worker.wait(5000)
+            self._demo_worker = None
+            # Restore the controls in case we stopped mid-run (e.g. disconnect).
+            self.sim_demo_btn.setText("Simulate pick && place")
+            self.sim_demo_btn.setEnabled(True)
+            self._set_motion_enabled(True)
 
     def _build_parameters(self) -> QGroupBox:
         box = QGroupBox("Parameters")
@@ -606,6 +731,7 @@ class EtherCatTab(QWidget):
     def _teardown_master(self) -> None:
         """Disable the drives (torque off) and stop the master/daemon. Safe to
         call when not connected."""
+        self._stop_demo()
         self._stop_jog()
         self._stop_poller()
         drv = self._ec_driver()
