@@ -32,6 +32,11 @@ def main() -> int:
     ap.add_argument("--shift-ns", type=int, default=0)
     ap.add_argument("--mode", type=int, default=8, help="6060 mode (8=CSP, 1=PP)")
     ap.add_argument("--seconds", type=int, default=8)
+    ap.add_argument("--dc-first", action="store_true",
+                    help="call config_dc() BEFORE config_map()")
+    ap.add_argument("--no-sm-cycle", action="store_true",
+                    help="do NOT write the SM cycle time (0x1C32:02/0x1C33:02)")
+    ap.add_argument("--sync1", action="store_true", help="also enable SYNC1")
     args = ap.parse_args()
 
     import pysoem
@@ -47,14 +52,28 @@ def main() -> int:
     s = m.slaves[0]
     print("slave  DC/sync API:", [a for a in dir(s) if "dc" in a.lower() or "sync" in a.lower()])
 
-    m.config_map()
-    print("config_dc() ->", m.config_dc())
+    if args.dc_first:
+        print("config_dc() [before map] ->", m.config_dc())
+        m.config_map()
+    else:
+        m.config_map()
+        print("config_dc() ->", m.config_dc())
 
     # mode of operation via SDO (not cyclic in this drive's map)
     try:
         s.sdo_write(0x6060, 0, bytes([args.mode & 0xFF]))
     except Exception as exc:  # noqa: BLE001
         print("6060 write:", exc)
+
+    # Tell the drive the expected SM cycle time (0x1C32:02 output, 0x1C33:02 input).
+    # Some DC drives won't arm SYNC0 monitoring until this is non-zero.
+    if not args.no_sm_cycle:
+        for idx in (0x1C32, 0x1C33):
+            try:
+                s.sdo_write(idx, 2, args.cycle_ns.to_bytes(4, "little"))
+                print(f"wrote 0x{idx:04X}:02 = {args.cycle_ns} ns")
+            except Exception as exc:  # noqa: BLE001
+                print(f"0x{idx:04X}:02 write failed: {exc}")
 
     m.state_check(pysoem.SAFEOP_STATE, 50_000)
 
@@ -64,8 +83,9 @@ def main() -> int:
         m.receive_processdata(2000)
         time.sleep(0.002)
 
-    print(f"arming SYNC0: cycle={args.cycle_ns} shift={args.shift_ns}")
-    s.dc_sync(True, args.cycle_ns, args.shift_ns)
+    sync1 = args.cycle_ns if args.sync1 else 0
+    print(f"arming SYNC0: cycle={args.cycle_ns} shift={args.shift_ns} sync1={sync1}")
+    s.dc_sync(True, args.cycle_ns, args.shift_ns, sync1)
 
     # Request OP, pump.
     m.state = pysoem.OP_STATE
