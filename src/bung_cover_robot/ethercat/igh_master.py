@@ -19,6 +19,7 @@ import mmap
 import os
 import struct
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import List
@@ -72,6 +73,10 @@ class IgHMaster(EtherCatMaster):
         self._logf = None
         self._mm: mmap.mmap | None = None
         self._open = False
+        # background reader keeps `drives` live from shared memory (the C daemon
+        # owns the RT loop, so nothing else refreshes the Python-side images).
+        self._reader: threading.Thread | None = None
+        self._reader_stop = threading.Event()
 
     # --- EtherCatMaster interface ------------------------------------------ #
     @property
@@ -97,9 +102,26 @@ class IgHMaster(EtherCatMaster):
             time.sleep(0.05)
         self._open = True
         self.exchange()
+        self._reader_stop.clear()
+        self._reader = threading.Thread(target=self._reader_loop,
+                                        name="igh-reader", daemon=True)
+        self._reader.start()
         return self
 
+    def _reader_loop(self) -> None:
+        while not self._reader_stop.is_set():
+            try:
+                for d, pd in enumerate(self._drives):
+                    self._read_inputs(d, pd)
+            except Exception:  # noqa: BLE001 - display refresh must not die
+                pass
+            self._reader_stop.wait(0.01)     # ~100 Hz
+
     def close(self) -> None:
+        self._reader_stop.set()
+        if self._reader is not None:
+            self._reader.join(timeout=1.0)
+            self._reader = None
         if self._mm is not None:
             try:
                 if self._proc is not None:
