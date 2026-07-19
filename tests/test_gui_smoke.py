@@ -935,8 +935,9 @@ def test_drives_tab_is_compact_no_page_scroll(qapp, tmp_path):
     assert tab.custom_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
     # tuning parameters preloaded; per-drive read-back columns present
     assert tab.custom_table.rowCount() >= 5
-    assert tab.custom_table.columnCount() == 5      # Parameter/Address/Value/Drive 0/Drive 1
-    assert [tab.custom_table.horizontalHeaderItem(c).text() for c in (3, 4)] == ["Drive 0", "Drive 1"]
+    assert tab.custom_table.columnCount() == 6      # +Address/Value/Drive 0/Drive 1/Description
+    assert [tab.custom_table.horizontalHeaderItem(c).text() for c in (3, 4, 5)] == \
+        ["Drive 0", "Drive 1", "Description"]
     # whole tab fits inside the default window without page scrolling
     assert tab.minimumSizeHint().height() <= 945
     assert tab.sizeHint().width() <= 1200

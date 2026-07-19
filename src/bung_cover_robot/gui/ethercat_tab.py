@@ -434,9 +434,11 @@ class EtherCatTab(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{theme.TEXT_DIM}; font-size:11px;")
         v.addWidget(hint)
-        self.custom_table = QTableWidget(0, 5)
+        self.custom_table = QTableWidget(0, 6)
         self.custom_table.setHorizontalHeaderLabels(
-            ["Parameter", "Address", "Value", "Drive 0", "Drive 1"])
+            ["Parameter", "Address", "Value", "Drive 0", "Drive 1", "Description"])
+        # Description stretches to fill; the value/drive columns size to content
+        # (so 'Drive 1' isn't wildly wide).
         self.custom_table.horizontalHeader().setStretchLastSection(True)
         self.custom_table.verticalHeader().setVisible(False)
         self.custom_table.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -490,6 +492,11 @@ class EtherCatTab(QWidget):
                                   "write didn't take (object may be read-only, state-gated, "
                                   "or overwritten by auto-tune). Verify the Cxx.NN address.")
                 self.custom_table.setItem(r, 3 + di, it)
+            desc_item = QTableWidgetItem(c.desc)
+            desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if c.desc:
+                desc_item.setToolTip(c.desc)
+            self.custom_table.setItem(r, 5, desc_item)
         self.custom_table.resizeColumnsToContents()
         self.custom_table.horizontalHeader().setStretchLastSection(True)
 
