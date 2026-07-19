@@ -119,6 +119,38 @@ def test_tuning_parameters_are_preloaded_and_seed_is_sticky(tmp_path):
     assert "machine_stiffness" not in {c.name for c in s2.custom_parameters()}
 
 
+def test_apply_retries_on_length_abort():
+    """A drive that rejects the assumed width with CoE abort 0x06070012 must be
+    retried at another width instead of failing (0x6098 is 1 byte; a vendor gain
+    might be 2). Non-length aborts still fail."""
+    from bung_cover_robot.ethercat.master import MasterError
+
+    class SizePicky:
+        def __init__(self):
+            self.drives = [1, 2]
+            self.written = {}
+
+        def sdo_write(self, index, sub, value, size=4, drive=0):
+            if index == 0x2009 and size != 2:          # this object is 2 bytes only
+                raise MasterError(f"SDO write 0x{index:04X}:{sub} (drive {drive}) "
+                                  "failed (code 0x06070012)")
+            self.written[(drive, index)] = (value, size)
+
+    class Drv:
+        def __init__(self, m):
+            self.master = m
+            self.limits = None
+            self.position_tol_counts = 0
+
+    s = ParameterStore()                                # curated params only
+    s.add_custom("gain", "C09.00", 7, "int")            # 0x2009:1, assumed 4 bytes
+    drv = Drv(SizePicky())
+    notes = s.apply(drv)
+    assert drv.master.written[(0, 0x2009)] == (7, 2)    # retried down to 2 on both
+    assert drv.master.written[(1, 0x2009)] == (7, 2)
+    assert not any("FAILED" in n for n in notes)
+
+
 def test_add_custom_requires_name():
     s = ParameterStore()                            # bare store: not seeded
     assert s.custom_parameters() == []

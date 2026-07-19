@@ -35,6 +35,7 @@ class DriveParameter:
     unit: str
     desc: str
     sdo: Optional[Tuple[int, int]] = None   # (index, subindex) for scope="drive"
+    size: int = 4                           # CoE object byte length (1/2/4)
 
     def coerce(self, value) -> float:
         return int(round(float(value))) if self.dtype == "int" else float(value)
@@ -54,7 +55,7 @@ PARAMETERS: List[DriveParameter] = [
                    "End-of-move following-error tolerance."),
     # --- CiA 402 drive objects (written to both drives) ----------------------
     DriveParameter("homing_method", "drive", "int", 24, "-",
-                   "0x6098 homing method (switch + index pulse).", sdo=(0x6098, 0)),
+                   "0x6098 homing method (switch + index pulse).", sdo=(0x6098, 0), size=1),
     DriveParameter("homing_speed_fast", "drive", "int", 20000, "counts/s",
                    "0x6099:1 speed while searching the switch.", sdo=(0x6099, 1)),
     DriveParameter("homing_speed_slow", "drive", "int", 2000, "counts/s",
@@ -70,6 +71,31 @@ _BY_NAME: Dict[str, DriveParameter] = {p.name: p for p in PARAMETERS}
 
 def _dtype_size(dtype: str) -> int:
     return 1 if dtype == "int8" else 2 if dtype == "int16" else 4
+
+
+# CoE SDO abort codes that mean the value's byte length didn't match the object:
+#   0x06070012 = data type mismatch, length too high
+#   0x06070013 = data type mismatch, length too low
+_SIZE_ABORTS = ("06070012", "06070013")
+
+
+def _sdo_write_adaptive(sdo_write, index: int, sub: int, value: int,
+                        size: int, drive: int) -> int:
+    """Write an SDO, retrying the other byte widths if the drive rejects it for
+    length. Returns the size that succeeded. Non-length aborts (bad value, no
+    such object) raise immediately — we only auto-recover from a wrong width."""
+    order = [size] + [s for s in (2, 4, 1) if s != size]
+    last: Exception | None = None
+    for sz in order:
+        try:
+            sdo_write(index, sub, value, size=sz, drive=drive)
+            return sz
+        except Exception as exc:  # noqa: BLE001
+            if any(a in str(exc) for a in _SIZE_ABORTS):
+                last = exc
+                continue
+            raise
+    raise last if last is not None else RuntimeError("SDO write failed")
 
 
 def _hexint(t: str) -> int:
@@ -250,7 +276,7 @@ class ParameterStore:
     def _drive_items(self):
         """(name, index, sub, value, size) for every drive-scope object — the
         curated drive params and the custom/tuning ones."""
-        items = [(p.name, p.sdo[0], p.sdo[1], int(self.get(p.name)), 4)
+        items = [(p.name, p.sdo[0], p.sdo[1], int(self.get(p.name)), p.size)
                  for p in PARAMETERS if p.scope == "drive"]
         items += [(c.name, c.index, c.sub, int(c.value), _dtype_size(c.dtype))
                   for c in self._custom]
@@ -259,7 +285,9 @@ class ParameterStore:
     def apply(self, driver) -> List[str]:
         """Apply to a live EtherCatRobotDriver: motion limits rebuild in place;
         every drive-scope SDO (curated + custom/tuning) is written to ALL drives
-        on the bus. Returns per-item messages."""
+        on the bus. Writes are size-adaptive — if the drive rejects a value for
+        length (CoE abort 0x0607001x), the other byte widths are retried — so a
+        wrong assumed width doesn't fail the write. Returns per-item messages."""
         notes: List[str] = []
         driver.limits = self.trajectory_limits()
         driver.position_tol_counts = int(self.get("position_tol_counts"))
@@ -273,7 +301,7 @@ class ParameterStore:
             ok = []
             for d in drives:
                 try:
-                    sdo_write(idx, sub, val, size=sz, drive=d)
+                    _sdo_write_adaptive(sdo_write, idx, sub, val, sz, d)
                     ok.append(str(d + 1))
                 except Exception as exc:  # noqa: BLE001
                     notes.append(f"{name} drive {d + 1}: WRITE FAILED - {exc}")
