@@ -352,7 +352,7 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         num_drives: int = 2,
         rt_priority: int = 80,
         recv_timeout_us: int = 2000,
-        use_dc: bool = False,
+        use_dc: bool = True,
         mode: int = cia402.MODE_CSP,
         pp_velocity: int = 50_000,
         pp_accel: int = 200_000,
@@ -369,10 +369,11 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         self.mode = mode
         self.pp_velocity = pp_velocity
         self.pp_accel = pp_accel
-        # Distributed-clock SYNC0. A time.sleep-paced Python loop cannot phase-lock
-        # to SYNC0, so DC is off by default (free-run). Note: CSP *requires* SYNC0,
-        # so CSP+free-run faults the A6 (Er741) — use mode=Profile Position for
-        # bench, or implement DC-synced CSP (use_dc + a DC-aware loop) for production.
+        # Distributed-clock SYNC0. The AS715N's sync managers support ONLY DC-SYNC0
+        # (0x1C32/0x1C33:04) — no free-run/SM-sync — so DC is mandatory: without a
+        # programmed SYNC0 the drive faults on OP entry (Er741). open() enables DC
+        # and programs SYNC0 at the cycle time; the drive's ESC generates the pulse
+        # from its own synchronized clock, so the RT loop just keeps frames flowing.
         self.use_dc = use_dc
         self._num = num_drives
         self._drives = [DriveProcessData(mode_of_operation=mode)
@@ -429,8 +430,11 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
             s.config_func = self._configure_slave      # PDO map + CSP setup per drive
         m.config_map()
         if self.use_dc:                                # distributed clocks (SYNC0)
-            if m.config_dc():
-                logger.info("EtherCAT DC configured")
+            m.config_dc()
+            cyc_ns = int(round(self.cycle_dt_s * 1e9))
+            for s in self._slaves:
+                s.dc_sync(True, cyc_ns)                # program SYNC0 at the cycle time
+            logger.info("EtherCAT DC/SYNC0 programmed at %d ns", cyc_ns)
         else:
             logger.info("EtherCAT DC disabled — free-run (SM-synchronous)")
         # SAFE_OP -> OP. The drive's sync-manager watchdog needs *continuous*
