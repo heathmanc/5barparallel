@@ -514,6 +514,9 @@ class EtherCatTab(QWidget):
                 # confirm whether Apply actually landed).
                 if v is not None and int(v) != int(c.value):
                     it.setForeground(QColor(theme.WARN))
+                    it.setToolTip(f"drive reads {self._fmt(v)}, setpoint {self._fmt(c.value)} — "
+                                  "write didn't take (object may be read-only, state-gated, "
+                                  "or overwritten by auto-tune). Verify the Cxx.NN address.")
                 self.custom_table.setItem(r, 3 + di, it)
         self.custom_table.resizeColumnsToContents()
         self.custom_table.horizontalHeader().setStretchLastSection(True)
@@ -697,9 +700,10 @@ class EtherCatTab(QWidget):
             self._refresh_custom_table()
         except Exception:  # noqa: BLE001 - readback is best-effort
             pass
-        self._status("Applied to drives + read back: "
-                     + "; ".join(notes[:2]) + (" …" if len(notes) > 2 else ""),
-                     theme.TEXT)
+        # The last note is the "N written, M unchanged[, ignored/aborted]" summary.
+        summary = notes[-1] if notes else "nothing to apply"
+        bad = ("ignored" in summary) or ("aborted" in summary)
+        self._status(f"Applied: {summary}", theme.WARN if bad else theme.TEXT)
 
     # --- live status ----------------------------------------------------------
     def _start_poller(self) -> None:

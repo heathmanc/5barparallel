@@ -284,29 +284,63 @@ class ParameterStore:
 
     def apply(self, driver) -> List[str]:
         """Apply to a live EtherCatRobotDriver: motion limits rebuild in place;
-        every drive-scope SDO (curated + custom/tuning) is written to ALL drives
-        on the bus. Writes are size-adaptive — if the drive rejects a value for
-        length (CoE abort 0x0607001x), the other byte widths are retried — so a
-        wrong assumed width doesn't fail the write. Returns per-item messages."""
+        each drive-scope SDO (curated + custom/tuning) is read from every drive
+        and written ONLY where it differs — no needless mailbox traffic. Writes
+        are size-adaptive (a wrong assumed width retries the others). Returns
+        per-item messages plus a written/unchanged summary."""
         notes: List[str] = []
         driver.limits = self.trajectory_limits()
         driver.position_tol_counts = int(self.get("position_tol_counts"))
         notes.append("motion limits applied")
         sdo_write = getattr(driver.master, "sdo_write", None)
+        sdo_read = getattr(driver.master, "sdo_read", None)
         drives = list(range(len(getattr(driver.master, "drives", []) or [])))
         if not callable(sdo_write) or not drives:
             notes.append("drive params: master has no SDO channel")
             return notes
+        written = unchanged = ignored = failed = 0
         for name, idx, sub, val, sz in self._drive_items():
             ok = []
             for d in drives:
+                current = None
+                if callable(sdo_read):
+                    try:
+                        current = int(sdo_read(idx, sub, size=sz, drive=d))
+                    except Exception:  # noqa: BLE001 - unreadable -> treat as changed
+                        current = None
+                if current == val:
+                    unchanged += 1
+                    continue
                 try:
                     _sdo_write_adaptive(sdo_write, idx, sub, val, sz, d)
-                    ok.append(str(d + 1))
                 except Exception as exc:  # noqa: BLE001
-                    notes.append(f"{name} drive {d + 1}: WRITE FAILED - {exc}")
+                    failed += 1
+                    notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: WRITE ABORTED - {exc}")
+                    continue
+                # Verify: the write returned OK, but did the value actually change?
+                # A read-only monitor object or a state-gated / auto-tune-overridden
+                # gain accepts the write and keeps its old value.
+                after = None
+                if callable(sdo_read):
+                    try:
+                        after = int(sdo_read(idx, sub, size=sz, drive=d))
+                    except Exception:  # noqa: BLE001
+                        after = None
+                if after is not None and after != val:
+                    ignored += 1
+                    notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: wrote {val} but "
+                                 f"drive kept {after} (read-only or state-gated?)")
+                else:
+                    ok.append(str(d + 1))
+                    written += 1
             if ok:
                 notes.append(f"{name} -> 0x{idx:04X}:{sub} = {val} (drives {', '.join(ok)})")
+        summary = f"{written} written, {unchanged} unchanged"
+        if ignored:
+            summary += f", {ignored} ignored by drive"
+        if failed:
+            summary += f", {failed} aborted"
+        notes.append(summary)
         return notes
 
     def read_custom_from_drives(self, driver) -> Dict[str, List[Optional[int]]]:
