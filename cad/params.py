@@ -121,8 +121,9 @@ DECK_Z0 = ZR + PW + 12.0               # deck bottom (52), clear of high belt
 DECK_Z1 = DECK_Z0 + DECK_T             # 64
 STANDOFF = 40.0
 TOPP_Z0 = DECK_Z1 + STANDOFF           # 104
-TOPP_T = 10.0
-TOPP_Z1 = TOPP_Z0 + TOPP_T             # 114
+TOPP_T = 12.0                          # = 7005 width: race sits FLUSH with both
+                                       # faces of each plate, caps seat flat
+TOPP_Z1 = TOPP_Z0 + TOPP_T             # 116
 LOCKNUT_T = 8.0
 UCAP_TOP = TOPP_Z1 + CAP_T             # 119
 LOCKNUT_Z = UCAP_TOP
@@ -134,11 +135,17 @@ A0, A1 = PLANE_A - ARM_H / 2, PLANE_A + ARM_H / 2
 B0, B1 = PLANE_B - ARM_H / 2, PLANE_B + ARM_H / 2
 
 # ------------------------------------------------------------ bearing caps
+# The 7005 race (12 wide) sits FLUSH in its 12-thick plate; each cap is a flat
+# disc that bolts down onto the plate face, with a 0.3 mm PROUD annular pad
+# that lands on the outer race only — a defined clamp crush, instead of the
+# old 2 mm register spigot that held the whole disc off the plate and clamped
+# through cap flex.
 CAP_OD = 72.0                          # was 62: bolt holes broke out of the OD
 CAP_BCD = 58.0                         # 4x M4 through cap+plate+cap
 CAP_BOLT_D = 4.5
-CAP_SPIGOT = 46.6                      # register in the O47 plate bore
-CAP_RELIEF = 41.0                      # inboard relief (clears inner race)
+CAP_PAD_OD = 46.5                      # pad presses the outer race only ...
+CAP_PAD_ID = 41.0                      # ... clear of the inner race + cage
+CAP_PAD_H = 0.3                        # proud of the disc face (clamp crush)
 CAP_SHAFT_CLR = 27.0
 
 # ------------------------------------------------------------------- plates
@@ -254,6 +261,8 @@ def check_layout(verbose: bool = False) -> list:
     ok(m >= 2.0, m - 2.0, "staggered driven pulleys pass in z")
     m = (DECK_Z0 - 3.0) - (ZR + PW + 1.5)
     ok(m >= 0.0, m, "high driven pulley clears deck underside")
+    m = (DECK_Z0 - CAP_T) - (ZR + PW + 1.5)
+    ok(m >= 3.0, m - 3.0, "deck bottom cap clears the pulley flange")
     rot_half = 40.0 * (COS_S + SIN_S)          # 80-frame rotated by SPLAY
     m = 2 * (MXx - rot_half)
     ok(m >= 6.0, m - 6.0, "motor bodies clear each other at centreline")
@@ -272,8 +281,13 @@ def check_layout(verbose: bool = False) -> list:
     ok(m >= 1.0, m - 1.0, "cap clears standoff boss")
     m = TOPP_W / 2 - (HX + CAP_OD / 2)
     ok(m >= 1.0, m - 1.0, "top plate fully covers the O72 caps")
-    m = CAP_BCD / 2 - CAP_BOLT_D / 2 - CAP_SPIGOT / 2
-    ok(m >= 2.0, m - 2.0, "cap bolt hole to register spigot")
+    m = CAP_BCD / 2 - CAP_BOLT_D / 2 - CAP_PAD_OD / 2
+    ok(m >= 2.0, m - 2.0, "cap bolt hole to pressing pad")
+    # races must sit flush so the flat caps seat on the plate faces
+    ok(abs(DECK_T - BRG_W) < 0.01, 0.0, "deck thickness = 7005 race width")
+    ok(abs(TOPP_T - BRG_W) < 0.01, 0.0, "top plate thickness = 7005 race width")
+    m = 47.0 - CAP_PAD_OD
+    ok(m >= 0.3, m - 0.3, "pressing pad stays inside the bore edge")
 
     # -- carriage ---------------------------------------------------------
     m = CAR_W / 2 - (LOCK_B + SLOT_W / 2)

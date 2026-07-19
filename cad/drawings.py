@@ -31,8 +31,8 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Arc, Circle, FancyArrowPatch, Polygon, Rectangle
 
 from params import (A0, B1, BED, BELT_LEN, BLK_A0, BLK_A1, BLK_B, BLK_H, C,
-                    CAP_BCD, CAP_BOLT_D, CAP_OD, CAP_RELIEF, CAP_SHAFT_CLR,
-                    CAP_SPIGOT, CAP_T, CAR_L, CAR_W, DECK_PTS, DECK_T, DECK_Z0,
+                    CAP_BCD, CAP_BOLT_D, CAP_OD, CAP_SHAFT_CLR,
+                    CAP_PAD_H, CAP_PAD_ID, CAP_PAD_OD, CAP_T, CAR_L, CAR_W, DECK_PTS, DECK_T, DECK_Z0,
                     FIN_A_INN, FIN_A_OUT, FIN_BI, FIN_BO, FIN_BOLT_B,
                     FIN_BOLTS_INN, FIN_BOLTS_OUT, FLG_A_INN, FLG_B, FLG_T,
                     FR_A, FR_B, FR_T, HX, JACK_Z_OFF, LOCK_A, LOCK_B,
@@ -186,17 +186,20 @@ def sheet_cap(pdf):
         pdf, 1, "BEARING RETAINER CAP", "BRG-CAP", "PA12 MJF / 6061-T6", 8, "1.5:1",
         notes=(
             "One cap above AND one below each 7005 bearing bore; the pair bolts together THROUGH the plate "
-            "with 4x M4x35 SHCS + nyloc (plate holes 4.5 on the same BCD; grip 26 at the deck, 20 at the plate).",
-            "The 46.6 spigot registers in the 47.0 plate bore. Its 41.0-46.6 face ring presses the bearing "
-            "OUTER race only; the bore is relieved inboard of 41.0 to clear the rotating inner race.",
-            "Build one cap spigot-UP and one spigot-DOWN per bore (same part, flipped).",
+            "with 4x M4x30 SHCS + nyloc (plate holes 4.5 on the same BCD; grip 22 = 5+12+5 at BOTH plates).",
+            "Both plates are 12 THK = the 7005 race width, so the race sits FLUSH with the plate faces and "
+            "the cap disc seats FLAT on the plate.",
+            f"The {CAP_PAD_H:g}-proud pad ({CAP_PAD_ID:g}-{CAP_PAD_OD:g}) lands on the bearing OUTER race only "
+            "- torquing the bolts gives a small defined clamp crush on the race. No spigot: the cap must "
+            "NOT stand off the plate.",
+            "Build one cap pad-UP and one pad-DOWN per bore (same part, flipped).",
             "OD is 72 so the bolt holes keep a full 1.5d rim (edge distance 4.75).",
         ))
     v = View(ax, 105, 150, 1.5)
     # plan
     v.circle(0, 0, CAP_OD)
-    v.circle(0, 0, CAP_SPIGOT, lw=THIN, ls="--")
-    v.circle(0, 0, CAP_RELIEF, lw=THIN, ls="--")
+    v.circle(0, 0, CAP_PAD_OD, lw=THIN, ls="--")
+    v.circle(0, 0, CAP_PAD_ID, lw=THIN, ls="--")
     v.circle(0, 0, CAP_SHAFT_CLR)
     v.circle(0, 0, CAP_BCD, lw=THIN, ls=(0, (6, 2, 1, 2)), color=CTR)
     for a in (45, 135, 225, 315):
@@ -210,28 +213,29 @@ def sheet_cap(pdf):
     v.leader(CAP_BCD / 2 * 0.707, -CAP_BCD / 2 * 0.707, 16, -10,
              f"4x Ø{CAP_BOLT_D:g} THRU EQ SP ON Ø{CAP_BCD:g} BCD")
     v.leader(0, -CAP_SHAFT_CLR / 2, 10, -16, f"Ø{CAP_SHAFT_CLR:g} THRU")
-    v.leader(-CAP_SPIGOT / 2 * 0.707, CAP_SPIGOT / 2 * 0.707, -16, 10,
-             f"Ø{CAP_SPIGOT:g} -0.05/-0.15 SPIGOT", ha="right")
-    v.leader(-CAP_RELIEF / 2, 0, -20, -4, f"Ø{CAP_RELIEF:g} RELIEF", ha="right")
-    v.text(0, -CAP_OD / 2 - 12 / 1.5, "PLAN (spigot side away)", size=7)
+    v.leader(-CAP_PAD_OD / 2 * 0.707, CAP_PAD_OD / 2 * 0.707, -16, 10,
+             f"Ø{CAP_PAD_OD:g} PAD OD", ha="right")
+    v.leader(-CAP_PAD_ID / 2, 0, -20, -4, f"Ø{CAP_PAD_ID:g} PAD ID", ha="right")
+    v.text(0, -CAP_OD / 2 - 12 / 1.5, "PLAN (pad side away)", size=7)
 
     # section A-A (half profile, hatched)
     s = View(ax, 275, 150, 1.5)
-    r27, r41, r466, r72 = CAP_SHAFT_CLR / 2, CAP_RELIEF / 2, CAP_SPIGOT / 2, CAP_OD / 2
-    prof = [(r27, 0), (r72, 0), (r72, CAP_T), (r466, CAP_T),
-            (r466, CAP_T + 2), (r41, CAP_T + 2), (r41, CAP_T + 0.5),
-            (r27, CAP_T + 0.5)]
+    r27, r41, r465, r72 = (CAP_SHAFT_CLR / 2, CAP_PAD_ID / 2,
+                           CAP_PAD_OD / 2, CAP_OD / 2)
+    ph = CAP_PAD_H * 6            # pad exaggerated 6x in the section for clarity
+    prof = [(r27, 0), (r72, 0), (r72, CAP_T), (r465, CAP_T),
+            (r465, CAP_T + ph), (r41, CAP_T + ph), (r41, CAP_T),
+            (r27, CAP_T)]
     for sgn in (1, -1):
         s.poly([(sgn * x, y) for x, y in prof], hatch="////", lw=THICK)
     s.line([(0, -6), (0, CAP_T + 8)], lw=THIN, color=CTR, ls=(0, (8, 3, 1, 3)))
     s.dimv(0, CAP_T, r72, 10, f"{CAP_T:g}")
-    s.dimv(CAP_T, CAP_T + 2, r466, 26, "2.0 SPIGOT")
     s.dimh(-r72, r72, 0, -10, f"Ø{CAP_OD:g}")
-    s.dimh(-r466, r466, CAP_T + 2, 12, f"Ø{CAP_SPIGOT:g}")
-    s.dimh(-r41, r41, CAP_T + 0.5, 22, f"Ø{CAP_RELIEF:g}")
-    s.text(0, -24 / 1.5, "SECTION A-A", size=7)
-    s.leader(r466 - (r466 - r41) / 2, CAP_T + 2, 22, 8,
-             "presses OUTER race only")
+    s.dimh(-r465, r465, CAP_T + ph, 12, f"Ø{CAP_PAD_OD:g}")
+    s.dimh(-r41, r41, CAP_T + ph, 22, f"Ø{CAP_PAD_ID:g}")
+    s.text(0, -24 / 1.5, "SECTION A-A (pad height exaggerated)", size=7)
+    s.leader(r465 - (r465 - r41) / 2, CAP_T + ph, 22, 8,
+             f"PAD {CAP_PAD_H:g} PROUD - presses OUTER race only")
     finish(pdf, fig, "sheet1_cap.png")
 
 
@@ -440,14 +444,15 @@ def sheet_deck(pdf):
 # ------------------------------------------------------- sheet 5: top plate
 def sheet_top(pdf):
     fig, ax = new_sheet(
-        pdf, 5, "TOP PLATE + STANDOFFS", "TOP-PLATE", "PA12 MJF / 6061-T6 (10 THK)",
+        pdf, 5, "TOP PLATE + STANDOFFS", "TOP-PLATE", "PA12 MJF / 6061-T6 (12 THK = 7005 race width)",
         "1 (+4 standoffs)", "1:1",
         notes=(
-            "Same bearing bore + cap-bolt pattern as the deck (47.0 bores, 4x 4.5 on Ø58 BCD per bore).",
+            "Same bearing bore + cap-bolt pattern as the deck (47.0 bores, 4x 4.5 on Ø58 BCD per bore). "
+            "12 THK = the 7005 race width: the race sits flush with both faces (flat caps seat on the plate).",
             f"Standoff bolt holes moved OUT to (±{STANDOFF_PTS[0][0]:g}, ±{STANDOFF_PTS[0][1]:g}) so the "
             f"Ø{CAP_OD:g} caps clear the standoff bosses (they collided with the old Ø62 caps at ±60,±32).",
             f"4x standoffs Ø12 x {STANDOFF:g}, Ø5.2 clearance bore THRU. Each stack is THROUGH-BOLTED: "
-            f"one M5 x 70 SHCS from the plate top, nyloc + washer under the deck (no threads in the standoff).",
+            f"one M5 x 75 SHCS from the plate top, nyloc + washer under the deck (no threads in the standoff; grip 64).",
         ))
     v = View(ax, 145, 150, 1.0)
     W, H = TOPP_W / 2, TOPP_H / 2
@@ -540,10 +545,10 @@ def sheet_assy(pdf):
     tx, ty = 252, 230
     ax.text(tx, ty, "HARDWARE (per machine)", fontsize=8, weight="bold", color=INK)
     hw = [
-        ("16x", "M4 x 35 SHCS + nyloc + washers", "bearing cap pairs, 4 per bore stack (2 bores x 2 plates)"),
+        ("16x", "M4 x 30 SHCS + nyloc + washers", "bearing cap pairs, 4 per bore stack (grip 22 both plates)"),
         ("8x", "M5 x 16 SHCS + washer", "carriage lock bolts (4 per side)"),
         ("12x", "M5 x 20 SHCS", "fin flanges -> deck underside (10-deep flange, full heat-set)"),
-        ("4x", "M5 x 70 SHCS + nyloc", "top plate -> standoff -> deck through-bolt (one per standoff)"),
+        ("4x", "M5 x 75 SHCS + nyloc", "top plate -> standoff -> deck through-bolt (one per standoff, grip 64)"),
         ("8x", "M6 x 18 SHCS", "motor flange -> carriage from below (full 8 mm engagement)"),
         ("2x", "M6 x 40 jackscrew + jam nut", "tensioner"),
         ("2x", "M25x1.5 shaft locknut (KM5)", "bearing preload"),
