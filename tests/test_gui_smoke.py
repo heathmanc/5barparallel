@@ -924,6 +924,19 @@ def test_drives_tab_jog_targets_selected_axis(qapp, tmp_path):
     tab._stop_poller()
 
 
+def test_drives_tab_scrolls_and_pins_status(qapp, tmp_path):
+    """The tab grew tall; its sections must live in a scroll area while the
+    status line stays pinned (a direct child) so it's never cut off."""
+    from PySide6.QtWidgets import QScrollArea
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    assert tab.findChild(QScrollArea) is not None
+    # status label is parented to the tab itself, not the scrolled content
+    assert tab.status_label.parent() is tab
+
+
 def test_drives_tab_coordinated_move(qapp, tmp_path):
     """Two-drive bench: the coordinated-move button ramps both axes together to
     their (independently signed) targets off one synchronized stream."""
