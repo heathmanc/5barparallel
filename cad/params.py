@@ -89,7 +89,11 @@ FIN_BO = 57.5                          # fin wall outer face (5 thick)
 FIN_A_OUT = 62.0                       # outboard fin wall ends (a)  [both +-]
 FIN_A_INN = 30.0                       # inboard fin wall forward end (a)
 FLG_B = 62.0                           # fin top flange out to frame edge
-FLG_T = 6.0                            # fin top flange thickness (z 46..52)
+FLG_T = 10.0                           # fin top flange thickness (z 42..52):
+                                       # deep enough for a full M5 heat-set, so
+                                       # the deck bolts get real engagement.
+                                       # Laterally outside the belt corridor,
+                                       # so overlapping the belt z-band is fine.
 FLG_A_INN = 20.0                       # inboard flange forward end (a)
 FIN_BOLT_B = 57.25                     # fin->deck M5 line (mid-flange)
 FIN_BOLTS_OUT = (-52.0, 0.0, 50.0)     # a-positions, outboard fin
@@ -133,7 +137,8 @@ DECK_PTS = [(-72.0, 62.0), (72.0, 62.0), (147.0, -60.0), (147.0, -178.0),
             (-147.0, -178.0), (-147.0, -60.0)]
 BED = 300.0                            # print bed (square)
 STANDOFF_PTS = [(64.0, 36.0), (64.0, -36.0), (-64.0, 36.0), (-64.0, -36.0)]
-TOPP_W, TOPP_H = 150.0, 92.0
+TOPP_W, TOPP_H = 156.0, 92.0           # wide enough that the O72 caps at
+                                       # +-40 stay fully on the plate
 
 # TCP joint (unchanged)
 SPINDLE_OD, SPINDLE_ID = 20.0, 16.2
@@ -254,6 +259,8 @@ def check_layout(verbose: bool = False) -> list:
     so = math.hypot(STANDOFF_PTS[0][0] - HX, STANDOFF_PTS[0][1])
     m = so - CAP_OD / 2 - 6.0
     ok(m >= 1.0, m - 1.0, "cap clears standoff boss")
+    m = TOPP_W / 2 - (HX + CAP_OD / 2)
+    ok(m >= 1.0, m - 1.0, "top plate fully covers the O72 caps")
     m = CAP_BCD / 2 - CAP_BOLT_D / 2 - CAP_SPIGOT / 2
     ok(m >= 2.0, m - 2.0, "cap bolt hole to register spigot")
 

@@ -233,8 +233,9 @@ def belt(z):
 
 def motor(mp_top):
     """A6M80-750 stand-in: 80 sq flange x10, O70x3 pilot, O19x38 shaft, 80 sq
-    body. Flange top sits under the carriage (top face at mp_top)."""
-    dz = mp_top - MP_T - 5
+    body. Flange top face lands ON the carriage underside (mp_top - MP_T) with
+    the O70 pilot spigot up inside the carriage's O71 bore."""
+    dz = mp_top - MP_T
     m = cq.Workplane("XY").box(80, 80, 10).translate((0, 0, -5))
     m = m.union(cq.Workplane("XY").circle(35).extrude(3))
     m = m.union(cq.Workplane("XY").circle(9.5).extrude(38))
@@ -374,7 +375,7 @@ deck = deck.translate((0, 0, DECK_Z0))
 P.append((deck, (0.35, 0.5, 0.65), "bottom_deck"))
 
 # --- top plate (small, over the shoulders) --------------------------------- #
-plate_t = (cq.Workplane("XY").box(150, 92, TOPP_T).edges("|Z").fillet(8)
+plate_t = (cq.Workplane("XY").box(TOPP_W, TOPP_H, TOPP_T).edges("|Z").fillet(8)
            .faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47)
            .faces(">Z").workplane().pushPoints([(sx + bx, by) for sx in (HX, -HX) for bx, by in BCD]).hole(4.4)
            .faces(">Z").workplane().pushPoints(STANDOFF_PTS).hole(5.2))

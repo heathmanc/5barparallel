@@ -167,8 +167,10 @@ def new_sheet(pdf, no, title, part, material, qty, scale, notes=()):
     tol = ("GENERAL TOLERANCES UNLESS NOTED:  X ±0.5   X.X ±0.2   "
            "HOLES +0.2/-0   ANGLES ±0.5°   BREAK ALL EDGES 0.3")
     ax.text(14, 276, tol, fontsize=6.5, color=INK)
+    ax.text(14, 271.5, "DUAL MATERIAL CALLOUTS: select ONE per order — printed parts take brass "
+            "heat-set inserts at every thread callout; 6061 parts are tapped.", fontsize=6.5, color=INK)
     for i, n in enumerate(notes):
-        ax.text(14, 269 - 5.2 * i, f"{i + 1}. {n}", fontsize=6.5, color=INK)
+        ax.text(14, 265 - 5.2 * i, f"{i + 1}. {n}", fontsize=6.5, color=INK)
     return fig, ax
 
 
@@ -184,7 +186,7 @@ def sheet_cap(pdf):
         pdf, 1, "BEARING RETAINER CAP", "BRG-CAP", "PA12 MJF / 6061-T6", 8, "1.5:1",
         notes=(
             "One cap above AND one below each 7005 bearing bore; the pair bolts together THROUGH the plate "
-            "with 4x M4x30 SHCS + nyloc (plate holes 4.5 on the same BCD).",
+            "with 4x M4x35 SHCS + nyloc (plate holes 4.5 on the same BCD; grip 26 at the deck, 20 at the plate).",
             "The 46.6 spigot registers in the 47.0 plate bore. Its 41.0-46.6 face ring presses the bearing "
             "OUTER race only; the bore is relieved inboard of 41.0 to clear the rotating inner race.",
             "Build one cap spigot-UP and one spigot-DOWN per bore (same part, flipped).",
@@ -238,7 +240,7 @@ def sheet_carriage(pdf):
     fig, ax = new_sheet(
         pdf, 2, "SLIDING MOTOR CARRIAGE", "CARRIAGE", "PA12 MJF / 6061-T6", 2, "1:1",
         notes=(
-            "Motor (A6M80, 80 sq flange) mounts from BELOW: 4x M6x16 SHCS up through the motor flange "
+            "Motor (A6M80, 80 sq flange) mounts from BELOW: 4x M6x18 SHCS up through the motor flange "
             "into the four M6 positions. PRINTED part: M6 brass heat-set inserts. 6061: tap M6.",
             f"The four slots take M5x16 SHCS + washer down into the cradle frame bosses directly beneath; "
             f"slot length gives ±{TENSION:g} mm of tension travel.",
@@ -266,7 +268,7 @@ def sheet_carriage(pdf):
     v.dimv(-LOCK_B, LOCK_B, -L, -14, f"{2 * LOCK_B:g}")
     v.leader(0, PILOT_D / 2, 30, 14, f"Ø{PILOT_D:g} THRU (motor pilot)")
     v.leader(MOTOR_BCD / 2 * 0.707, -MOTOR_BCD / 2 * 0.707, 26, -12,
-             f"4x M6 ON Ø{MOTOR_BCD:g} BCD AT 45°")
+             f"4x M6 THRU ON Ø{MOTOR_BCD:g} BCD AT 45° (insert/tap per material)")
     v.leader(LOCK_A + SLOT_L / 2 - 2, LOCK_B, 22, 10,
              f"4x SLOT {SLOT_L:g} x {SLOT_W:g} THRU")
     v.leader(L, 0, 14, -22, "JACKSCREW PAD (this edge)")
@@ -287,11 +289,13 @@ def sheet_cradle(pdf):
         notes=(
             "ONE printed part per motor = window frame + two shear fins + jack block. The RH part is the "
             "exact MIRROR of the LH drawn here; fin/wall heights differ per the table (belt planes stagger).",
-            "Fin top flanges bolt UP into the deck underside: 3x M5 heat-set per fin (deck holes 5.2 THRU, "
-            "M5x16 SHCS from the deck top).",
+            "Fin top flanges (10 thick - full-depth M5 heat-set) bolt UP into the deck underside: 3x M5 per fin, "
+            "M5x20 SHCS from the deck top (deck holes 5.2 THRU; ~8 mm engagement).",
             "The four M5 positions in the frame border take the carriage lock bolts — fit heat-set inserts.",
             "M6 heat-set (or tapped) jackscrew boss in the block; jam nut on the screw against the block face.",
             "The chamfered corner keeps the two cradles clear of the machine centreline — do not 'square it up'.",
+            f"FIN WALLS: inner faces at b = ±{52.5:g}, {5:g} thick, rising to the deck underside. Outboard wall "
+            f"spans a = -66..+62, inboard a = -66..+30. The inner faces guide the carriage edges (0.5 nominal).",
             "Install the belt around both pulleys BEFORE bolting the deck down (the fins close the corridor).",
         ))
     v = View(ax, 118, 158, 0.9)
@@ -329,6 +333,13 @@ def sheet_cradle(pdf):
              f"CHAMFER ({ch0[0]:.1f},{ch0[1]:g}) TO ({ch1[0]:g},{ch1[1]:.1f})")
     v.text(0, FLG_B + 16, "PLAN — LH PART (frame top; fins rise toward viewer)",
            size=7)
+    v.text(0, -FR_B - 26, "DATUM: origin at frame centre. +a = toward the shoulder "
+           "(jack-block end), +b = toward the OUTBOARD fin. All holes in the HOLE TABLE.",
+           size=6)
+    # jack block + fin wall dimensions
+    v.dimh(BLK_A0, BLK_A1, -BLK_B, -8, f"{BLK_A1 - BLK_A0:g}")
+    v.dimv(-BLK_B, BLK_B, BLK_A1, 14, f"{2 * BLK_B:g}")
+
     # elevation (view along -b: outboard fin in front)
     e = View(ax, 262, 196, 0.9)
     ftL = MPL_TOP - MP_T
@@ -343,9 +354,10 @@ def sheet_cradle(pdf):
     e.dimv(DECK_Z0 - FLG_T, DECK_Z0, -FR_A, -26, f"{FLG_T:g} FLANGE")
     e.leader(BLK_A1, ftL + JACK_Z_OFF, -56, -34,
              f"M6 AXIS +{JACK_Z_OFF:g} ABOVE FRAME TOP", ha="right")
+    e.dimv(ftL, ftL + BLK_H, BLK_A1, 30, f"{BLK_H:g} BLOCK")
     e.text(-30, ftL - FR_T - 46, "ELEVATION (outboard fin)", size=7)
     # LH/RH table
-    ty = 96
+    ty = 158
     ax.text(262, ty + 20, "PART TABLE", fontsize=8, weight="bold", color=INK)
     rows = [("", "FRAME TOP z", "WALL H (frame btm→deck)", "MIRROR"),
             ("CRADLE-L", f"{MPL_TOP - MP_T:g}", f"{DECK_Z0 - (MPL_TOP - MP_T - FR_T):g}", "as drawn"),
@@ -354,6 +366,30 @@ def sheet_cradle(pdf):
         for j, cell in enumerate(r):
             ax.text(262 + j * 38, ty + 10 - i * 7, cell, fontsize=6.5, color=INK,
                     weight="bold" if i == 0 else "normal")
+    # hole coordinate table (a, b from the frame-centre datum) — LH part;
+    # the RH (mirrored) part uses the same table with b negated
+    hy = ty - 30
+    ax.text(262, hy, "HOLE TABLE (a, b) — LH part; RH = same with b negated",
+            fontsize=7, weight="bold", color=INK)
+    hrows = ([("H%d" % (i + 1), a, FIN_BOLT_B, "M5 heat-set, fin flange (outboard)")
+              for i, a in enumerate(FIN_BOLTS_OUT)]
+             + [("H%d" % (i + 4), a, -FIN_BOLT_B, "M5 heat-set, fin flange (inboard)")
+                for i, a in enumerate(FIN_BOLTS_INN)]
+             + [("L%d" % (i + 1), sa, sb, "M5 heat-set, carriage lock")
+                for i, (sa, sb) in enumerate(
+                    [(x, y) for x in (LOCK_A, -LOCK_A) for y in (LOCK_B, -LOCK_B)])]
+             + [("J1", (BLK_A0 + BLK_A1) / 2, 0.0, "M6 heat-set, jackscrew (axis "
+                 "horizontal, +%g above frame top)" % JACK_Z_OFF)])
+    for col in (0, 1):
+        ax.text(262 + col * 78, hy - 6, "ID      a        b   SPEC", fontsize=5.6,
+                family="monospace", weight="bold", color=INK)
+    for i, (hid, a, b, spec) in enumerate(hrows):
+        col, row = divmod(i, 7)
+        spec_short = spec.split(",")[0] + "," + spec.split(",")[1].split("(")[0] \
+            if "(" in spec else spec
+        ax.text(262 + col * 78, hy - 11 - row * 4.6,
+                f"{hid:<3} {a:7.2f} {b:7.2f} {spec_short[:26]}",
+                fontsize=5.0, family="monospace", color=INK)
     finish(pdf, fig, "sheet3_cradle.png")
 
 
@@ -409,7 +445,8 @@ def sheet_top(pdf):
             "Same bearing bore + cap-bolt pattern as the deck (47.0 bores, 4x 4.5 on Ø58 BCD per bore).",
             f"Standoff bolt holes moved OUT to (±{STANDOFF_PTS[0][0]:g}, ±{STANDOFF_PTS[0][1]:g}) so the "
             f"Ø{CAP_OD:g} caps clear the standoff bosses (they collided with the old Ø62 caps at ±60,±32).",
-            f"4x standoffs Ø12 x {STANDOFF:g} (M5 clearance 5.2 bore), deck top to plate bottom.",
+            f"4x standoffs Ø12 x {STANDOFF:g}, Ø5.2 clearance bore THRU. Each stack is THROUGH-BOLTED: "
+            f"one M5 x 70 SHCS from the plate top, nyloc + washer under the deck (no threads in the standoff).",
         ))
     v = View(ax, 145, 150, 1.0)
     W, H = TOPP_W / 2, TOPP_H / 2
@@ -433,7 +470,7 @@ def sheet_top(pdf):
            f"{2 * STANDOFF_PTS[0][1]:g}")
     v.leader(HX, 47.0 / 2 * 0.707, 26, 16, "2x Ø47.0 +0.025/0 THRU")
     v.leader(-HX + CAP_BCD / 2 * 0.707, -CAP_BCD / 2 * 0.707, -26, -14,
-             f"8x Ø{CAP_BOLT_D:g} THRU ON Ø{CAP_BCD:g} BCD", ha="right")
+             f"8x Ø{CAP_BOLT_D:g} THRU ON Ø{CAP_BCD:g} BCD, CLOCKED 45° (= deck C-holes)", ha="right")
     v.leader(STANDOFF_PTS[0][0], STANDOFF_PTS[0][1], 16, 10, "4x Ø5.2 THRU")
     v.text(0, -H - 34, "PLAN", size=7)
     # standoff detail
@@ -502,11 +539,11 @@ def sheet_assy(pdf):
     tx, ty = 252, 230
     ax.text(tx, ty, "HARDWARE (per machine)", fontsize=8, weight="bold", color=INK)
     hw = [
-        ("8x", "M4 x 30 SHCS + nyloc + washers", "bearing cap pairs, thru plate"),
+        ("16x", "M4 x 35 SHCS + nyloc + washers", "bearing cap pairs, 4 per bore stack (2 bores x 2 plates)"),
         ("8x", "M5 x 16 SHCS + washer", "carriage lock bolts (4 per side)"),
-        ("12x", "M5 x 16 SHCS", "fin flanges -> deck underside"),
-        ("8x", "M5 x 16 SHCS", "deck/top-plate standoff bolts"),
-        ("8x", "M6 x 16 SHCS", "motor flange -> carriage (from below)"),
+        ("12x", "M5 x 20 SHCS", "fin flanges -> deck underside (10-deep flange, full heat-set)"),
+        ("4x", "M5 x 70 SHCS + nyloc", "top plate -> standoff -> deck through-bolt (one per standoff)"),
+        ("8x", "M6 x 18 SHCS", "motor flange -> carriage from below (full 8 mm engagement)"),
         ("2x", "M6 x 40 jackscrew + jam nut", "tensioner"),
         ("2x", "M25x1.5 shaft locknut (KM5)", "bearing preload"),
         ("--", "M5/M6 brass heat-set inserts", "all printed bosses"),
