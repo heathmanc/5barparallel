@@ -21,6 +21,7 @@ from .cia402 import (
     next_controlword,
 )
 from .ethercat_driver import EtherCatRobotDriver
+from .igh_master import IgHMaster
 from .master import (
     DriveProcessData,
     EtherCatMaster,
@@ -56,6 +57,7 @@ __all__ = [
     "MasterError",
     "PysoemMaster",
     "SimulatedEtherCatMaster",
+    "IgHMaster",
     "EtherCatRobotDriver",
     "pack_outputs",
     "unpack_inputs",
