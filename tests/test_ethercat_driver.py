@@ -67,6 +67,49 @@ def test_cartesian_jog_requires_reference():
         drv.jog_cartesian(5.0, 0.0)
 
 
+class _D:
+    def __init__(self):
+        self.actual_position = 0
+
+
+def test_settle_waits_for_lagging_servo():
+    # A real servo lags its target and only catches up after a few cycles; the
+    # settle loop must wait for it instead of failing immediately.
+    class LaggingMaster:
+        cycle_dt_s = 0.002
+
+        def __init__(self):
+            self.drives = [_D(), _D()]
+            self._n = 0
+
+        def exchange(self):
+            self._n += 1
+            if self._n >= 3:                       # settles after a few exchanges
+                for d in self.drives:
+                    d.actual_position = 1000
+
+    m = LaggingMaster()
+    drv = EtherCatRobotDriver(m)
+    drv.position_tol_counts = 5
+    assert drv._settle((1000, 1000), timeout_s=1.0) == (1000, 1000)
+    assert m._n >= 3
+
+
+def test_settle_times_out_if_never_reached():
+    class StuckMaster:
+        cycle_dt_s = 0.002
+
+        def __init__(self):
+            self.drives = [_D(), _D()]
+
+        def exchange(self):
+            pass                                   # never catches up
+
+    drv = EtherCatRobotDriver(StuckMaster())
+    drv.position_tol_counts = 5
+    assert drv._settle((1000, 1000), timeout_s=0.05) is None
+
+
 def test_jog_counts_multi_moves_both_axes_together():
     # Two-drive bench: coordinated joint move ramps both axes to their targets
     # off one synchronized profile (opposite signs to prove independent direction).
