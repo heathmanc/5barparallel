@@ -267,9 +267,11 @@ class _RecordingDriver(DryRunRobotDriver):
     def __init__(self, home_angles=(140.5406, 39.4594)):
         super().__init__(home_angles=home_angles)
         self.trace = []
+        self.move_speeds = []
 
-    def move_to_angles(self, left_deg, right_deg):
-        super().move_to_angles(left_deg, right_deg)
+    def move_to_angles(self, left_deg, right_deg, speed_mm_s=None):
+        super().move_to_angles(left_deg, right_deg, speed_mm_s)
+        self.move_speeds.append(speed_mm_s)
         self.trace.append(("move", round(left_deg, 2), round(right_deg, 2)))
 
     def set_vacuum(self, on):
@@ -331,11 +333,11 @@ def test_pick_sequence_vents_head_on_move_failure():
     val = WorkspaceValidator(kin)
 
     class _Failing(_RecordingDriver):
-        def move_to_angles(self, left_deg, right_deg):
+        def move_to_angles(self, left_deg, right_deg, speed_mm_s=None):
             # fail on the drop move — after vacuum is already ON.
             if self.vacuum_on:
                 raise RobotDriverError("simulated fault mid-move")
-            super().move_to_angles(left_deg, right_deg)
+            super().move_to_angles(left_deg, right_deg, speed_mm_s)
 
     drv = _Failing()
     drv.enable()

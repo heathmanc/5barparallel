@@ -88,20 +88,27 @@ class DirectJobRunner(JobRunner):
 
     def __init__(self, driver: RobotDriver,
                  sequence: Optional[PickSequence] = None,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 sleep: Callable[[float], None] = time.sleep,
+                 move_speed_mm_s: Optional[float] = None) -> None:
         self.driver = driver
         self.sequence = sequence or PickSequence()
         self._sleep = sleep
+        # Optional Cartesian speed cap for the travel moves (None = the driver's
+        # configured limit). The bench demo passes a gentle speed so a big move
+        # can't outrun the servo and trip an excessive-position-deviation alarm.
+        self.move_speed_mm_s = move_speed_mm_s
         self._id = 0
 
     def run(self, job: PickPlaceJob) -> JobResult:
         self._id += 1
         try:
             # Pick: travel over the cover, plunge, grip, lift.
-            self.driver.move_to_angles(job.pick.left_deg, job.pick.right_deg)
+            self.driver.move_to_angles(job.pick.left_deg, job.pick.right_deg,
+                                       speed_mm_s=self.move_speed_mm_s)
             self._grip()
             # Place: travel over the hole, plunge, release, lift.
-            self.driver.move_to_angles(job.drop.left_deg, job.drop.right_deg)
+            self.driver.move_to_angles(job.drop.left_deg, job.drop.right_deg,
+                                       speed_mm_s=self.move_speed_mm_s)
             self._release()
         except RobotDriverError as exc:
             self._make_safe()
@@ -134,10 +141,12 @@ class DirectJobRunner(JobRunner):
 
 
 def make_job_runner(driver: RobotDriver,
-                    sequence: Optional[PickSequence] = None) -> JobRunner:
+                    sequence: Optional[PickSequence] = None,
+                    move_speed_mm_s: Optional[float] = None) -> JobRunner:
     """Every driver runs jobs the same way: travel to the cover, grip, travel to
-    the hole, release — actuating the pick head at each end."""
-    return DirectJobRunner(driver, sequence)
+    the hole, release — actuating the pick head at each end. ``move_speed_mm_s``
+    optionally caps the travel speed (the bench demo runs gentle)."""
+    return DirectJobRunner(driver, sequence, move_speed_mm_s=move_speed_mm_s)
 
 
 # --------------------------------------------------------------------------- #
@@ -337,12 +346,16 @@ def _first_valid(validator, candidates: List[Point]) -> Optional[Point]:
     return None
 
 
+DEMO_MOVE_SPEED_MM_S = 60.0   # gentle default so the demo can't outrun the servo
+
+
 def run_demo_cycle(
     controller: RobotTestController,
     pick_xy: Point,
     drops: List[Point],
     *,
     pick_sequence: Optional[PickSequence] = None,
+    move_speed_mm_s: Optional[float] = DEMO_MOVE_SPEED_MM_S,
     runner: Optional[JobRunner] = None,
     should_stop: Optional[Callable[[], bool]] = None,
     on_step: Optional[Callable[[CycleStep], None]] = None,
@@ -360,7 +373,8 @@ def run_demo_cycle(
         return CycleResult(ok=False, reason="drives are disabled — Enable them first")
     if not driver.is_referenced:
         return CycleResult(ok=False, reason="robot is not referenced — Set Home first")
-    runner = runner or make_job_runner(driver, pick_sequence)
+    runner = runner or make_job_runner(driver, pick_sequence,
+                                       move_speed_mm_s=move_speed_mm_s)
     kin, validator = controller.kin, controller.validator
     result = CycleResult()
     for i, drop_xy in enumerate(drops):

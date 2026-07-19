@@ -131,12 +131,13 @@ class _DemoWorker(QThread):
     done = Signal(str)   # final message (prefixed 'FAIL:' on failure)
 
     def __init__(self, controller, make_targets, loop: bool,
-                 pick_sequence=None, parent=None) -> None:
+                 pick_sequence=None, move_speed_mm_s=None, parent=None) -> None:
         super().__init__(parent)
         self._controller = controller
         self._make_targets = make_targets
         self._loop = loop
         self._pick_sequence = pick_sequence
+        self._move_speed_mm_s = move_speed_mm_s
         self._stop = False
 
     def stop(self) -> None:
@@ -159,6 +160,7 @@ class _DemoWorker(QThread):
                 res = run_demo_cycle(
                     self._controller, pick, drops,
                     pick_sequence=self._pick_sequence,
+                    move_speed_mm_s=self._move_speed_mm_s,
                     should_stop=lambda: self._stop, on_step=_on_step,
                 )
                 passes += 1
@@ -453,11 +455,16 @@ class EtherCatTab(QWidget):
             return demo_pick_and_place_targets(ctrl.validator, ctrl.home_xy)
 
         loop = self.demo_loop_chk.isChecked()
+        # Travel at the (gentle) jog speed the operator has already dialled in, so
+        # a big demo move can't outrun the servo and trip a position-deviation
+        # alarm. The pick head still uses the real dwell timing.
+        speed = float(self.jog_speed_mm.value())
         self._set_motion_enabled(False)          # no jog/enable while it runs
         self.sim_demo_btn.setText("Stop demo")
-        self._status("Running sample pick & place…", theme.TEXT)
+        self._status(f"Running sample pick & place at {speed:.0f} mm/s…", theme.TEXT)
         self._demo_worker = _DemoWorker(ctrl, make_targets, loop,
-                                        pick_sequence=self._demo_sequence)
+                                        pick_sequence=self._demo_sequence,
+                                        move_speed_mm_s=speed)
         self._demo_worker.step.connect(lambda m: self._status(m, theme.TEXT))
         self._demo_worker.done.connect(self._on_demo_done)
         self._demo_worker.start()

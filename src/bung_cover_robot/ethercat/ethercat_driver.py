@@ -258,7 +258,8 @@ class EtherCatRobotDriver(RobotDriver):
         logger.info("home set at current pose -> %s", self._home_angles)
 
     # --- motion -------------------------------------------------------------
-    def move_to_angles(self, left_deg: float, right_deg: float) -> None:
+    def move_to_angles(self, left_deg: float, right_deg: float,
+                       speed_mm_s: Optional[float] = None) -> None:
         if self.is_faulted:
             raise RobotDriverError(
                 f"cannot move: drives are faulted (code {self.fault_code()})")
@@ -269,8 +270,11 @@ class EtherCatRobotDriver(RobotDriver):
             raise RobotDriverError("cannot move: robot is not referenced")
         start_xy = self.kin.forward(*cur)
         goal_xy = self.kin.forward(left_deg, right_deg)
+        limits = self.limits
+        if speed_mm_s and speed_mm_s > 0:
+            limits = dataclasses.replace(limits, speed_mm_s=float(speed_mm_s))
         try:
-            traj = plan_linear_move(self.kin, self.validator, start_xy, goal_xy, self.limits)
+            traj = plan_linear_move(self.kin, self.validator, start_xy, goal_xy, limits)
         except TrajectoryError as exc:
             raise RobotDriverError(f"move planning failed: {exc}") from exc
         self._stream(traj)
