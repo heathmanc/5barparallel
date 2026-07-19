@@ -157,6 +157,14 @@ This is `run_demo_cycle` + `demo_pick_and_place_targets` (both in
 `app/cycle_manager.py`), the same `DirectJobRunner` the vision cycle uses — it
 just supplies fixed targets instead of camera detections.
 
+**Speed.** The demo travels at the **jog speed** set in the jog box (a gentle
+default), *not* the full `speed_mm_s` motion limit — a big point-to-point move at
+the tuned maximum can outrun an under-tuned servo and trip the drive's
+**excessive-position-deviation** alarm (StepperOnline A6 **Er.47**, the ESI's
+"Excessive position deviation threshold"). If you still see Er.47, lower the jog
+speed further, drop `accel_mm_s2`, or raise the drive's deviation threshold /
+retune the loop gains — the arm is being commanded faster than it can follow.
+
 ## 5. Safety (hardware, not software)
 
 - **E-stop → hardwired torque removal, independent of the PC.** Two cases:

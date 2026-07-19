@@ -256,3 +256,35 @@ def test_run_demo_cycle_stops_on_request():
                          on_step=seen.append)
     assert "stopped" in res.reason
     assert len(res.steps) == 2                  # halted early
+
+
+def test_run_demo_cycle_caps_travel_speed():
+    """The demo throttles the travel moves (a big move at full speed can trip an
+    excessive-position-deviation alarm on a real servo)."""
+    from bung_cover_robot.app.cycle_manager import DEMO_MOVE_SPEED_MM_S
+
+    class _SpeedRec(DryRunRobotDriver):
+        def __init__(self):
+            super().__init__(home_angles=(140.5406, 39.4594))
+            self.speeds = []
+
+        def move_to_angles(self, left_deg, right_deg, speed_mm_s=None):
+            super().move_to_angles(left_deg, right_deg, speed_mm_s)
+            self.speeds.append(speed_mm_s)
+
+    from bung_cover_robot.app.robot_test_controller import RobotTestController
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    drv = _SpeedRec()
+    ctrl = RobotTestController(drv, kin, val)
+    ctrl.enable()
+    ctrl.home_reference()
+    nest, drops = demo_pick_and_place_targets(val, ctrl.home_xy, rng=random.Random(0))
+    # default: the gentle DEMO_MOVE_SPEED_MM_S is applied to every travel move
+    run_demo_cycle(ctrl, nest, drops, pick_sequence=PickSequence(0, 0, 0))
+    assert drv.speeds and all(s == DEMO_MOVE_SPEED_MM_S for s in drv.speeds)
+    # explicit override is honoured
+    drv.speeds.clear()
+    run_demo_cycle(ctrl, nest, drops, pick_sequence=PickSequence(0, 0, 0),
+                   move_speed_mm_s=25.0)
+    assert all(s == 25.0 for s in drv.speeds)

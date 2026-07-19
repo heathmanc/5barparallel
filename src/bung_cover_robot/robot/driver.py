@@ -86,9 +86,12 @@ class RobotDriver(ABC):
         """De-energize the drives."""
 
     @abstractmethod
-    def move_to_angles(self, left_deg: float, right_deg: float) -> None:
+    def move_to_angles(self, left_deg: float, right_deg: float,
+                       speed_mm_s: Optional[float] = None) -> None:
         """Command an absolute move of both shoulders. Raises RobotDriverError
-        if the drives are not enabled."""
+        if the drives are not enabled. ``speed_mm_s`` optionally caps the
+        Cartesian speed for this move (default: the driver's configured limit);
+        used to run gentle bench/demo moves well under the tuned maximum."""
 
     @abstractmethod
     def read_angles(self) -> Optional[Angles]:
@@ -173,7 +176,8 @@ class DryRunRobotDriver(RobotDriver):
         self._angles = None
         logger.info("[dry-run] drives DISABLED (reference cleared)")
 
-    def move_to_angles(self, left_deg: float, right_deg: float) -> None:
+    def move_to_angles(self, left_deg: float, right_deg: float,
+                       speed_mm_s: Optional[float] = None) -> None:
         if not self._enabled:
             raise RobotDriverError("cannot move: drives are disabled")
         self._angles = (left_deg, right_deg)
