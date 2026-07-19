@@ -158,16 +158,15 @@ class EtherCatTab(QWidget):
         top = QHBoxLayout()
         top.addWidget(self._build_connection(), 1)
         root.addLayout(top)
-        drives = QHBoxLayout()
+        # Drive-0 / Drive-1 status (narrow) with the jog pad to their right.
+        mid = QHBoxLayout()
         self._drive_panels = [self._build_drive_panel("Drive 0 — left shoulder"),
                               self._build_drive_panel("Drive 1 — right shoulder")]
         for panel, _ in self._drive_panels:
-            drives.addWidget(panel, 1)
-        root.addLayout(drives)
-        motion = QHBoxLayout()
-        motion.addWidget(self._build_jog(), 1)
-        motion.addWidget(self._build_coordinated(), 1)
-        root.addLayout(motion)
+            mid.addWidget(panel, 2)
+        mid.addWidget(self._build_jog(), 3)
+        root.addLayout(mid)
+        # Parameters take the remaining height (both tables expand vertically).
         root.addWidget(self._build_parameters(), 1)
 
         self.status_label = QLabel("Not connected — connect the EtherCAT master, "
@@ -236,9 +235,12 @@ class EtherCatTab(QWidget):
         # These carry live numbers. Fixed-width formatting (in _on_snapshot) keeps
         # the text a constant length; Ignored horizontal policy stops any label
         # from driving the panel width, so the two-panel split can't jitter as
-        # counts change.
+        # counts change. Wrap the long lines so the narrow panels don't clip the
+        # degrees / following error.
         for lbl in (state, counts, detail):
             lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        counts.setWordWrap(True)
+        detail.setWordWrap(True)
         v.addWidget(state)
         v.addWidget(counts)
         v.addWidget(detail)
@@ -309,43 +311,6 @@ class EtherCatTab(QWidget):
         g.addWidget(warn, 4, 0, 1, 5)
         return box
 
-    def _build_coordinated(self) -> QGroupBox:
-        """Coordinated joint move: both drives ramp through one shared time
-        profile (start + finish together). Joint-space (raw counts), so it works
-        before the arm is in the linkage / referenced — the lockstep-streaming
-        and per-axis-mapping bench test."""
-        box = QGroupBox("Coordinated joint move — raw counts  (motion)")
-        g = QGridLayout(box)
-        g.setContentsMargins(8, 6, 8, 6)
-        g.setSpacing(4)
-        g.addWidget(QLabel("drive 0 Δ"), 0, 0)
-        self.coord_d0 = QSpinBox()
-        self.coord_d0.setRange(-200000, 200000)
-        self.coord_d0.setValue(2000)
-        self.coord_d0.setMaximumWidth(88)
-        g.addWidget(self.coord_d0, 0, 1)
-        g.addWidget(QLabel("drive 1 Δ"), 0, 2)
-        self.coord_d1 = QSpinBox()
-        self.coord_d1.setRange(-200000, 200000)
-        self.coord_d1.setValue(-2000)
-        self.coord_d1.setMaximumWidth(88)
-        g.addWidget(self.coord_d1, 0, 3)
-        self.coord_btn = QPushButton("Move both")
-        self.coord_btn.clicked.connect(self._on_coord_move)
-        g.addWidget(self.coord_btn, 1, 0, 1, 2)
-        g.addWidget(QLabel("speed (cts/s)"), 1, 2)
-        self.coord_speed = QSpinBox()
-        self.coord_speed.setRange(100, 500000)
-        self.coord_speed.setValue(20000)
-        self.coord_speed.setMaximumWidth(88)
-        g.addWidget(self.coord_speed, 1, 3)
-        hint = QLabel("Both drives reach their count target together. Opposite "
-                      "signs check direction; small deltas first.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
-        g.addWidget(hint, 2, 0, 1, 4)
-        return box
-
     def _ec_driver(self):
         drv = self.controller.driver
         return drv if isinstance(drv, EtherCatRobotDriver) else None
@@ -370,8 +335,7 @@ class EtherCatTab(QWidget):
 
     def _set_motion_enabled(self, on: bool) -> None:
         for b in (self.enable_btn, self.disable_btn, self.ref_btn,
-                  self.xplus_btn, self.xminus_btn, self.yplus_btn, self.yminus_btn,
-                  self.coord_btn):
+                  self.xplus_btn, self.xminus_btn, self.yplus_btn, self.yminus_btn):
             b.setEnabled(on)
 
     def _on_set_home(self) -> None:
@@ -409,23 +373,6 @@ class EtherCatTab(QWidget):
             self._status(f"Jog failed: {err}", theme.DANGER)
         else:
             self._status("Jog complete.", theme.TEXT)
-
-    def _on_coord_move(self) -> None:
-        drv = self._ec_driver()
-        if drv is None:
-            self._status("Connect + enable the drives first.", theme.WARN)
-            return
-        if self._jog_worker is not None and self._jog_worker.isRunning():
-            return
-        n = len(drv.master.drives)
-        deltas = [int(self.coord_d0.value()), int(self.coord_d1.value())][:n]
-        speed = float(self.coord_speed.value())
-        self._set_motion_enabled(False)
-        self._status(f"Coordinated move {deltas} counts…", theme.TEXT)
-        self._jog_worker = _JogWorker(
-            lambda: drv.jog_counts_multi(deltas, speed_counts_s=speed))
-        self._jog_worker.done.connect(self._on_jog_done)
-        self._jog_worker.start()
 
     def _build_parameters(self) -> QGroupBox:
         box = QGroupBox("Parameters")
