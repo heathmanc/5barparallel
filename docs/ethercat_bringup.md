@@ -142,6 +142,18 @@ starts `False`), so start-up is safe; the difference is only whether a routine
 power cycle forces an operator re-home. If C00.07 is left on **incremental**, the
 drive ignores the absolute datum entirely and homes from wherever it powered up.
 
+### 4b. Spurious "drives are faulted" aborts (fixed by debounce)
+
+A demo/move can only be refused for a fault if the CiA 402 fault bit survives
+**three consecutive fresh PDO cycles** (`_confirmed_fault()`), and a CSP stream
+only aborts on **two consecutive** faulted samples. A real A6 fault LATCHES
+until reset, so the debounce can never hide one — but a single torn
+shared-memory read racing the RT daemon (or a one-cycle bus hiccup) no longer
+kills a run with a phantom "cannot move: drives are faulted". When a fault IS
+real, the error now carries the actual per-drive statusword and error code
+(e.g. `drive 0: sw=0x0218 err=0x7500`) instead of just a drive number; ignored
+transients are logged as warnings so they stay visible.
+
 ### 4a. Sample pick & place (vision bypass)
 
 The Drives tab has a **Simulate pick && place** button (in the jog box) to

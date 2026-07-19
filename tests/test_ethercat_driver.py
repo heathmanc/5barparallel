@@ -380,3 +380,38 @@ def test_full_cycle_over_simulated_ethercat():
                        pick_sequence=PickSequence(0, 0, 0))
     res = mgr.run_cycle()
     assert res.ok and len(res.placed) == 3     # the 3 reachable demo covers
+
+
+# --- transient fault debounce ------------------------------------------------ #
+def test_transient_fault_bit_does_not_kill_a_move():
+    # A single bad statusword sample (torn shared-memory read / one-cycle bus
+    # glitch) must not refuse motion: a REAL drive fault latches, a glitch
+    # clears on the next exchange. This aborted a live demo run with 'drives
+    # are faulted' while both drives were fine.
+    drv, master, kin = _driver()
+    drv.enable()
+    drv.home()
+    master.drives[0].statusword |= cia402.SW_FAULT   # one glitched sample
+    jt = kin.inverse(40.0, 250.0)
+    drv.move_to_angles(jt.left_deg, jt.right_deg)    # debounce clears it -> moves
+    l, r = drv.read_angles()
+    assert l == pytest.approx(jt.left_deg, abs=0.05)
+
+
+def test_latched_fault_still_refuses_with_detail():
+    drv, master, kin = _driver()
+    drv.enable()
+    drv.home()
+    master.inject_fault(0)                           # sim latches like a real A6
+    master.exchange()
+    jt = kin.inverse(60.0, 250.0)
+    with pytest.raises(RobotDriverError, match=r"drive fault \(drive 0: sw=0x"):
+        drv.move_to_angles(jt.left_deg, jt.right_deg)
+
+
+def test_transient_fault_bit_does_not_block_enable():
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    master.drives[1].statusword |= cia402.SW_FAULT   # glitch before enable
+    drv.enable()                                     # debounced -> enables fine
+    assert drv.is_enabled

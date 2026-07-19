@@ -124,10 +124,39 @@ class EtherCatRobotDriver(RobotDriver):
                 return i + 1        # which drive faulted (1-based); real code is SDO 0x603F
         return None
 
+    def _confirmed_fault(self) -> Optional[str]:
+        """Return a fault description only if the fault bit SURVIVES three
+        consecutive fresh PDO cycles.
+
+        A real drive fault LATCHES until it is explicitly reset, so re-reading
+        never hides one. A single bad statusword sample — a torn shared-memory
+        read racing the RT daemon, or a one-cycle bus hiccup — does not survive
+        a re-read, and must not kill a move (it aborted a demo run with
+        'drives are faulted' while both drives were verifiably fine)."""
+        for attempt in range(3):
+            if not self.is_faulted:
+                if attempt:
+                    logger.warning(
+                        "ignored transient fault bit (cleared on re-read %d)",
+                        attempt)
+                return None
+            try:
+                self.master.exchange()             # fresh process image
+            except Exception:  # noqa: BLE001 - fall through with what we have
+                break
+        if not self.is_faulted:
+            logger.warning("ignored transient fault bit (cleared on re-read)")
+            return None
+        return ", ".join(
+            f"drive {i}: sw=0x{d.statusword:04X} err=0x{d.error_code:04X}"
+            for i, d in enumerate(self.master.drives)
+            if cia402.is_fault(d.statusword))
+
     # --- enable / reset -----------------------------------------------------
     def enable(self) -> None:
-        if self.is_faulted:
-            raise RobotDriverError("drives are faulted; reset before enabling")
+        fault = self._confirmed_fault()
+        if fault:
+            raise RobotDriverError(f"drives are faulted; reset before enabling ({fault})")
         self.master.exchange()                        # fresh actual positions
         for d in self.master.drives:
             d.mode_of_operation = cia402.MODE_CSP
@@ -142,8 +171,9 @@ class EtherCatRobotDriver(RobotDriver):
         counts), other drives holding. Requires Operation Enabled; the move is
         CSP-streamed through a trapezoidal ramp so it's smooth (a step would fault
         on following error). Motion — only with the E-stop/contactor live."""
-        if self.is_faulted:
-            raise RobotDriverError(f"cannot jog: faulted (code {self.fault_code()})")
+        fault = self._confirmed_fault()
+        if fault:
+            raise RobotDriverError(f"cannot jog: drive fault ({fault})")
         if not self.is_enabled:
             raise RobotDriverError("cannot jog: enable the drive first")
         if not 0 <= drive < len(self.master.drives):
@@ -167,8 +197,9 @@ class EtherCatRobotDriver(RobotDriver):
         test of two drives streaming in lockstep off one CSP stream. Joint-space
         (no kinematics), so it is safe before the arm is in the linkage. Motion —
         only with the E-stop/contactor live. Requires Operation Enabled."""
-        if self.is_faulted:
-            raise RobotDriverError(f"cannot move: faulted (code {self.fault_code()})")
+        fault = self._confirmed_fault()
+        if fault:
+            raise RobotDriverError(f"cannot move: drive fault ({fault})")
         if not self.is_enabled:
             raise RobotDriverError("cannot move: enable the drives first")
         n = len(self.master.drives)
@@ -260,9 +291,9 @@ class EtherCatRobotDriver(RobotDriver):
     # --- motion -------------------------------------------------------------
     def move_to_angles(self, left_deg: float, right_deg: float,
                        speed_mm_s: Optional[float] = None) -> None:
-        if self.is_faulted:
-            raise RobotDriverError(
-                f"cannot move: drives are faulted (code {self.fault_code()})")
+        fault = self._confirmed_fault()
+        if fault:
+            raise RobotDriverError(f"cannot move: drive fault ({fault})")
         if not self.is_enabled:
             raise RobotDriverError("cannot move: drives are disabled")
         cur = self.read_angles()
@@ -285,8 +316,9 @@ class EtherCatRobotDriver(RobotDriver):
         """HMI/bench jog: move the TCP by (dx, dy) mm in a validated straight
         line. Requires Operation Enabled and a referenced robot. Motion — only
         with the E-stop/contactor live."""
-        if self.is_faulted:
-            raise RobotDriverError(f"cannot jog: faulted (code {self.fault_code()})")
+        fault = self._confirmed_fault()
+        if fault:
+            raise RobotDriverError(f"cannot jog: drive fault ({fault})")
         if not self.is_enabled:
             raise RobotDriverError("cannot jog: enable the drives first")
         cur = self.read_angles()
