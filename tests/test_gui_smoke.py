@@ -889,9 +889,13 @@ def test_drives_tab_bench_jog(qapp, tmp_path):
     tab._on_enable()
     assert ctrl.driver.is_enabled
     tab.jog_step.setValue(1500)
-    tab._on_jog(+1)
+    tab._on_jog(+1)                       # runs on a worker thread now
+    assert tab._jog_worker.wait(2000)
+    qapp.processEvents()
     assert ctrl.driver.master.drives[0].actual_position == 1500
     tab._on_jog(-1)
+    assert tab._jog_worker.wait(2000)
+    qapp.processEvents()
     assert ctrl.driver.master.drives[0].actual_position == 0
     tab._on_disconnect()
     tab._stop_poller()
