@@ -157,6 +157,24 @@ class EtherCatRobotDriver(RobotDriver):
             for i, d in enumerate(self.master.drives)
             if cia402.is_fault(d.statusword))
 
+    def _disabled_detail(self) -> str:
+        """Human-readable per-drive state for a 'not enabled' refusal: decoded
+        CiA 402 state + raw statusword + drive error code, with an STO hint
+        when the voltage bit is down. A drive that silently falls back to
+        SWITCH ON DISABLED (no fault) usually means the power-stage enable
+        chain blipped — STO/E-stop chatter, 24 V dip, or a drive-side sync
+        reaction — and the raw words are what identify which."""
+        parts = []
+        for i, d in enumerate(self.master.drives):
+            if cia402.is_operation_enabled(d.statusword):
+                continue
+            st = cia402.decode_state(d.statusword).value.replace("_", " ").upper()
+            hint = ("" if d.statusword & cia402.SW_VOLTAGE_ENABLED
+                    else " - voltage bit CLEAR: STO/E-stop chain open?")
+            parts.append(f"drive {i}: {st} sw=0x{d.statusword:04X} "
+                         f"err=0x{getattr(d, 'error_code', 0):04X}{hint}")
+        return "; ".join(parts) or "all drives report Operation Enabled"
+
     # --- enable / reset -----------------------------------------------------
     def enable(self) -> None:
         fault = self._confirmed_fault()
@@ -180,7 +198,8 @@ class EtherCatRobotDriver(RobotDriver):
         if fault:
             raise RobotDriverError(f"cannot jog: drive fault ({fault})")
         if not self.is_enabled:
-            raise RobotDriverError("cannot jog: enable the drive first")
+            raise RobotDriverError(
+                f"cannot jog: enable the drive first ({self._disabled_detail()})")
         if not 0 <= drive < len(self.master.drives):
             raise RobotDriverError(f"no such drive {drive}")
         self.master.exchange()                        # fresh actuals
@@ -206,7 +225,8 @@ class EtherCatRobotDriver(RobotDriver):
         if fault:
             raise RobotDriverError(f"cannot move: drive fault ({fault})")
         if not self.is_enabled:
-            raise RobotDriverError("cannot move: enable the drives first")
+            raise RobotDriverError(
+                f"cannot move: enable the drives first ({self._disabled_detail()})")
         n = len(self.master.drives)
         if len(deltas) != n:
             raise RobotDriverError(f"expected {n} axis delta(s), got {len(deltas)}")
@@ -300,7 +320,8 @@ class EtherCatRobotDriver(RobotDriver):
         if fault:
             raise RobotDriverError(f"cannot move: drive fault ({fault})")
         if not self.is_enabled:
-            raise RobotDriverError("cannot move: drives are disabled")
+            raise RobotDriverError(
+                f"cannot move: drives are disabled ({self._disabled_detail()})")
         cur = self.read_angles()
         if cur is None:
             raise RobotDriverError("cannot move: robot is not referenced")
@@ -325,7 +346,8 @@ class EtherCatRobotDriver(RobotDriver):
         if fault:
             raise RobotDriverError(f"cannot jog: drive fault ({fault})")
         if not self.is_enabled:
-            raise RobotDriverError("cannot jog: enable the drives first")
+            raise RobotDriverError(
+                f"cannot jog: enable the drives first ({self._disabled_detail()})")
         cur = self.read_angles()
         if cur is None:
             raise RobotDriverError("cannot jog: robot is not referenced — home it "

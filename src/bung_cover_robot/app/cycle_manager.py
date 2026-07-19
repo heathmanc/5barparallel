@@ -24,6 +24,7 @@ a coordinated straight-line move inside ``move_to_angles``).
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 import time
@@ -39,6 +40,8 @@ from ..vision.camera import Camera, CameraError
 from ..vision.detect_covers import CoverDetector
 from ..vision.detect_holes import HoleDetector
 from .robot_test_controller import RobotTestController
+
+logger = logging.getLogger(__name__)
 
 Point = Tuple[float, float]
 
@@ -359,6 +362,7 @@ def run_demo_cycle(
     runner: Optional[JobRunner] = None,
     should_stop: Optional[Callable[[], bool]] = None,
     on_step: Optional[Callable[[CycleStep], None]] = None,
+    auto_reenable: bool = True,
 ) -> CycleResult:
     """Drive a fixed-pick -> each-drop pick&place with full head actuation.
 
@@ -375,6 +379,7 @@ def run_demo_cycle(
         return CycleResult(ok=False, reason="robot is not referenced — Set Home first")
     runner = runner or make_job_runner(driver, pick_sequence,
                                        move_speed_mm_s=move_speed_mm_s)
+    reenables = 0
     kin, validator = controller.kin, controller.validator
     result = CycleResult()
     for i, drop_xy in enumerate(drops):
@@ -391,6 +396,20 @@ def run_demo_cycle(
                 on_step(step)
             continue
         res = runner.run(job)
+        if (not res.ok and auto_reenable and "disabled" in res.reason
+                and not driver.is_faulted):
+            # A drive fell back out of Operation Enabled WITHOUT a fault —
+            # power-stage enable-chain blip (STO/E-stop chatter, 24 V dip).
+            # Re-arm once and retry this job so a trial run survives it; a
+            # drive that won't re-arm (or a real fault) still aborts below.
+            logger.warning("demo: drive dropped out mid-run (%s) — re-enabling",
+                           res.reason)
+            try:
+                driver.enable()
+                reenables += 1
+                res = runner.run(job)
+            except Exception as exc:  # noqa: BLE001 - report the original too
+                res = JobResult(False, f"{res.reason}; re-enable failed: {exc}")
         step = CycleStep(i, drop_xy, i, pick_xy, res.ok, res.reason)
         result.steps.append(step)
         if on_step is not None:
@@ -401,6 +420,9 @@ def run_demo_cycle(
     placed = len(result.placed)
     if not result.reason:
         result.reason = f"placed {placed}/{len(drops)} covers"
+    if reenables:
+        result.reason += (f" [auto re-enabled {reenables}x after an unexpected "
+                          f"drive disable — check the STO/E-stop chain]")
     result.ok = placed > 0
     return result
 

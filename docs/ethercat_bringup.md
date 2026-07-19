@@ -142,6 +142,26 @@ starts `False`), so start-up is safe; the difference is only whether a routine
 power cycle forces an operator re-home. If C00.07 is left on **incremental**, the
 drive ignores the absolute datum entirely and homes from wherever it powered up.
 
+### 4d. Drive drops to SWITCH ON DISABLED with no fault
+
+If a drive falls out of Operation Enabled *without* a fault, the power-stage
+enable chain blipped — the drive was told (or forced) to drop torque, it did
+not trip. Usual culprits, most likely first:
+
+1. **STO / E-stop chain chatter** — a marginal contact or connector on the
+   safety relay/contactor path opens for a few ms (vibration at higher
+   speeds makes this worse). The refusal message now flags this when the
+   statusword's voltage bit is down.
+2. **24 V logic dip** — shared supply sagging under load.
+3. **Drive sync-loss reaction** configured as "servo off" (warning class)
+   rather than a latching fault.
+
+The "cannot move: drives are disabled" error now names the drive, its decoded
+CiA 402 state, and the raw statusword/error code. The bench demo auto
+re-enables ONCE per job after an unexpected disable (never after a fault) and
+tags the run result with how many times it had to — repeated auto re-enables
+mean fix the chain, not the software.
+
 ### 4c. "Move did not settle" — tolerance and settle window
 
 The end-of-move check is governed by two **Motion parameters** (Drives tab,
