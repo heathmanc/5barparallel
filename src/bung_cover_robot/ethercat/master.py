@@ -539,14 +539,9 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         scripts/ec_inspect.py; see docs/ethercat_bringup.md §3/§5c.)"""
         s = self._master.slaves[slave_pos]
         s.sdo_write(OD_MODES_OF_OPERATION, 0, bytes([self.mode & 0xFF]))
-        # Interpolation time period (0x60C2) must match the SYNC0 cycle for DC
-        # synchronous operation, or the drive sync-faults on the mismatch.
-        period_ms = max(1, int(round(self.cycle_dt_s * 1000)))
-        try:
-            s.sdo_write(OD_INTERP_TIME_PERIOD, 1, bytes([period_ms & 0xFF]))
-            s.sdo_write(OD_INTERP_TIME_PERIOD, 2, struct.pack("b", -3))   # 10^-3 s = ms
-        except Exception as exc:  # noqa: BLE001 - object may be read-only on some fw
-            logger.warning("could not set 0x60C2 interpolation period: %s", exc)
+        # NOTE: setting 0x60C2 (interpolation time period) here stopped the drive
+        # reaching OP, so it's left at the drive default until we know the correct
+        # units/value from the faults chapter. Re-enable once confirmed.
         if self.mode == cia402.MODE_PROFILE_POSITION:
             s.sdo_write(OD_PROFILE_VELOCITY, 0, struct.pack("<I", self.pp_velocity))
             s.sdo_write(OD_PROFILE_ACCEL, 0, struct.pack("<I", self.pp_accel))
