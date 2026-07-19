@@ -350,7 +350,9 @@ class EtherCatTab(QWidget):
         g.addWidget(self.jog_incr, 1, 4)
         g.addWidget(QLabel("speed (mm/s)"), 2, 3)
         self.jog_speed_mm = QDoubleSpinBox()
-        self.jog_speed_mm.setRange(1.0, 500.0)
+        # Also the demo's travel speed — uncapped for speed trials (the real
+        # limiter at high settings becomes accel_mm_s2 in the Parameters table).
+        self.jog_speed_mm.setRange(1.0, 5000.0)
         self.jog_speed_mm.setValue(50.0)
         self.jog_speed_mm.setMaximumWidth(90)
         g.addWidget(self.jog_speed_mm, 2, 4)
