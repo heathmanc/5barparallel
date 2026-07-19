@@ -109,10 +109,19 @@ Notes:
 
 ## 4. Homing
 
-CiA 402 homing mode (mode 6): `home()` puts both drives in Homing mode and sets
-the start bit; the drive runs its own homing method to the switch and zeros its
-position there. The recorded `home_angles` (from `robot_config.yaml`) map that
-zero to the shoulder angle.
+This machine homes to **hard mechanical stops — no home switches.** Procedure:
+drive each axis to its hard stop (jog, or push by hand while disabled), then
+press **Set Home** on the Drives tab. `set_home()` captures the current encoder
+counts as the datum and declares that pose to be the configured `home_angles`
+(from `robot_config.yaml`). All subsequent Cartesian moves are referenced to it.
+
+> The configured `home_angles` **must match the physical hard-stop pose**, or
+> every Cartesian move is offset by the difference. Set `home_angles` to the
+> actual shoulder angles at the hard stops.
+
+(`home()` still implements CiA 402 homing mode 6 for a switch-equipped drive —
+puts both drives in Homing mode, runs the drive's homing method to the switch —
+but it is not used on this machine.)
 
 **Encoder type matters (drive param C00.07).** Set it to match the motor:
 

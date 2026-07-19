@@ -269,10 +269,11 @@ class EtherCatTab(QWidget):
         self.enable_btn.clicked.connect(self._on_enable)
         self.disable_btn = QPushButton("Disable")
         self.disable_btn.clicked.connect(self._on_disable)
-        self.ref_btn = QPushButton("Reference here")
-        self.ref_btn.setToolTip("Bench: treat the current pose as home so the "
-                                "Cartesian jog works without homing fixtures.")
-        self.ref_btn.clicked.connect(self._on_reference_here)
+        self.ref_btn = QPushButton("Set Home")
+        self.ref_btn.setToolTip("Drive each axis to its hard-stop home, then Set "
+                                "Home to make this pose the datum (no switches). "
+                                "Configured home_angles must match the hard stop.")
+        self.ref_btn.clicked.connect(self._on_set_home)
         g.addWidget(self.enable_btn, 0, 0)
         g.addWidget(self.disable_btn, 0, 1)
         g.addWidget(self.ref_btn, 0, 2, 1, 2)
@@ -373,16 +374,16 @@ class EtherCatTab(QWidget):
                   self.coord_btn):
             b.setEnabled(on)
 
-    def _on_reference_here(self) -> None:
+    def _on_set_home(self) -> None:
         drv = self._ec_driver()
         if drv is None:
             self._status("Connect the drives first.", theme.WARN)
             return
         try:
-            drv.reference_here()
-            self._status("Referenced at current pose — Cartesian jog enabled.", theme.TEXT)
+            drv.set_home()
+            self._status("Home set at current pose — Cartesian jog enabled.", theme.TEXT)
         except Exception as exc:  # noqa: BLE001
-            self._status(f"Reference failed: {exc}", theme.DANGER)
+            self._status(f"Set Home failed: {exc}", theme.DANGER)
 
     def _on_cart_jog(self, sx: float, sy: float) -> None:
         drv = self._ec_driver()

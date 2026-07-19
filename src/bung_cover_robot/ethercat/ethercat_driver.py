@@ -228,10 +228,15 @@ class EtherCatRobotDriver(RobotDriver):
         self._home_angles = (float(angles[0]), float(angles[1]))
         self._home_counts = self._counts(self._home_angles)
 
-    def reference_here(self) -> None:
-        """Bench convenience: declare the CURRENT pose to be the home pose, so the
-        Cartesian jog is usable without homing fixtures. Not a substitute for a
-        real home on the assembled machine (use ``home()`` there)."""
+    def set_home(self) -> None:
+        """Set home at the CURRENT pose. This machine homes to hard mechanical
+        stops (no home switches): drive each axis to its hard stop, then Set Home
+        to declare that pose the datum (= the configured ``home_angles``). All
+        subsequent Cartesian moves are referenced to it.
+
+        The configured ``home_angles`` must match the physical hard-stop pose,
+        or Cartesian moves will be offset. With a single-turn absolute encoder
+        the count is only known modulo a rev, so re-home after each power cycle."""
         self.master.exchange()
         drives = self.master.drives
         self._home_counts = [
@@ -239,7 +244,7 @@ class EtherCatRobotDriver(RobotDriver):
             for i in range(min(len(drives), len(self._home_angles)))
         ]
         self._referenced = True
-        logger.info("referenced at current pose -> %s", self._home_angles)
+        logger.info("home set at current pose -> %s", self._home_angles)
 
     # --- motion -------------------------------------------------------------
     def move_to_angles(self, left_deg: float, right_deg: float) -> None:
