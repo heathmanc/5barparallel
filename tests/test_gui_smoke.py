@@ -901,6 +901,29 @@ def test_drives_tab_bench_jog(qapp, tmp_path):
     tab._stop_poller()
 
 
+def test_drives_tab_jog_targets_selected_axis(qapp, tmp_path):
+    """Two-drive bench: the axis selector routes the jog to that drive only, so
+    each motor can be confirmed to map to the axis you expect."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab.drives_spin.setValue(2)
+    tab._on_connect_sim()
+    tab._on_enable()
+    assert ctrl.driver.master.num_drives == 2
+    tab.jog_step.setValue(1500)
+    tab.jog_axis.setValue(1)              # jog the second drive
+    tab._on_jog(+1)
+    assert tab._jog_worker.wait(2000)
+    qapp.processEvents()
+    drives = ctrl.driver.master.drives
+    assert drives[1].actual_position == 1500   # axis 1 moved
+    assert drives[0].actual_position == 0       # axis 0 held
+    tab._on_disconnect()
+    tab._stop_poller()
+
+
 def test_drives_tab_disconnect_disables_and_stops_master(qapp, tmp_path):
     """Safety: disconnect (and app close) must disable the drive and close the
     master, not just swap drivers."""

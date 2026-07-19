@@ -238,7 +238,7 @@ class EtherCatTab(QWidget):
         return box, widgets
 
     def _build_jog(self) -> QGroupBox:
-        box = QGroupBox("Bench jog — axis 0  (motion)")
+        box = QGroupBox("Bench jog  (motion)")
         g = QGridLayout(box)
         self.enable_btn = QPushButton("Enable")
         self.enable_btn.clicked.connect(self._on_enable)
@@ -246,27 +246,34 @@ class EtherCatTab(QWidget):
         self.disable_btn.clicked.connect(self._on_disable)
         g.addWidget(self.enable_btn, 0, 0)
         g.addWidget(self.disable_btn, 0, 1)
-        g.addWidget(QLabel("step (counts)"), 0, 2)
+        g.addWidget(QLabel("axis"), 0, 2)
+        self.jog_axis = QSpinBox()
+        self.jog_axis.setRange(0, 1)     # bench max is 2 drives; index validated on jog
+        self.jog_axis.setToolTip(
+            "Which drive on the bus to jog (0 = first slave, 1 = second). "
+            "Jog each after wiring to confirm it maps to the axis you expect.")
+        g.addWidget(self.jog_axis, 0, 3)
+        g.addWidget(QLabel("step (counts)"), 0, 4)
         self.jog_step = QSpinBox()
         self.jog_step.setRange(1, 200000)
         self.jog_step.setValue(2000)
-        g.addWidget(self.jog_step, 0, 3)
-        g.addWidget(QLabel("speed (counts/s)"), 0, 4)
+        g.addWidget(self.jog_step, 0, 5)
+        g.addWidget(QLabel("speed (counts/s)"), 0, 6)
         self.jog_speed = QSpinBox()
         self.jog_speed.setRange(100, 500000)
         self.jog_speed.setValue(20000)
-        g.addWidget(self.jog_speed, 0, 5)
+        g.addWidget(self.jog_speed, 0, 7)
         self.jog_minus = QPushButton("– Jog")
         self.jog_minus.clicked.connect(lambda: self._on_jog(-1))
         self.jog_plus = QPushButton("Jog +")
         self.jog_plus.clicked.connect(lambda: self._on_jog(+1))
-        g.addWidget(self.jog_minus, 0, 6)
-        g.addWidget(self.jog_plus, 0, 7)
+        g.addWidget(self.jog_minus, 1, 6)
+        g.addWidget(self.jog_plus, 1, 7)
         warn = QLabel("Motion — only with the E-stop / contactor live and the motor "
                       "secured. Enable first, then jog. Keep steps small at first.")
         warn.setWordWrap(True)
         warn.setStyleSheet(f"color:{theme.WARN}; font-weight:600;")
-        g.addWidget(warn, 1, 0, 1, 8)
+        g.addWidget(warn, 2, 0, 1, 8)
         return box
 
     def _ec_driver(self):
@@ -302,13 +309,14 @@ class EtherCatTab(QWidget):
             return
         if self._jog_worker is not None and self._jog_worker.isRunning():
             return
+        axis = int(self.jog_axis.value())
         delta = sign * int(self.jog_step.value())
         speed = float(self.jog_speed.value())
         # Run off the GUI thread so the poller keeps updating (see following error).
         self._set_motion_enabled(False)
-        self._status(f"Jogging axis 0 by {delta:+d} counts…", theme.TEXT)
+        self._status(f"Jogging axis {axis} by {delta:+d} counts…", theme.TEXT)
         self._jog_worker = _JogWorker(
-            lambda: drv.jog_counts(0, delta, speed_counts_s=speed))
+            lambda: drv.jog_counts(axis, delta, speed_counts_s=speed))
         self._jog_worker.done.connect(self._on_jog_done)
         self._jog_worker.start()
 
