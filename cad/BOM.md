@@ -35,14 +35,16 @@ are not in this list.
 
 | Qty | Part | Spec | Note | Link |
 |---|---|---|---|---|
-| **2** | 60T shoulder pulley | 60-5M-15, pilot bore | Bore to Ø25 + keyway to the shoulder shaft | [60-5M-15](https://bepltd.com/products/60-5m-15-htd-pilot-bore-5m-timing-belt-pulley-60-tooth-x-15mm-wide) |
-| **2** | 20T motor pulley | 20-5M-15, pilot bore | Bore to Ø19 + keyway to the A6 shaft | [20-5M-15](https://bepltd.com/products/20-5m-15-htd-pilot-bore-5m-timing-belt-pulley-20-tooth-x-15mm-wide) |
-| **2** | Belt | 450-5M-15 (90T) | The stock length the layout was solved to (C = 120.8 mm) | [450-5M-15](https://bepltd.com/products/450-5m-15-htd-5m-timing-belt-450mm-long-x-15mm-wide) |
+| **2** | 72T shoulder pulley | 72-5M-15, pilot bore | Bore to Ø25 + keyway to the shoulder shaft | [72-5M-15](https://bepltd.com/products/72-5m-15-htd-pilot-bore-5m-timing-belt-pulley-72-tooth-x-15mm-wide) |
+| **2** | 24T motor pulley | 24-5M-15, pilot bore | Bore to Ø19 + keyway to the A6 shaft | [24-5M-15](https://bepltd.com/products/24-5m-15-htd-pilot-bore-5m-timing-belt-pulley-24-tooth-x-15mm-wide) |
+| **2** | Belt | 450-5M-15 (90T) | The stock length the layout was solved to (C = 97.5 mm with 24/72) | [450-5M-15](https://bepltd.com/products/450-5m-15-htd-5m-timing-belt-450mm-long-x-15mm-wide) |
 
-> **20T bore watch-out:** the 20-5M-15's boss is Ø23, so boring to Ø19 + a
-> keyway leaves thin boss walls. The pitch dia (31.8 mm) has plenty of meat, but
-> confirm with the vendor — or step up to a **taper-bush** 20T pulley for a
-> secure grip on the 19 mm servo shaft. This is the one drive part to double-check.
+> **Motor-pulley keyway:** the drive was moved from 20T/60T to **24T/72T** (same
+> 3:1) specifically to give the Ø19 motor-shaft pulley room for the keyway. The
+> 24-5M-15's larger pitch dia (38.2 mm) leaves ~6 mm of hub wall over the keyseat
+> vs the 20T's ~3 mm — `cad/generate.py` asserts this wall stays ≥ 3.5 mm, so a
+> future tooth-count change can't silently reintroduce a paper-thin boss. Still
+> confirm the vendor's actual boss OD when ordering the pilot-bore blank.
 
 ## Fasteners (McMaster-Carr — stable catalog)
 

@@ -17,7 +17,7 @@ must sense the **shoulder** rotation, not the motor shaft (a motor-side flag is
 
 ## Flag on the proximal link (L1), never the distal (L2)
 
-The 60T output pulley and the **proximal link L1** are one rigid body about the
+The 72T output pulley and the **proximal link L1** are one rigid body about the
 shoulder pivot, so a small flag **tab on L1** carries the exact 1:1 joint angle —
 and is easier to fabricate than a pulley feature.
 
