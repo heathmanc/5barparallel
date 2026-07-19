@@ -475,7 +475,7 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                 s.dc_sync(True, cyc_ns, shift_ns)      # SYNC0 at cycle time, shifted
             logger.info("DC/SYNC0 armed after settle: cycle=%d ns shift=%d ns",
                         cyc_ns, shift_ns)
-            for _ in range(5):
+            for _ in range(20):                        # let a few SYNC0 pulses fire
                 m.send_processdata()
                 m.receive_processdata(self.recv_timeout_us)
                 time.sleep(self.cycle_dt_s)

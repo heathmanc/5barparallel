@@ -151,10 +151,21 @@ Mode of operation is independent of this: bench single-axis still uses Profile
 Position (mode 1) for simple jogging, the 2-drive robot uses CSP (8) — **both over
 DC-SYNC0**.
 
-> If you see `Er741`: it's the sync fault. Power-cycle to clear it, confirm DC is
-> enabled (`use_dc=True`) so SYNC0 is programmed, and reconnect. `ec_inspect.py`'s
-> "Sync config" line shows the drive's active sync type and `cycle` (ns) — a
-> non-zero cycle means SYNC0 is programmed.
+**Fault codes (from the A6-EC troubleshooting chapter):**
+
+| Fault | Name | 0x603F |
+|---|---|---|
+| **Er74.0** | EtherCAT synchronization cycle setting error | 0x6320 |
+| **Er74.1** | **No sync signal** | **0x8700** |
+| Er74.2 | Chip synchronization process uncompleted in OP | 0x8700 |
+| ErC1.0 | Excessive EtherCAT synchronization period error | 0x8700 |
+
+**`Er74.1` (0x8700) = "No sync signal"** — the drive sees **zero SYNC0 pulses**.
+This is a signal-*generation* fault, not a timing one: if `slave.dc_sync(...)`
+were producing SYNC0 but mistimed, you'd get `Er74.0`/`ErC1.0` instead. Getting
+`Er74.1` means the master isn't generating a SYNC0 the drive detects — check that
+`pysoem`'s DC activation (`config_dc()` + `slave.dc_sync()`) actually fires SYNC0
+(pysoem version, DC reference-clock selection), not the SYNC0 cycle/shift values.
 
 ## 6. First-motion checklist (do this once, slowly)
 
