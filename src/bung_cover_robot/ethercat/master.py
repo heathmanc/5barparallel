@@ -435,7 +435,8 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
             s.config_func = self._configure_slave      # PDO map + CSP setup per drive
         m.config_map()
         if self.use_dc:                                # distributed clocks (SYNC0)
-            m.config_dc()
+            dc_ok = m.config_dc()
+            logger.info("config_dc() -> %s (True = a DC-capable slave was found)", dc_ok)
             cyc_ns = int(round(self.cycle_dt_s * 1e9))
             shift_ns = (cyc_ns // 4 if self.sync0_shift_ns is None
                         else int(self.sync0_shift_ns))
