@@ -192,6 +192,11 @@ class IgHMaster(EtherCatMaster):
             if time.perf_counter() > deadline:
                 raise MasterError("CSP stream did not complete in time")
             time.sleep(self.cycle_dt_s)
+        # Hold at the FINAL streamed position: otherwise the closing exchange()
+        # would write the stale pre-move target and the drive would drive back.
+        last = targets[-1]
+        for d in range(self._num):
+            self._drives[d].target_position = int(last[d])
         self.exchange()
 
     # --- shared memory helpers --------------------------------------------- #
