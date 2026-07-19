@@ -125,28 +125,36 @@ stays in `switch_on_disabled` until you deliberately enable it, so viewing is
 safe with no power-stage interlock in place. Enabling/jogging is *not* safe until
 the stop interlock below exists.
 
-## 5c. CSP needs DC/SYNC0 — bench uses Profile Position (the Er741 story)
+## 5c. The AS715N is DC-SYNC0-only (the Er741 story)
 
-**CSP (mode 8) is a synchronous mode: the drive expects a DC `SYNC0` hardware
-pulse every cycle.** A `time.sleep`-paced Python master can't provide a valid
-phase-locked SYNC0, so a drive left in CSP without proper DC faults on a
-**synchronization-signal error** the instant it enters OP — on the AS715N (an
-ANCTL/Leadshine-family drive) that's **`Er741`**. This bites whether DC is
-"configured but SYNC0 never programmed" *or* fully off — CSP wants the pulse.
+Read the drive's own sync config with `scripts/ec_inspect.py`: the AS715N's sync
+managers (`0x1C32`/`0x1C33:04`) advertise **only DC-SYNC0** — no free-run, no
+SM-sync. **DC is therefore mandatory.** If the drive enters OP without a programmed
+SYNC0 pulse, it faults with a **synchronization-signal error — `Er741`**. (Trying
+to run free-run, or picking Profile Position to dodge sync, does *not* help: the
+sync-manager requirement is below the CiA 402 mode.)
 
-So for **single-axis bench** work `PysoemMaster` uses **Profile Position (mode 1)**
-instead (`mode=cia402.MODE_PROFILE_POSITION`, what the Drives tab selects when
-Drives = 1). PP is **asynchronous** — no SYNC0 — so it reaches OP cleanly and jogs
-one axis with the drive running its own trapezoid from `pp_velocity` / `pp_accel`
-(0x6081 / 0x6083-4). Free-run (`use_dc=False`) is fine here because PP doesn't need
-the clock.
+So `open()` (with `use_dc=True`, the default) **enables DC and programs SYNC0** at
+the cycle time:
 
-The assembled **2-drive robot** needs **DC-synced CSP** for coordinated straight
-lines: enable DC and program SYNC0 (`slave.dc_sync(True, cycle_ns)`) with a
-DC-aware RT loop. That's a production step; PP mode covers bench bring-up.
+```
+m.config_dc()
+for s in slaves:
+    s.dc_sync(True, cycle_dt_s * 1e9)   # SYNC0 period in ns
+```
 
-> If you see `Er741`: it's the sync fault. Power-cycle the drive to clear it,
-> confirm you're in **Profile Position** (Drives = 1 bench mode), and reconnect.
+The drive's ESC then generates SYNC0 from its own DC-synchronized clock, so the RT
+loop only has to keep frames flowing each cycle (which it does). On the PREEMPT_RT
+control PC (isolated core, ~32 µs jitter) a 2 ms cycle holds this comfortably.
+
+Mode of operation is independent of this: bench single-axis still uses Profile
+Position (mode 1) for simple jogging, the 2-drive robot uses CSP (8) — **both over
+DC-SYNC0**.
+
+> If you see `Er741`: it's the sync fault. Power-cycle to clear it, confirm DC is
+> enabled (`use_dc=True`) so SYNC0 is programmed, and reconnect. `ec_inspect.py`'s
+> "Sync config" line shows the drive's active sync type and `cycle` (ns) — a
+> non-zero cycle means SYNC0 is programmed.
 
 ## 6. First-motion checklist (do this once, slowly)
 
