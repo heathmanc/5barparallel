@@ -104,7 +104,8 @@ class _StatusPoller(QThread):
                 try:
                     snap = [dict(sw=d.statusword, mode=d.mode_display,
                                  act=d.actual_position, tgt=d.target_position,
-                                 di=d.digital_inputs) for d in master.drives]
+                                 di=d.digital_inputs, err=d.error_code,
+                                 fe=d.following_error) for d in master.drives]
                 except Exception:  # noqa: BLE001 - display poller must not die
                     snap = None
             if self._stop:
@@ -177,7 +178,9 @@ class EtherCatTab(QWidget):
         self.sim_btn.clicked.connect(self._on_connect_sim)
         self.disconnect_btn = QPushButton("Disconnect")
         self.disconnect_btn.clicked.connect(self._on_disconnect)
-        for b in (self.connect_btn, self.sim_btn, self.disconnect_btn):
+        self.reset_btn = QPushButton("Reset fault")
+        self.reset_btn.clicked.connect(self._on_reset_fault)
+        for b in (self.connect_btn, self.sim_btn, self.disconnect_btn, self.reset_btn):
             row.addWidget(b)
         row.addStretch(1)
         self.conn_label = QLabel("DISCONNECTED")
@@ -289,6 +292,20 @@ class EtherCatTab(QWidget):
             cycle_dt_s=self.store.get("cycle_dt_s")).open())
         self._status("Connected to the SIMULATED drive network.", theme.TEXT)
 
+    def _on_reset_fault(self) -> None:
+        """Clear a latched drive fault (CiA 402 fault-reset edge). Lets us tell a
+        stale latched Er741 from one that re-trips immediately."""
+        drv = self.controller.driver
+        if not isinstance(drv, EtherCatRobotDriver):
+            self._status("Not connected — nothing to reset.", theme.WARN)
+            return
+        try:
+            drv.reset()
+            self._status("Fault reset sent — watch whether it clears or re-trips.",
+                         theme.TEXT)
+        except Exception as exc:  # noqa: BLE001
+            self._status(f"Reset failed: {exc}", theme.DANGER)
+
     def _on_disconnect(self) -> None:
         self._stop_poller()
         from ..robot.driver import DryRunRobotDriver
@@ -371,7 +388,8 @@ class EtherCatTab(QWidget):
             deg = (d["act"] + home) / ppd
             w["counts"].setText(f"encoder: {d['act']:>9d} counts   |   {deg:8.3f} °")
             w["detail"].setText(
-                f"statusword 0x{d['sw']:04X} · mode {d['mode']} · target {d['tgt']}")
+                f"statusword 0x{d['sw']:04X} · err 0x{d.get('err', 0):04X} · "
+                f"foll.err {d.get('fe', 0)} · mode {d['mode']} · target {d['tgt']}")
             for src, mask, bit in w["bits"]:
                 bit.set_active(bool((d["sw"] if src == "sw" else d["di"]) & mask))
 
