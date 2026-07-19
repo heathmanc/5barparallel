@@ -166,3 +166,11 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         if self.tabs.widget(index) is self.vision_tab:
             self.vision_tab.refresh()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        # Safety: on exit leave the drives DISABLED (torque off) and the EtherCAT
+        # master/daemon stopped, no matter how the window is closed.
+        try:
+            self.ethercat_tab.shutdown()
+        finally:
+            super().closeEvent(event)
