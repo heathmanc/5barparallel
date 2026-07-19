@@ -112,3 +112,42 @@ def test_ramp_counts_negative_and_zero():
     down = ramp_counts(0, -3000, 20000, 100000, 0.002)
     assert down[0] == 0 and down[-1] == -3000
     assert all(b <= a for a, b in zip(down, down[1:]))        # monotonic down
+
+
+def test_ramp_counts_multi_synchronized_and_exact():
+    from bung_cover_robot.ethercat.trajectory import ramp_counts, ramp_counts_multi
+
+    dt = 0.002
+    # Opposite directions, different magnitudes: they must start and finish together.
+    ramp = ramp_counts_multi([1000, -500], [4000, -2000],
+                             speed=20000, accel=100000, dt=dt)
+    assert ramp[0] == (1000, -500)                 # both start at their actuals
+    assert ramp[-1] == (5000, -2500)               # both land exactly on target
+    assert len(ramp) >= 2
+    # Same number of samples for every axis -> perfectly synchronized in time.
+    axis0 = [r[0] for r in ramp]
+    axis1 = [r[1] for r in ramp]
+    assert len(axis0) == len(axis1)
+    assert all(b >= a for a, b in zip(axis0, axis0[1:]))     # axis0 monotonic up
+    assert all(b <= a for a, b in zip(axis1, axis1[1:]))     # axis1 monotonic down
+    # The dominant axis follows the same trapezoid as a lone single-axis ramp.
+    solo = ramp_counts(1000, 4000, speed=20000, accel=100000, dt=dt)
+    assert axis0 == solo
+
+
+def test_ramp_counts_multi_shared_fraction():
+    from bung_cover_robot.ethercat.trajectory import ramp_counts_multi
+
+    # A half-size second axis should be at ~half the first axis's progress every
+    # cycle (shared profile), and the zero-delta axis never moves.
+    ramp = ramp_counts_multi([0, 0, 100], [1000, 500, 0],
+                             speed=20000, accel=100000, dt=0.002)
+    for a0, a1, a2 in ramp:
+        assert a2 == 100                            # zero delta axis holds
+        assert abs(a1 - a0 / 2) <= 1                # half progress, within rounding
+
+
+def test_ramp_counts_multi_zero_move():
+    from bung_cover_robot.ethercat.trajectory import ramp_counts_multi
+
+    assert ramp_counts_multi([10, 20], [0, 0], 1000, 1000, 0.002) == [(10, 20)]

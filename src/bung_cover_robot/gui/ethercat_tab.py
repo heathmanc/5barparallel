@@ -158,6 +158,7 @@ class EtherCatTab(QWidget):
             drives.addWidget(panel, 1)
         root.addLayout(drives)
         root.addWidget(self._build_jog())
+        root.addWidget(self._build_coordinated())
         root.addWidget(self._build_parameters(), 1)
         self.status_label = QLabel("Not connected — connect the EtherCAT master, "
                                    "or use the simulated network for bench-off work.")
@@ -276,6 +277,33 @@ class EtherCatTab(QWidget):
         g.addWidget(warn, 2, 0, 1, 8)
         return box
 
+    def _build_coordinated(self) -> QGroupBox:
+        """Coordinated two-axis move: both drives ramp through one shared time
+        profile (start + finish together). Joint-space, so it's safe before the
+        arm is in the linkage — this is the first lockstep-streaming test."""
+        box = QGroupBox("Coordinated move — both axes together  (motion)")
+        g = QGridLayout(box)
+        g.addWidget(QLabel("axis 0 Δ (counts)"), 0, 0)
+        self.coord_d0 = QSpinBox()
+        self.coord_d0.setRange(-200000, 200000)
+        self.coord_d0.setValue(2000)
+        g.addWidget(self.coord_d0, 0, 1)
+        g.addWidget(QLabel("axis 1 Δ (counts)"), 0, 2)
+        self.coord_d1 = QSpinBox()
+        self.coord_d1.setRange(-200000, 200000)
+        self.coord_d1.setValue(-2000)
+        g.addWidget(self.coord_d1, 0, 3)
+        self.coord_btn = QPushButton("Move both (coordinated)")
+        self.coord_btn.clicked.connect(self._on_coord_move)
+        g.addWidget(self.coord_btn, 0, 4)
+        hint = QLabel("Both axes reach their targets at the same instant "
+                      "(shared trapezoid). Opposite signs verify independent "
+                      "direction; small deltas first.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        g.addWidget(hint, 1, 0, 1, 5)
+        return box
+
     def _ec_driver(self):
         drv = self.controller.driver
         return drv if isinstance(drv, EtherCatRobotDriver) else None
@@ -299,7 +327,8 @@ class EtherCatTab(QWidget):
         self._status("Disabled — torque off (drive tracks position).", theme.TEXT)
 
     def _set_motion_enabled(self, on: bool) -> None:
-        for b in (self.enable_btn, self.disable_btn, self.jog_minus, self.jog_plus):
+        for b in (self.enable_btn, self.disable_btn, self.jog_minus, self.jog_plus,
+                  self.coord_btn):
             b.setEnabled(on)
 
     def _on_jog(self, sign: int) -> None:
@@ -326,6 +355,23 @@ class EtherCatTab(QWidget):
             self._status(f"Jog failed: {err}", theme.DANGER)
         else:
             self._status("Jog complete.", theme.TEXT)
+
+    def _on_coord_move(self) -> None:
+        drv = self._ec_driver()
+        if drv is None:
+            self._status("Connect + enable the drives first.", theme.WARN)
+            return
+        if self._jog_worker is not None and self._jog_worker.isRunning():
+            return
+        n = len(drv.master.drives)
+        deltas = [int(self.coord_d0.value()), int(self.coord_d1.value())][:n]
+        speed = float(self.jog_speed.value())
+        self._set_motion_enabled(False)
+        self._status(f"Coordinated move {deltas} counts…", theme.TEXT)
+        self._jog_worker = _JogWorker(
+            lambda: drv.jog_counts_multi(deltas, speed_counts_s=speed))
+        self._jog_worker.done.connect(self._on_jog_done)
+        self._jog_worker.start()
 
     def _build_parameters(self) -> QGroupBox:
         box = QGroupBox("Parameters (motion + drive SDO)")
