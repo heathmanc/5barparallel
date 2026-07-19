@@ -44,6 +44,29 @@ def test_jog_requires_enable():
         drv.jog_counts(0, 1000)
 
 
+def test_reference_here_then_cartesian_jog():
+    # Bench: reference at the current pose, then a small Cartesian jog moves the
+    # TCP in a straight line (both drives move through the kinematics).
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    drv.enable()
+    assert not drv.is_referenced
+    drv.reference_here()
+    assert drv.is_referenced
+    start = [d.actual_position for d in master.drives]
+    drv.jog_cartesian(5.0, 0.0, speed_mm_s=50.0)   # +5 mm in X
+    end = [d.actual_position for d in master.drives]
+    assert end != start                            # the tool moved
+
+
+def test_cartesian_jog_requires_reference():
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    drv.enable()                                   # enabled but not referenced
+    with pytest.raises(RobotDriverError, match="referenced"):
+        drv.jog_cartesian(5.0, 0.0)
+
+
 def test_jog_counts_multi_moves_both_axes_together():
     # Two-drive bench: coordinated joint move ramps both axes to their targets
     # off one synchronized profile (opposite signs to prove independent direction).

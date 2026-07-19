@@ -20,6 +20,7 @@ on real hardware; against the simulator it just runs synchronously.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import List, Optional
 
@@ -227,6 +228,19 @@ class EtherCatRobotDriver(RobotDriver):
         self._home_angles = (float(angles[0]), float(angles[1]))
         self._home_counts = self._counts(self._home_angles)
 
+    def reference_here(self) -> None:
+        """Bench convenience: declare the CURRENT pose to be the home pose, so the
+        Cartesian jog is usable without homing fixtures. Not a substitute for a
+        real home on the assembled machine (use ``home()`` there)."""
+        self.master.exchange()
+        drives = self.master.drives
+        self._home_counts = [
+            round(self._home_angles[i] * self._ppd) - drives[i].actual_position
+            for i in range(min(len(drives), len(self._home_angles)))
+        ]
+        self._referenced = True
+        logger.info("referenced at current pose -> %s", self._home_angles)
+
     # --- motion -------------------------------------------------------------
     def move_to_angles(self, left_deg: float, right_deg: float) -> None:
         if self.is_faulted:
@@ -245,6 +259,30 @@ class EtherCatRobotDriver(RobotDriver):
             raise RobotDriverError(f"move planning failed: {exc}") from exc
         self._stream(traj)
         logger.info("moved -> L=%.3f R=%.3f (%d cycles)", left_deg, right_deg, len(traj))
+
+    def jog_cartesian(self, dx_mm: float, dy_mm: float,
+                      speed_mm_s: Optional[float] = None) -> None:
+        """HMI/bench jog: move the TCP by (dx, dy) mm in a validated straight
+        line. Requires Operation Enabled and a referenced robot. Motion — only
+        with the E-stop/contactor live."""
+        if self.is_faulted:
+            raise RobotDriverError(f"cannot jog: faulted (code {self.fault_code()})")
+        if not self.is_enabled:
+            raise RobotDriverError("cannot jog: enable the drives first")
+        cur = self.read_angles()
+        if cur is None:
+            raise RobotDriverError("cannot jog: robot is not referenced — home it "
+                                   "(or use 'Reference here' on the bench) first")
+        sx, sy = self.kin.forward(*cur)
+        goal = (sx + float(dx_mm), sy + float(dy_mm))
+        limits = self.limits
+        if speed_mm_s and speed_mm_s > 0:
+            limits = dataclasses.replace(limits, speed_mm_s=float(speed_mm_s))
+        try:
+            traj = plan_linear_move(self.kin, self.validator, (sx, sy), goal, limits)
+        except TrajectoryError as exc:
+            raise RobotDriverError(f"cartesian jog rejected: {exc}") from exc
+        self._stream(traj)
 
     def _stream(self, traj) -> None:
         """Hand the precomputed per-cycle CSP setpoints to the master to stream.
