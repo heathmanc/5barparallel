@@ -101,7 +101,11 @@ Notes:
   writes CSP (8) once over SDO. The drive already powers up in CSP.
 - The map hands us **following error** and **digital inputs (0x60FD)** for free —
   the Drives page shows real switch states and following error — plus a **digital
-  output (0x60FE:1)** reserved for the vacuum later.
+  output word (0x60FE:1)** that drives the **pick head**: `EtherCatRobotDriver`
+  asserts bit 0 for the vacuum solenoid and bit 1 for the air-cylinder plunger on
+  drive 0 (the `vacuum_do_bit` / `plunger_do_bit` / `tooling_drive` constructor
+  args repoint this to a dedicated EtherCAT I/O slice later). The daemon rewrites
+  the whole DO word every DC cycle, so a set bit stays asserted until cleared.
 - The touch-probe words are carried but unused (packed/ignored as 0).
 - If a future drive ships a *different* default PDO, re-verify with
   `scripts/ec_inspect.py` and adjust `_RX_FMT`/`_TX_FMT`.
@@ -152,8 +156,12 @@ drive ignores the absolute datum entirely and homes from wherever it powered up.
   position) is secondary.
 - Home/limit switches → the drives' digital inputs (used by the homing method and
   as hard travel limits).
-- Vacuum + blow-off → a drive DO or a small EtherCAT I/O slice; wire the vacuum
-  confirwith switch back to a DI so the cycle can verify a cover is held.
+- Vacuum + air cylinder → drive 0's DO word (0x60FE:1) today (vacuum = bit 0,
+  plunger = bit 1); repointable to a small EtherCAT I/O slice later. The
+  pick/place cycle (`DirectJobRunner`) sequences them: travel → plunge → vacuum
+  ON → dwell → lift → travel → plunge → vacuum OFF → dwell → lift, with the dwells
+  set by `PickSequence`. Wire the vacuum confirm switch back to a DI so the cycle
+  can verify a cover is held.
 
 ## 5b. Single-axis bench bring-up
 

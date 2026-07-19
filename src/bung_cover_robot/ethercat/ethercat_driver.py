@@ -51,6 +51,9 @@ class EtherCatRobotDriver(RobotDriver):
         limits: Optional[TrajectoryLimits] = None,
         max_transition_cycles: int = 200,
         position_tol_counts: int = 5,
+        vacuum_do_bit: int = 0,
+        plunger_do_bit: int = 1,
+        tooling_drive: int = 0,
     ) -> None:
         self.master = master
         self.kin = kinematics or FiveBarKinematics()
@@ -59,6 +62,13 @@ class EtherCatRobotDriver(RobotDriver):
         self.limits = limits or TrajectoryLimits(cycle_dt_s=master.cycle_dt_s)
         self.max_transition_cycles = max_transition_cycles
         self.position_tol_counts = position_tol_counts
+        # Pick-head I/O: which drive carries the tooling digital outputs and which
+        # bit of its 0x60FE:1 word drives the vacuum solenoid / the air cylinder.
+        # Repointable to a dedicated EtherCAT I/O slice later; on the bus today the
+        # A6 drives' spare DOs carry it.
+        self._tooling_drive = tooling_drive
+        self._vacuum_bit = vacuum_do_bit
+        self._plunger_bit = plunger_do_bit
         self._referenced = False
         # Absolute drive counts at each home shoulder angle (drive zero == home).
         self._home_counts = self._counts(self._home_angles)
@@ -342,3 +352,27 @@ class EtherCatRobotDriver(RobotDriver):
             self.master.exchange()
         except Exception:  # pragma: no cover
             pass
+
+    # --- end-effector I/O ---------------------------------------------------
+    def set_vacuum(self, on: bool) -> None:
+        """Energize/vent the vacuum solenoid via the tooling drive's DO."""
+        self._set_do(self._vacuum_bit, on)
+
+    def set_plunger(self, extended: bool) -> None:
+        """Extend/retract the pick air cylinder via the tooling drive's DO."""
+        self._set_do(self._plunger_bit, extended)
+
+    def _set_do(self, bit: int, on: bool) -> None:
+        """Set one bit of the tooling drive's digital-output word (0x60FE:1) and
+        push it to the bus. The daemon writes the whole word every DC cycle, so
+        the bit stays asserted until we clear it."""
+        d = self.master.drives[self._tooling_drive]
+        mask = 1 << bit
+        if on:
+            d.digital_outputs = (d.digital_outputs | mask) & 0xFFFFFFFF
+        else:
+            d.digital_outputs = d.digital_outputs & ~mask & 0xFFFFFFFF
+        try:
+            self.master.exchange()
+        except MasterError as exc:
+            raise RobotDriverError(f"digital-output write failed: {exc}") from exc

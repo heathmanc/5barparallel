@@ -3,7 +3,12 @@ CSP moves, fault/reset, and a full cycle through CycleManager."""
 
 import pytest
 
-from bung_cover_robot.app.cycle_manager import CycleManager, make_job_runner, DirectJobRunner
+from bung_cover_robot.app.cycle_manager import (
+    CycleManager,
+    DirectJobRunner,
+    PickSequence,
+    make_job_runner,
+)
 from bung_cover_robot.app.robot_test_controller import RobotTestController
 from bung_cover_robot.ethercat import (
     EtherCatRobotDriver,
@@ -11,7 +16,7 @@ from bung_cover_robot.ethercat import (
     cia402,
 )
 from bung_cover_robot.gui.imaging import demo_frame, demo_transform
-from bung_cover_robot.robot.driver import RobotDriverError
+from bung_cover_robot.robot.driver import DryRunRobotDriver, RobotDriverError
 from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
 from bung_cover_robot.robot.workspace import WorkspaceValidator
 from bung_cover_robot.vision.camera import CameraConfig, MockCamera
@@ -227,6 +232,122 @@ def test_fault_mid_move_raises():
         drv.move_to_angles(jt.left_deg, jt.right_deg)
 
 
+# --- end-effector I/O (vacuum + air cylinder) ------------------------------- #
+def test_vacuum_and_plunger_toggle_tooling_digital_outputs():
+    # Default map: vacuum = bit 0, plunger = bit 1, on drive 0 (0x60FE:1).
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    assert master.drives[0].digital_outputs == 0
+    drv.set_vacuum(True)
+    assert master.drives[0].digital_outputs & 0b01
+    drv.set_plunger(True)
+    assert master.drives[0].digital_outputs & 0b10
+    drv.set_vacuum(False)                       # clears only the vacuum bit
+    assert not master.drives[0].digital_outputs & 0b01
+    assert master.drives[0].digital_outputs & 0b10
+    drv.set_plunger(False)
+    assert master.drives[0].digital_outputs == 0
+    assert master.drives[1].digital_outputs == 0   # other drive untouched
+
+
+def test_tooling_do_bits_are_configurable():
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(
+        master, vacuum_do_bit=3, plunger_do_bit=5, tooling_drive=1
+    ).connect()
+    drv.set_vacuum(True)
+    drv.set_plunger(True)
+    assert master.drives[1].digital_outputs == (1 << 3) | (1 << 5)
+    assert master.drives[0].digital_outputs == 0
+
+
+class _RecordingDriver(DryRunRobotDriver):
+    """A dry-run driver that records the actuation trace for order assertions."""
+
+    def __init__(self, home_angles=(140.5406, 39.4594)):
+        super().__init__(home_angles=home_angles)
+        self.trace = []
+
+    def move_to_angles(self, left_deg, right_deg):
+        super().move_to_angles(left_deg, right_deg)
+        self.trace.append(("move", round(left_deg, 2), round(right_deg, 2)))
+
+    def set_vacuum(self, on):
+        super().set_vacuum(on)
+        self.trace.append(("vacuum", bool(on)))
+
+    def set_plunger(self, extended):
+        super().set_plunger(extended)
+        self.trace.append(("plunger", bool(extended)))
+
+
+def _job(kin, val):
+    from bung_cover_robot.robot.planner import make_job
+
+    return make_job(kin, val, hole_index=0, cover_id=0,
+                    pick_xy=(60.0, 250.0), drop_xy=(-40.0, 250.0))
+
+
+def test_pick_place_sequence_actuates_head_in_order():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    drv = _RecordingDriver()
+    drv.enable()
+    drv.home()
+    runner = DirectJobRunner(drv, PickSequence(0, 0, 0), sleep=lambda _s: None)
+    res = runner.run(_job(kin, val))
+    assert res.ok
+    # move-to-pick, plunge, grip, lift, move-to-drop, plunge, release, lift.
+    kinds = [e[0] if e[0] != "move" else "move" for e in drv.trace]
+    assert kinds == [
+        "move", "plunger", "vacuum", "plunger",
+        "move", "plunger", "vacuum", "plunger",
+    ]
+    # vacuum ON at the pick, OFF at the drop; cylinder ends retracted both times.
+    vac = [e[1] for e in drv.trace if e[0] == "vacuum"]
+    assert vac == [True, False]
+    plunge = [e[1] for e in drv.trace if e[0] == "plunger"]
+    assert plunge == [True, False, True, False]
+
+
+def test_pick_sequence_dwells_between_actions():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    drv = _RecordingDriver()
+    drv.enable()
+    drv.home()
+    slept = []
+    runner = DirectJobRunner(
+        drv, PickSequence(plunge_dwell_s=0.1, grip_dwell_s=0.2, release_dwell_s=0.3),
+        sleep=slept.append,
+    )
+    runner.run(_job(kin, val))
+    # pick: plunge, grip; place: plunge, release.
+    assert slept == [0.1, 0.2, 0.1, 0.3]
+
+
+def test_pick_sequence_vents_head_on_move_failure():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+
+    class _Failing(_RecordingDriver):
+        def move_to_angles(self, left_deg, right_deg):
+            # fail on the drop move — after vacuum is already ON.
+            if self.vacuum_on:
+                raise RobotDriverError("simulated fault mid-move")
+            super().move_to_angles(left_deg, right_deg)
+
+    drv = _Failing()
+    drv.enable()
+    drv.home()
+    runner = DirectJobRunner(drv, PickSequence(0, 0, 0), sleep=lambda _s: None)
+    res = runner.run(_job(kin, val))
+    assert not res.ok and "fault" in res.reason
+    # head must be left safe: vacuum vented, cylinder retracted.
+    assert drv.vacuum_on is False
+    assert drv.plunger_extended is False
+
+
 # --- end to end through the cycle ------------------------------------------- #
 def test_make_job_runner_is_direct_for_ethercat():
     drv, _, _ = _driver()
@@ -253,6 +374,7 @@ def test_full_cycle_over_simulated_ethercat():
     ctrl = RobotTestController(drv, kin, val)
     ctrl.enable()
     ctrl.home_reference()
-    mgr = CycleManager(ctrl, _mock_camera(), demo_transform())
+    mgr = CycleManager(ctrl, _mock_camera(), demo_transform(),
+                       pick_sequence=PickSequence(0, 0, 0))
     res = mgr.run_cycle()
     assert res.ok and len(res.placed) == 3     # the 3 reachable demo covers
