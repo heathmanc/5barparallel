@@ -924,17 +924,24 @@ def test_drives_tab_jog_targets_selected_axis(qapp, tmp_path):
     tab._stop_poller()
 
 
-def test_drives_tab_scrolls_and_pins_status(qapp, tmp_path):
-    """The tab grew tall; its sections must live in a scroll area while the
-    status line stays pinned (a direct child) so it's never cut off."""
-    from PySide6.QtWidgets import QScrollArea
+def test_drives_tab_is_compact_no_page_scroll(qapp, tmp_path):
+    """It's an HMI: the whole page must NOT scroll. The tall tables are height-
+    capped (they scroll internally) and the tuning table is preloaded."""
     from bung_cover_robot.gui.ethercat_tab import EtherCatTab
 
     ctrl = build_dry_run_controller()
     tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
-    assert tab.findChild(QScrollArea) is not None
-    # status label is parented to the tab itself, not the scrolled content
-    assert tab.status_label.parent() is tab
+    # the parameter tables are constrained so the page doesn't grow to fit them
+    assert tab.table.maximumHeight() < 400
+    assert tab.custom_table.maximumHeight() < 400
+    # tuning parameters are preloaded into the bottom section
+    assert tab.custom_table.rowCount() >= 5
+    assert tab.custom_table.columnCount() == 5      # incl. Description
+    # whole tab fits an HMI without page scrolling: its MINIMUM height (tables
+    # capped, scrolling internally) sits inside the default window, and it isn't
+    # wider than that window either
+    assert tab.minimumSizeHint().height() <= 900
+    assert tab.sizeHint().width() <= 1200
 
 
 def test_drives_tab_coordinated_move(qapp, tmp_path):

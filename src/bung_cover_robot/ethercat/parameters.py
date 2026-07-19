@@ -90,13 +90,15 @@ def parse_drive_address(text: str) -> Tuple[int, int]:
 
 @dataclass(frozen=True)
 class CustomParameter:
-    """A user-added drive object (e.g. a gain), written over SDO on Apply."""
+    """A drive object (e.g. a gain), written over SDO on Apply. Preloaded tuning
+    objects and user-added ones share this type."""
 
     name: str
     index: int
     sub: int
     value: float
     dtype: str = "int"
+    desc: str = ""
 
     def coerce(self, v) -> float:
         return int(round(float(v))) if self.dtype == "int" else float(v)
@@ -104,6 +106,23 @@ class CustomParameter:
     @property
     def address(self) -> str:
         return f"0x{self.index:04X}:{self.sub}"
+
+
+# Preloaded tuning objects for the AS715N (A6-EC / Panasonic-A6 family). Addresses
+# use the drive's friendly Cxx.NN form (mapped to CoE 0x20xx:(NN+1)); values are
+# typical A6-family starting points. VERIFY both the address and the value against
+# your AS715N parameter table before writing to a live drive — the exact Cxx.NN
+# can shift between firmware revisions.
+#   (name, Cxx.NN address, default value, dtype, description)
+DEFAULT_TUNING: List[Tuple[str, str, float, str, str]] = [
+    ("inertia_ratio",     "C00.04", 250, "int", "Load/motor inertia ratio (%) — set this FIRST; gains scale off it"),
+    ("machine_stiffness", "C00.03", 13,  "int", "Auto-tune stiffness/rigidity (0-31) — the main 'make it stiffer' dial"),
+    ("realtime_autotune", "C00.02", 1,   "int", "Real-time auto-gain tuning (0=off, 1=positioning)"),
+    ("pos_loop_gain",     "C01.00", 480, "int", "1st position loop gain (0.1/s) — raise to cut following error"),
+    ("vel_loop_gain",     "C01.01", 270, "int", "1st velocity loop gain (0.1 Hz) — raise first, before position gain"),
+    ("vel_integ_time",    "C01.02", 210, "int", "1st velocity loop integration time (0.1 ms) — lower kills steady-state error"),
+    ("torque_filter",     "C01.04", 84,  "int", "1st torque command filter (0.01 ms) — raise to damp high-freq buzz"),
+]
 
 
 def default_values() -> Dict[str, float]:
@@ -115,7 +134,8 @@ class ParameterStore:
 
     def __init__(self, values: Optional[Dict[str, float]] = None,
                  path: Optional[str | Path] = None,
-                 custom: Optional[List[CustomParameter]] = None) -> None:
+                 custom: Optional[List[CustomParameter]] = None,
+                 seeded: bool = False) -> None:
         self.path: Optional[Path] = Path(path) if path else None
         merged = default_values()
         if values:
@@ -123,20 +143,38 @@ class ParameterStore:
                            if k in _BY_NAME})
         self._values = merged
         self._custom: List[CustomParameter] = list(custom or [])
+        self._seeded = seeded
+
+    def _seed_default_tuning(self) -> None:
+        """Preload the tuning objects (stiffness, inertia ratio, loop gains) so
+        the tuning section isn't empty on a fresh install. Once seeded, the flag
+        persists so removals aren't undone on the next load."""
+        for name, addr, val, dtype, desc in DEFAULT_TUNING:
+            if any(c.name == name for c in self._custom):
+                continue
+            self.add_custom(name, addr, val, dtype, desc)
+        self._seeded = True
 
     @classmethod
     def load(cls, path: str | Path) -> "ParameterStore":
         p = Path(path)
         if not p.exists():
-            return cls(path=p)
+            s = cls(path=p)
+            s._seed_default_tuning()          # fresh install -> preload tuning objects
+            return s
         if yaml is None:  # pragma: no cover
             raise RuntimeError("PyYAML is required to load drive parameters")
         data = yaml.safe_load(p.read_text()) or {}
         custom = [CustomParameter(name=str(c["name"]), index=int(c["index"]),
                                   sub=int(c["sub"]), value=c.get("value", 0),
-                                  dtype=str(c.get("dtype", "int")))
+                                  dtype=str(c.get("dtype", "int")),
+                                  desc=str(c.get("desc", "")))
                   for c in data.get("custom", []) if "name" in c]
-        return cls(data.get("values", data), path=p, custom=custom)
+        seeded = bool(data.get("tuning_seeded", False)) if isinstance(data, dict) else False
+        s = cls(data.get("values", data), path=p, custom=custom, seeded=seeded)
+        if not s._seeded:                     # legacy file / empty tuning -> seed once
+            s._seed_default_tuning()
+        return s
 
     def as_dict(self) -> Dict[str, float]:
         return dict(self._values)
@@ -153,11 +191,13 @@ class ParameterStore:
     def custom_parameters(self) -> List[CustomParameter]:
         return list(self._custom)
 
-    def add_custom(self, name: str, address: str, value=0, dtype: str = "int") -> CustomParameter:
+    def add_custom(self, name: str, address: str, value=0, dtype: str = "int",
+                   desc: str = "") -> CustomParameter:
         """Add/replace a custom drive object addressed by Cxx.NN or INDEX:SUB."""
         index, sub = parse_drive_address(address)
         val = int(round(float(value))) if dtype == "int" else float(value)
-        cp = CustomParameter(name=name.strip(), index=index, sub=sub, value=val, dtype=dtype)
+        cp = CustomParameter(name=name.strip(), index=index, sub=sub, value=val,
+                             dtype=dtype, desc=desc)
         if not cp.name:
             raise ValueError("parameter name is required")
         self._custom = [c for c in self._custom if c.name != cp.name] + [cp]
@@ -167,7 +207,7 @@ class ParameterStore:
         for i, c in enumerate(self._custom):
             if c.name == name:
                 self._custom[i] = CustomParameter(c.name, c.index, c.sub,
-                                                  c.coerce(value), c.dtype)
+                                                  c.coerce(value), c.dtype, c.desc)
                 return
         raise KeyError(f"unknown custom parameter {name!r}")
 
@@ -181,9 +221,11 @@ class ParameterStore:
             raise RuntimeError("PyYAML is required to save drive parameters")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "tuning_seeded": self._seeded,
             "values": self._values,
             "custom": [{"name": c.name, "index": c.index, "sub": c.sub,
-                        "dtype": c.dtype, "value": c.value} for c in self._custom],
+                        "dtype": c.dtype, "value": c.value, "desc": c.desc}
+                       for c in self._custom],
         }
         self.path.write_text(yaml.safe_dump(payload, sort_keys=True))
         return self.path

@@ -20,14 +20,13 @@ from typing import Optional
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -72,16 +71,16 @@ class _Bit(QLabel):
     def set_active(self, on: bool) -> None:
         if not on:
             style = (f"background:#d4d7d8; color:{theme.TEXT_DIM}; "
-                     "border-radius:4px; padding:3px 8px;")
+                     "border-radius:4px; padding:2px 7px;")
         elif self._kind == "bad":
             style = ("background:%s; color:#ffffff; border-radius:4px; "
-                     "padding:3px 8px; font-weight:600;" % theme.DANGER)
+                     "padding:2px 7px; font-weight:600;" % theme.DANGER)
         elif self._kind == "warn":
             style = ("background:#e8ae1b; color:#22282b; border-radius:4px; "
-                     "padding:3px 8px; font-weight:600;")
+                     "padding:2px 7px; font-weight:600;")
         else:
             style = (f"background:#cbd0d2; color:{theme.TEXT}; "
-                     "border-radius:4px; padding:3px 8px; font-weight:600;")
+                     "border-radius:4px; padding:2px 7px; font-weight:600;")
         self.setStyleSheet(style)
 
 
@@ -149,30 +148,25 @@ class EtherCatTab(QWidget):
         self._poller: Optional[_StatusPoller] = None
         self._jog_worker: Optional[_JogWorker] = None
 
-        # The tab has grown past a laptop screen — put the sections in a scroll
-        # area and pin the status line OUTSIDE it so status is always visible.
+        # This is an HMI — the whole page must NOT scroll. Keep the sections
+        # compact and let only the (tall) parameter tables scroll internally.
         root = QVBoxLayout(self)
-        content = QWidget()
-        c = QVBoxLayout(content)
-        c.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
         top = QHBoxLayout()
         top.addWidget(self._build_connection(), 1)
-        c.addLayout(top)
+        root.addLayout(top)
         drives = QHBoxLayout()
         self._drive_panels = [self._build_drive_panel("Drive 0 — left shoulder"),
                               self._build_drive_panel("Drive 1 — right shoulder")]
         for panel, _ in self._drive_panels:
             drives.addWidget(panel, 1)
-        c.addLayout(drives)
-        c.addWidget(self._build_jog())
-        c.addWidget(self._build_coordinated())
-        c.addWidget(self._build_parameters(), 1)
-
-        scroll = QScrollArea()
-        scroll.setWidget(content)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        root.addWidget(scroll, 1)
+        root.addLayout(drives)
+        motion = QHBoxLayout()
+        motion.addWidget(self._build_jog(), 1)
+        motion.addWidget(self._build_coordinated(), 1)
+        root.addLayout(motion)
+        root.addWidget(self._build_parameters(), 1)
 
         self.status_label = QLabel("Not connected — connect the EtherCAT master, "
                                    "or use the simulated network for bench-off work.")
@@ -203,9 +197,8 @@ class EtherCatTab(QWidget):
             "Drives expected on the EtherCAT chain. Set 1 for single-axis bench "
             "bring-up; 2 for the assembled robot.")
         g.addWidget(self.drives_spin, 1, 1, Qt.AlignmentFlag.AlignLeft)
-        note = QLabel("Real hardware uses the IgH EtherCAT master (the drive is "
-                      "DC-SYNC0-only). The NIC is set in IgH's ethercat.conf; this "
-                      "field is informational. Connect launches/maps the RT daemon.")
+        note = QLabel("Real HW uses the IgH master (NIC set in ethercat.conf; this "
+                      "field is informational). Connect launches the RT daemon.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{theme.TEXT_DIM};")
         g.addWidget(note, 2, 0, 1, 2)
@@ -230,16 +223,25 @@ class EtherCatTab(QWidget):
     def _build_drive_panel(self, title: str):
         box = QGroupBox(title)
         v = QVBoxLayout(box)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(3)
         state = QLabel("state: —")
-        state.setStyleSheet("font-weight:600;")
+        state.setStyleSheet("font-family:monospace; font-weight:600;")
         counts = QLabel("encoder: — counts   |   — °")
         counts.setStyleSheet("font-family:monospace;")
         detail = QLabel("statusword — · mode — · target —")
         detail.setStyleSheet(f"font-family:monospace; color:{theme.TEXT_DIM};")
+        # These carry live numbers. Fixed-width formatting (in _on_snapshot) keeps
+        # the text a constant length; Ignored horizontal policy stops any label
+        # from driving the panel width, so the two-panel split can't jitter as
+        # counts change.
+        for lbl in (state, counts, detail):
+            lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         v.addWidget(state)
         v.addWidget(counts)
         v.addWidget(detail)
         io = QGridLayout()
+        io.setSpacing(3)
         bits = []
         for i, (name, mask, kind) in enumerate(_SW_BITS):
             b = _Bit(name, kind)
@@ -248,14 +250,16 @@ class EtherCatTab(QWidget):
         for j, (name, mask, kind) in enumerate(_DI_BITS):
             b = _Bit(name, kind)
             bits.append(("di", mask, b))
-            io.addWidget(b, len(_SW_BITS) // 3 + 1, j)
+            io.addWidget(b, (len(_SW_BITS) + 2) // 3, j)   # next row, no empty gap
         v.addLayout(io)
         widgets = dict(state=state, counts=counts, detail=detail, bits=bits)
         return box, widgets
 
     def _build_jog(self) -> QGroupBox:
-        box = QGroupBox("Bench jog  (motion)")
+        box = QGroupBox("Bench jog — single axis  (motion)")
         g = QGridLayout(box)
+        g.setContentsMargins(8, 6, 8, 6)
+        g.setSpacing(4)
         self.enable_btn = QPushButton("Enable")
         self.enable_btn.clicked.connect(self._on_enable)
         self.disable_btn = QPushButton("Disable")
@@ -265,58 +269,67 @@ class EtherCatTab(QWidget):
         g.addWidget(QLabel("axis"), 0, 2)
         self.jog_axis = QSpinBox()
         self.jog_axis.setRange(0, 1)     # bench max is 2 drives; index validated on jog
+        self.jog_axis.setMaximumWidth(48)
         self.jog_axis.setToolTip(
             "Which drive on the bus to jog (0 = first slave, 1 = second). "
             "Jog each after wiring to confirm it maps to the axis you expect.")
         g.addWidget(self.jog_axis, 0, 3)
-        g.addWidget(QLabel("step (counts)"), 0, 4)
+        # step + speed on the second row so the box stays narrow enough to sit
+        # beside the coordinated-move box without overflowing the page width.
+        g.addWidget(QLabel("step"), 1, 0)
         self.jog_step = QSpinBox()
         self.jog_step.setRange(1, 200000)
         self.jog_step.setValue(2000)
-        g.addWidget(self.jog_step, 0, 5)
-        g.addWidget(QLabel("speed (counts/s)"), 0, 6)
+        self.jog_step.setMaximumWidth(88)
+        self.jog_step.setToolTip("Jog distance in raw drive counts.")
+        g.addWidget(self.jog_step, 1, 1)
+        g.addWidget(QLabel("speed"), 1, 2)
         self.jog_speed = QSpinBox()
         self.jog_speed.setRange(100, 500000)
         self.jog_speed.setValue(20000)
-        g.addWidget(self.jog_speed, 0, 7)
+        self.jog_speed.setMaximumWidth(88)
+        self.jog_speed.setToolTip("Jog / coordinated-move speed in counts/s.")
+        g.addWidget(self.jog_speed, 1, 3)
         self.jog_minus = QPushButton("– Jog")
         self.jog_minus.clicked.connect(lambda: self._on_jog(-1))
         self.jog_plus = QPushButton("Jog +")
         self.jog_plus.clicked.connect(lambda: self._on_jog(+1))
-        g.addWidget(self.jog_minus, 1, 6)
-        g.addWidget(self.jog_plus, 1, 7)
-        warn = QLabel("Motion — only with the E-stop / contactor live and the motor "
-                      "secured. Enable first, then jog. Keep steps small at first.")
+        g.addWidget(self.jog_minus, 0, 4)
+        g.addWidget(self.jog_plus, 0, 5)
+        warn = QLabel("Motion — E-stop/contactor live, motor secured. Small steps first.")
         warn.setWordWrap(True)
         warn.setStyleSheet(f"color:{theme.WARN}; font-weight:600;")
-        g.addWidget(warn, 2, 0, 1, 8)
+        g.addWidget(warn, 2, 0, 1, 6)
         return box
 
     def _build_coordinated(self) -> QGroupBox:
         """Coordinated two-axis move: both drives ramp through one shared time
         profile (start + finish together). Joint-space, so it's safe before the
         arm is in the linkage — this is the first lockstep-streaming test."""
-        box = QGroupBox("Coordinated move — both axes together  (motion)")
+        box = QGroupBox("Coordinated move — both axes  (motion)")
         g = QGridLayout(box)
-        g.addWidget(QLabel("axis 0 Δ (counts)"), 0, 0)
+        g.setContentsMargins(8, 6, 8, 6)
+        g.setSpacing(4)
+        g.addWidget(QLabel("axis 0 Δ"), 0, 0)
         self.coord_d0 = QSpinBox()
         self.coord_d0.setRange(-200000, 200000)
         self.coord_d0.setValue(2000)
+        self.coord_d0.setMaximumWidth(88)
         g.addWidget(self.coord_d0, 0, 1)
-        g.addWidget(QLabel("axis 1 Δ (counts)"), 0, 2)
+        g.addWidget(QLabel("axis 1 Δ"), 0, 2)
         self.coord_d1 = QSpinBox()
         self.coord_d1.setRange(-200000, 200000)
         self.coord_d1.setValue(-2000)
+        self.coord_d1.setMaximumWidth(88)
         g.addWidget(self.coord_d1, 0, 3)
-        self.coord_btn = QPushButton("Move both (coordinated)")
+        self.coord_btn = QPushButton("Move both")
         self.coord_btn.clicked.connect(self._on_coord_move)
-        g.addWidget(self.coord_btn, 0, 4)
-        hint = QLabel("Both axes reach their targets at the same instant "
-                      "(shared trapezoid). Opposite signs verify independent "
-                      "direction; small deltas first.")
+        g.addWidget(self.coord_btn, 1, 0, 1, 2)
+        hint = QLabel("Both axes reach target together (shared trapezoid, speed "
+                      "above). Opposite signs check direction; small deltas first.")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
-        g.addWidget(hint, 1, 0, 1, 5)
+        g.addWidget(hint, 1, 2, 1, 2)
         return box
 
     def _ec_driver(self):
@@ -389,21 +402,14 @@ class EtherCatTab(QWidget):
         self._jog_worker.start()
 
     def _build_parameters(self) -> QGroupBox:
-        box = QGroupBox("Parameters (motion + drive SDO)")
+        box = QGroupBox("Parameters")
         v = QVBoxLayout(box)
-        self.table = QTableWidget(len(PARAMETERS), 5)
-        self.table.setHorizontalHeaderLabels(["Parameter", "Value", "Unit", "Scope", "Description"])
-        for r, p in enumerate(PARAMETERS):
-            for c, text in ((0, p.name), (2, p.unit),
-                            (3, "drive SDO 0x%04X:%d" % p.sdo if p.sdo else "motion (PC)"),
-                            (4, p.desc)):
-                item = QTableWidgetItem(text)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(r, c, item)
-            self.table.setItem(r, 1, QTableWidgetItem(self._fmt(self.store.get(p.name))))
-        self.table.resizeColumnsToContents()
-        self.table.horizontalHeader().setStretchLastSection(True)
-        v.addWidget(self.table)
+        v.setContentsMargins(8, 8, 8, 8)
+        v.setSpacing(6)
+        tables = QHBoxLayout()
+        tables.addWidget(self._build_motion_params(), 3)
+        tables.addWidget(self._build_custom_params(), 4)
+        v.addLayout(tables)
         row = QHBoxLayout()
         self.save_btn = QPushButton("Save parameters")
         self.save_btn.clicked.connect(self._on_save_params)
@@ -414,26 +420,47 @@ class EtherCatTab(QWidget):
         row.addWidget(self.apply_btn)
         row.addStretch(1)
         v.addLayout(row)
-        v.addWidget(self._build_custom_params())
+        return box
+
+    def _build_motion_params(self) -> QGroupBox:
+        box = QGroupBox("Motion + drive SDO")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(6, 6, 6, 6)
+        self.table = QTableWidget(len(PARAMETERS), 5)
+        self.table.setHorizontalHeaderLabels(["Parameter", "Value", "Unit", "Scope", "Description"])
+        for r, p in enumerate(PARAMETERS):
+            for c, text in ((0, p.name), (2, p.unit),
+                            (3, "SDO 0x%04X:%d" % p.sdo if p.sdo else "motion"),
+                            (4, p.desc)):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(r, c, item)
+            self.table.setItem(r, 1, QTableWidgetItem(self._fmt(self.store.get(p.name))))
+        self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setMaximumHeight(118)     # scroll internally instead of growing the page
+        v.addWidget(self.table)
         return box
 
     def _build_custom_params(self) -> QGroupBox:
         """User-added drive objects (gains/stiffness). Add any tuning parameter
         by its friendly ``Cxx.NN`` address or a raw ``0xINDEX:SUB`` CoE address;
         Apply writes them to the live drive over SDO."""
-        box = QGroupBox("Custom tuning parameters (drive SDO)")
+        box = QGroupBox("Tuning parameters (drive SDO)")
         v = QVBoxLayout(box)
+        v.setContentsMargins(6, 6, 6, 6)
         hint = QLabel(
-            "Reduce following error / raise stiffness: add the drive's rigidity "
-            "and inertia-ratio objects (see the A6-EC manual, e.g. C09.NN gains) "
-            "by Cxx.NN or 0xINDEX:SUB, then Apply. Value is editable in the table.")
+            "Preloaded A6-EC tuning objects — edit Value, then Apply. Set inertia "
+            "ratio first, then raise stiffness. VERIFY each Cxx.NN address against "
+            "your manual. Add more with Cxx.NN or 0xINDEX:SUB.")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
         v.addWidget(hint)
-        self.custom_table = QTableWidget(0, 4)
+        self.custom_table = QTableWidget(0, 5)
         self.custom_table.setHorizontalHeaderLabels(
-            ["Name", "Address", "Value", "Type"])
+            ["Name", "Address", "Value", "Type", "Description"])
         self.custom_table.horizontalHeader().setStretchLastSection(True)
+        self.custom_table.setMaximumHeight(118)   # scroll internally
         v.addWidget(self.custom_table)
         add = QHBoxLayout()
         self.cp_name = QLineEdit()
@@ -462,7 +489,7 @@ class EtherCatTab(QWidget):
         for r, c in enumerate(cps):
             for col, text, editable in ((0, c.name, False), (1, c.address, False),
                                         (2, self._fmt(c.value), True),
-                                        (3, c.dtype, False)):
+                                        (3, c.dtype, False), (4, c.desc, False)):
                 item = QTableWidgetItem(text)
                 if not editable:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -668,15 +695,19 @@ class EtherCatTab(QWidget):
             d = snap[i]
             home = home_counts[i] if i < len(home_counts) else 0
             state = cia402.decode_state(d["sw"])
-            w["state"].setText(f"state: {state.value.replace('_', ' ').upper()}")
+            # Pad to a constant width so the label never changes length as the
+            # live values change (which would jitter the layout).
+            w["state"].setText(f"state: {state.value.replace('_', ' ').upper():<22}")
             w["state"].setStyleSheet(
-                f"color:{theme.DANGER}; font-weight:600;" if cia402.is_fault(d["sw"])
-                else "font-weight:600;")
+                f"font-family:monospace; color:{theme.DANGER}; font-weight:600;"
+                if cia402.is_fault(d["sw"])
+                else "font-family:monospace; font-weight:600;")
             deg = (d["act"] + home) / ppd
-            w["counts"].setText(f"encoder: {d['act']:>9d} counts   |   {deg:8.3f} °")
+            w["counts"].setText(f"encoder: {d['act']:>+10d} counts   |   {deg:>+9.3f} °")
             w["detail"].setText(
                 f"statusword 0x{d['sw']:04X} · err 0x{d.get('err', 0):04X} · "
-                f"foll.err {d.get('fe', 0)} · mode {d['mode']} · target {d['tgt']}")
+                f"foll.err {d.get('fe', 0):>+7d} · mode {d['mode']:>2d} · "
+                f"target {d['tgt']:>+10d}")
             for src, mask, bit in w["bits"]:
                 bit.set_active(bool((d["sw"] if src == "sw" else d["di"]) & mask))
 

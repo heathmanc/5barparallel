@@ -70,22 +70,40 @@ def test_custom_parameters_roundtrip_and_apply(tmp_path):
 
     p = tmp_path / "drive_parameters.yaml"
     s = ParameterStore.load(p)
-    cp = s.add_custom("rigidity", "C09.00", 12, "int")
+    cp = s.add_custom("rigidity", "C09.00", 12, "int", desc="test")
     assert cp.index == 0x2009 and cp.sub == 0x01 and cp.address == "0x2009:1"
+    assert cp.desc == "test"
     s.set_custom_value("rigidity", 15)
     s.save()
     s2 = ParameterStore.load(p)
-    assert [c.name for c in s2.custom_parameters()] == ["rigidity"]
-    assert s2.custom_parameters()[0].value == 15
+    names = [c.name for c in s2.custom_parameters()]
+    assert "rigidity" in names
+    assert next(c for c in s2.custom_parameters() if c.name == "rigidity").value == 15
     # Applies alongside the built-ins; sim master has no SDO channel.
     drv = EtherCatRobotDriver(SimulatedEtherCatMaster().open())
     notes = s2.apply(drv)
     assert any("rigidity" in n and "sim master" in n for n in notes)
     s2.remove_custom("rigidity")
-    assert s2.custom_parameters() == []
+    assert "rigidity" not in [c.name for c in s2.custom_parameters()]
+
+
+def test_tuning_parameters_are_preloaded_and_seed_is_sticky(tmp_path):
+    from bung_cover_robot.ethercat.parameters import DEFAULT_TUNING
+
+    p = tmp_path / "drive_parameters.yaml"
+    s = ParameterStore.load(p)                     # fresh -> preloaded
+    names = {c.name for c in s.custom_parameters()}
+    assert {n for n, *_ in DEFAULT_TUNING} <= names
+    assert any(c.name == "machine_stiffness" and c.desc for c in s.custom_parameters())
+    # Removing a preloaded param and saving must NOT bring it back on reload.
+    s.remove_custom("machine_stiffness")
+    s.save()
+    s2 = ParameterStore.load(p)
+    assert "machine_stiffness" not in {c.name for c in s2.custom_parameters()}
 
 
 def test_add_custom_requires_name():
-    s = ParameterStore()
+    s = ParameterStore()                            # bare store: not seeded
+    assert s.custom_parameters() == []
     with pytest.raises(ValueError):
         s.add_custom("  ", "C09.00", 1)
