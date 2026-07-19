@@ -147,11 +147,14 @@ drive ignores the absolute datum entirely and homes from wherever it powered up.
 The Drives tab has a **Simulate pick && place** button (in the jog box) to
 exercise the arm and pick head before vision calibration exists. It needs the
 drives **enabled** and **Set Home** done, then runs a canned cycle: pick from a
-fixed supply *nest*, drop into each of the six holes of a bung cover that is
-placed at a random position/tilt in the reachable envelope each pass (so a
-range of poses gets exercised). Every point is workspace-validated, and the
-vacuum/cylinder actuate at each end just like a real pick. Tick **loop** to keep
-it running (re-placing the cover each pass) until you press **Stop demo**.
+**fixed supply nest** (same spot every time), drop into a **six-hole battery**
+laid out just like the real thing — six covers in a straight line at **35 mm
+pitch** — that is placed at a random position/tilt in the reachable envelope each
+pass (so a range of poses gets exercised while the battery geometry stays
+realistic). Every point is workspace-validated, and the vacuum/cylinder actuate
+at each end just like a real pick. Tick **loop** to keep it running (re-placing
+the battery each pass) until you press **Stop demo**. The **cycles/min** readout
+shows a rolling average of completed placements per minute (trailing 60 s).
 
 This is `run_demo_cycle` + `demo_pick_and_place_targets` (both in
 `app/cycle_manager.py`), the same `DirectJobRunner` the vision cycle uses — it
