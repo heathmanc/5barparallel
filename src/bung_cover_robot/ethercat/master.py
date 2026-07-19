@@ -434,16 +434,12 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         for s in self._slaves:
             s.config_func = self._configure_slave      # PDO map + CSP setup per drive
         m.config_map()
-        if self.use_dc:                                # distributed clocks (SYNC0)
+        cyc_ns = int(round(self.cycle_dt_s * 1e9))
+        shift_ns = (cyc_ns // 4 if self.sync0_shift_ns is None
+                    else int(self.sync0_shift_ns))
+        if self.use_dc:                                # distributed clocks
             dc_ok = m.config_dc()
             logger.info("config_dc() -> %s (True = a DC-capable slave was found)", dc_ok)
-            cyc_ns = int(round(self.cycle_dt_s * 1e9))
-            shift_ns = (cyc_ns // 4 if self.sync0_shift_ns is None
-                        else int(self.sync0_shift_ns))
-            for s in self._slaves:
-                s.dc_sync(True, cyc_ns, shift_ns)      # SYNC0 at cycle time, shifted
-            logger.info("EtherCAT DC/SYNC0 programmed: cycle=%d ns shift=%d ns",
-                        cyc_ns, shift_ns)
         else:
             logger.info("EtherCAT DC disabled — free-run (SM-synchronous)")
         # SAFE_OP -> OP. The drive's sync-manager watchdog needs *continuous*
@@ -454,11 +450,9 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         m.state_check(pysoem.SAFEOP_STATE, 50_000)
         for pd, s in zip(self._drives, self._slaves):
             s.output = pack_outputs(pd.controlword, pd.target_position, pd.digital_outputs)
-        # DC must CONVERGE before OP. With SYNC0 enabled, the drive validates the
-        # sync signal the instant it enters OP — if the distributed clocks haven't
-        # settled yet it faults immediately (A6 Er741). So pump process data in
-        # SAFE_OP for a settling period first, letting the clocks lock and SYNC0
-        # stabilise, *then* request OP.
+        # Per the A6-EC manual (§8.2.3): synchronise the slave clocks BEFORE the
+        # SYNC signal starts. So first pump process data in SAFE_OP to converge the
+        # distributed clocks (SYNC0 still off) ...
         if self.use_dc:
             dc0 = dc1 = 0
             n_settle = max(200, int(0.3 / self.cycle_dt_s))         # ~0.3 s
@@ -469,11 +463,21 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                     dc0 = int(getattr(m, "dc_time", 0) or 0)
                 dc1 = int(getattr(m, "dc_time", 0) or 0)
                 time.sleep(self.cycle_dt_s)
-            # If dc_time doesn't advance ~= n_settle * cycle, the phase-lock is
-            # blind and sync will fail — surface it plainly.
             logger.info("DC settle: dc_time %d -> %d (advanced %d ns over %d cycles, "
                         "expected ~%d)", dc0, dc1, dc1 - dc0, n_settle,
-                        n_settle * int(round(self.cycle_dt_s * 1e9)))
+                        n_settle * cyc_ns)
+            # ... THEN start SYNC0, so its start time is fresh (not stale from before
+            # the settle). A stale start time is exactly the "SYNC starting time
+            # incorrect" fault the manual warns about. Keep frames flowing right
+            # after arming so the drive sees data at the very first pulse.
+            for s in self._slaves:
+                s.dc_sync(True, cyc_ns, shift_ns)      # SYNC0 at cycle time, shifted
+            logger.info("DC/SYNC0 armed after settle: cycle=%d ns shift=%d ns",
+                        cyc_ns, shift_ns)
+            for _ in range(5):
+                m.send_processdata()
+                m.receive_processdata(self.recv_timeout_us)
+                time.sleep(self.cycle_dt_s)
         m.state = pysoem.OP_STATE
         m.write_state()
         reached = False
