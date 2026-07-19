@@ -245,9 +245,9 @@ class CycleManager:
     # --- preflight ----------------------------------------------------------
     def _motion_block(self) -> Optional[str]:
         if not self.controller.is_enabled:
-            return "drives are disabled — enable them in Robot Test first"
+            return "drives are disabled — Enable them on the Drives tab first"
         if not self.controller.is_referenced:
-            return "robot is not referenced — Home (find ref) in Robot Test first"
+            return "robot is not referenced — Set Home on the Drives tab first"
         return None
 
     def preflight(self) -> Optional[str]:

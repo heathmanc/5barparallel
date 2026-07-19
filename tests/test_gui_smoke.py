@@ -20,7 +20,6 @@ from bung_cover_robot.app.robot_test_controller import (  # noqa: E402
 )
 from bung_cover_robot.gui.camera_tab import CameraTab  # noqa: E402
 from bung_cover_robot.gui.main_window import MainWindow  # noqa: E402
-from bung_cover_robot.gui.robot_test_tab import RobotTestTab  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -35,7 +34,6 @@ def test_main_window_has_all_tabs(qapp):
         "Vision",
         "Camera",
         "Calibration",
-        "Robot Test",
         "Drives",
         "Settings",
     ]
@@ -237,58 +235,6 @@ def test_camera_tab_auto_exposure_toggle(qapp):
     ct._auto_checks["exposure_time_us"].setChecked(False)
     assert ct._sliders["exposure_time_us"].isEnabled()
     assert win.camera.get_control("exposure_auto") == "Off"
-
-
-def test_jog_disabled_until_enabled_and_referenced(qapp):
-    tab = RobotTestTab(build_dry_run_controller())
-    assert all(not b.isEnabled() for b in tab._jog_buttons)
-    tab.enable_btn.click()
-    assert tab.controller.is_enabled
-    assert all(not b.isEnabled() for b in tab._jog_buttons)  # still not referenced
-    tab._on_home_reference()
-    tab._await_command()
-    assert tab.controller.is_referenced
-    assert tab.referenced_label.text() == "REFERENCED"
-    assert all(b.isEnabled() for b in tab._jog_buttons)
-
-
-def test_reference_then_jog_updates_readout(qapp):
-    tab = RobotTestTab(build_dry_run_controller())
-    tab.enable_btn.click()
-    tab._on_home_reference()
-    tab._await_command()
-    tab.joint_step.setValue(1.0)
-    before = tab._value_labels["left_deg"].text()
-    tab._jog_joint("left", +1)
-    tab._await_command()
-    assert tab._value_labels["left_deg"].text() != before
-    assert "OK" in tab.status_label.text()
-
-
-def test_referenced_label_tracks_live_reference_loss(qapp):
-    tab = RobotTestTab(build_dry_run_controller())
-    tab.enable_btn.click()
-    tab._on_home_reference()
-    tab._await_command()
-    assert tab.referenced_label.text() == "REFERENCED"
-    # A disable loses the datum; the live poll (_update_enable_state, not a
-    # command's _refresh) must update the label, not just the buttons.
-    tab.controller.disable()
-    tab._update_enable_state()
-    assert tab.referenced_label.text() == "NOT REFERENCED"
-    assert all(not b.isEnabled() for b in tab._jog_buttons)
-
-
-def test_rejected_move_shows_reason(qapp):
-    tab = RobotTestTab(build_dry_run_controller())
-    tab.enable_btn.click()
-    tab._on_home_reference()
-    tab._await_command()
-    tab.cart_step.setValue(50.0)
-    for _ in range(5):
-        tab._jog_cart("y", +1)
-        tab._await_command()
-    assert "Rejected" in tab.status_label.text()
 
 
 # --------------------------------------------------------------------------- #
@@ -804,23 +750,6 @@ def test_roi_image_view_set_and_clear(qapp):
     assert back == pytest.approx((10.0, 20.0), abs=1.0)
     v.clear_roi()
     assert v.roi() is None
-
-
-def test_robot_test_home_fault_shows_message(qapp):
-    from bung_cover_robot.app.robot_test_controller import RobotTestController
-    from bung_cover_robot.gui.robot_test_tab import RobotTestTab
-    from bung_cover_robot.robot.driver import DryRunRobotDriver, RobotDriverError
-
-    class FaultingHome(DryRunRobotDriver):
-        def home(self):
-            raise RobotDriverError("home / find reference: PLC faulted (code 4)")
-
-    tab = RobotTestTab(RobotTestController(FaultingHome()))
-    tab._on_enable_toggled(True)
-    tab._on_home_reference()                  # must not raise; shows a message
-    tab._await_command()
-    assert "code 4" in tab.status_label.text()
-    assert not tab.controller.is_referenced
 
 
 def test_drives_tab_sim_connect_params_and_disconnect(qapp, tmp_path):
