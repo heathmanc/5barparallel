@@ -39,8 +39,9 @@ from params import (A0, B1, BED, BELT_LEN, BLK_A0, BLK_A1, BLK_B, BLK_H, C,
                     MOTOR_BCD, MOTOR_BORE, MP_T, MPL_TOP, MPR_TOP, MXx, MXy,
                     PD_DRV, PD_MOT, PILOT_D, PW, SLOT_L, SLOT_W, SPLAY,
                     STANDOFF, STANDOFF_PTS, T_DRV, T_MOT, TENSION, TOPP_H,
-                    TOPP_T, TOPP_W, WIN_A, WIN_B, ZL, ZR, check_layout,
-                    deck_hole_table, frame_poly_local)
+                    TOPP_T, TOPP_W, WIN_A, WIN_B, ZL, ZR, ACC_L, ACC_W,
+                    check_layout, deck_access_slots, deck_hole_table,
+                    frame_poly_local)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_PDF = ROOT / "cad" / "drawings"
@@ -246,7 +247,8 @@ def sheet_carriage(pdf):
         notes=(
             "Motor (A6M80, 80 sq flange) mounts from BELOW: 4x M6x18 SHCS up through the motor flange "
             "into the four M6 positions. PRINTED part: M6 brass heat-set inserts. 6061: tap M6.",
-            f"The four slots take M5x16 SHCS + washer down into the cradle frame bosses directly beneath; "
+            f"The four slots take M5x16 SHCS + washer down into the cradle frame bosses directly beneath "
+            "(tightened from the top through the deck access slots, sheet 4); "
             f"slot length gives ±{TENSION:g} mm of tension travel.",
             "The +X edge (toward the shoulder) is the jackscrew pad — the M6 jackscrew tip bears mid-edge.",
             "Same part both sides (symmetric).",
@@ -406,6 +408,8 @@ def sheet_deck(pdf):
             "shoulder bores; +Y toward the arms). All holes THRU.",
             "The two 47.0 bores carry the 7005 bearings (transition fit: bore 47.0 +0.025/0).",
             "Corner radii R8. Outline vertices in the VERTEX TABLE.",
+            f"8x ACCESS SLOTS {ACC_L:g} x {ACC_W:g} THRU (table below): allen-key access to the carriage "
+            "lock bolts ~45 mm below; long axis follows the tension travel.",
             f"Plate must stay within a {BED:g} x {BED:g} print bed (current {294:g} x {240:g}).",
         ))
     v = View(ax, 118, 152, 0.55)
@@ -417,6 +421,19 @@ def sheet_deck(pdf):
         dx = 5 if x >= 0 else -5
         v.text(x + dx, y + 5, hid, size=5, ha="left" if x >= 0 else "right",
                color=INK)
+    import numpy as _np
+    for hid, ax_, ay_, ang in deck_access_slots():
+        th = math.radians(ang)
+        hl, hw = ACC_L / 2 - ACC_W / 2, ACC_W / 2
+        loc = [(hl + hw * math.cos(a_), hw * math.sin(a_))
+               for a_ in _np.linspace(-math.pi / 2, math.pi / 2, 13)]
+        loc += [(-hl + hw * math.cos(a_), hw * math.sin(a_))
+                for a_ in _np.linspace(math.pi / 2, 3 * math.pi / 2, 13)]
+        pts = [(ax_ + px * math.cos(th) - py * math.sin(th),
+                ay_ + px * math.sin(th) + py * math.cos(th)) for px, py in loc]
+        v.poly(pts, lw=THICK)
+        v.cmark(ax_, ay_, 4)
+        v.text(ax_ + 11, ay_ - 10, hid, size=5, color=INK)
     v.dimh(-147, 147, -178, -14, "294")
     v.dimv(-178, 62, -147, -14, "240")
     v.cmark(0, 0, 10)
@@ -431,6 +448,13 @@ def sheet_deck(pdf):
                 f"{hid:<4} {x:8.2f} {y:8.2f} {d:5.1f}  {note}",
                 fontsize=5.4, family="monospace", color=INK)
     vy = ty - 11 - len(rows) * 4.6 - 6
+    ax.text(tx, vy, f"ACCESS SLOTS {ACC_L:g} x {ACC_W:g} THRU (X, Y, LONG-AXIS ANGLE)",
+            fontsize=7, weight="bold", color=INK)
+    for i, (hid, ax_, ay_, ang) in enumerate(deck_access_slots()):
+        ax.text(tx + (i % 2) * 78, vy - 6 - (i // 2) * 4.6,
+                f"{hid:<3} {ax_:8.2f} {ay_:8.2f}  {ang:6.2f} deg",
+                fontsize=5.4, family="monospace", color=INK)
+    vy = vy - 6 - 4 * 4.6 - 6
     ax.text(tx, vy, "VERTEX TABLE (outline, R8 corners)", fontsize=7,
             weight="bold", color=INK)
     for i, (x, y) in enumerate(DECK_PTS):
@@ -495,7 +519,8 @@ def sheet_assy(pdf):
         pdf, 6, "TENSIONER ASSEMBLY + HARDWARE", "ASSY-TENSIONER", "-", "2 (mirrored)",
         "1:1 section",
         notes=(
-            "TENSION PROCEDURE: loosen the 4x M5 lock bolts 1/2 turn -> turn the M6 jackscrew CW to push "
+            "TENSION PROCEDURE: loosen the 4x M5 lock bolts 1/2 turn (allen key from the TOP, through the "
+            "deck access slots) -> turn the M6 jackscrew CW to push "
             "the carriage away from the shoulder (belt tightens) -> torque the lock bolts (M5: 4 N·m in "
             "inserts) -> set the M6 jam nut against the block.",
             f"Travel available ±{TENSION:g} mm. Belt: {BELT_LEN:g}-5M-15 ({T_MOT}T -> {T_DRV}T, "

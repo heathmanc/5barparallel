@@ -371,6 +371,13 @@ deck = (deck.faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47)   
         .faces(">Z").workplane().pushPoints([(sx + bx, by) for sx in (HX, -HX) for bx, by in BCD]).hole(CAP_BOLT_D)  # cap bolts
         .faces(">Z").workplane().pushPoints(STANDOFF_PTS).hole(5.2)                     # standoff bolts
         .faces(">Z").workplane().pushPoints(fin_pts).hole(5.2))                         # cradle fin bolts
+# tool-access slots over the carriage lock bolts: the heads sit ~45 mm below
+# the deck with no side access, so an allen key comes straight down through
+# these (long axis = travel direction, so the key follows the bolt).
+for _hid, ax_, ay_, ang in deck_access_slots():
+    acc = (cq.Workplane("XY").slot2D(ACC_L, ACC_W, 0).extrude(DECK_T + 2)
+           .rotate((0, 0, 0), (0, 0, 1), ang).translate((ax_, ay_, -1)))
+    deck = deck.cut(acc)
 deck = deck.translate((0, 0, DECK_Z0))
 P.append((deck, (0.35, 0.5, 0.65), "bottom_deck"))
 

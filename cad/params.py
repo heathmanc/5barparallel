@@ -78,6 +78,11 @@ LOCK_B = 46.0                          # lock-bolt line, +- along b (1.5 mm
                                        # insert wall to the window edge)
 SLOT_L = 2 * TENSION + 6.5             # 18.5 slot: full +-6 travel with margin
 SLOT_W = 5.5                           # M5 clearance slot width
+# Tool-access slots THROUGH THE DECK, projected over each lock bolt so the
+# heads can be reached with an allen key from the top (they sit ~45 mm below
+# the deck; there is no side access). Long axis = the travel direction.
+ACC_W = 12.0                           # clears an M5 head (8.5) + 4 mm key wobble
+ACC_L = 2 * TENSION + ACC_W            # 24: follows the bolt over +-6 travel
 
 # --------------------------------------------------------- cradle (fixed)
 FR_A = 66.0                            # frame half-length (a)
@@ -192,6 +197,22 @@ def frame_poly_local():
     a1 = (MXx - CL_MARGIN - COS_S * FR_B) / SIN_S
     return [(-FR_A, -FR_B), (a1, -FR_B), (CUT_A, clip_b(CUT_A)),
             (FR_A, CUT_B), (FR_A, FR_B), (-FR_A, FR_B)]
+
+
+def deck_access_slots():
+    """Tool-access slots through the deck, one over each carriage lock bolt:
+    (id, world_x, world_y, angle_deg) with the long axis along the travel
+    direction. ACC_L x ACC_W, THRU."""
+    rows = []
+    n = 1
+    for sgn in (1, -1):
+        ang = math.degrees(math.atan2(COS_S, -sgn * SIN_S))
+        for sa in (LOCK_A, -LOCK_A):
+            for sb in (LOCK_B, -LOCK_B):
+                x, y = local_to_world(sgn, sa, sb)
+                rows.append((f"A{n}", x, y, ang))
+                n += 1
+    return rows
 
 
 def deck_hole_table():
@@ -387,6 +408,29 @@ def check_layout(verbose: bool = False) -> list:
             if d < worst:
                 worst, worst_k = d, f"{k} side {sgn}"
     ok(worst >= 1.5, worst - 1.5, f"deck contains all hardware (worst: {worst_k})")
+    # tool-access slots: inside the outline, clear of every circular deck hole
+    holes = deck_hole_table()
+    hl, hw = ACC_L / 2, ACC_W / 2
+    worst_edge, worst_hole, worst_pair = 1e9, 1e9, ""
+    for hid, sx_, sy_, ang in deck_access_slots():
+        th = math.radians(ang)
+        ux, uy = math.cos(th), math.sin(th)
+        vx, vy = -math.sin(th), math.cos(th)
+        for i in (-1, 1):
+            for j in (-1, 1):
+                worst_edge = min(worst_edge, _deck_margin(
+                    (sx_ + i * hl * ux + j * hw * vx,
+                     sy_ + i * hl * uy + j * hw * vy)))
+        for hid2, hx_, hy_, d, _n in holes:
+            px, py = hx_ - sx_, hy_ - sy_
+            t = max(-(hl - hw), min(hl - hw, px * ux + py * uy))
+            dd = math.hypot(px - t * ux, py - t * uy) - hw - d / 2
+            if dd < worst_hole:
+                worst_hole, worst_pair = dd, f"{hid}-{hid2}"
+    ok(worst_edge >= 1.5, worst_edge - 1.5, "deck access slots inside the outline")
+    ok(worst_hole >= 2.0, worst_hole - 2.0,
+       f"deck access slots clear of deck holes (worst: {worst_pair})")
+
     xs = [p[0] for p in DECK_PTS]; ys = [p[1] for p in DECK_PTS]
     m = BED - (max(xs) - min(xs))
     ok(m >= 0, m, "deck width fits 300 bed")
