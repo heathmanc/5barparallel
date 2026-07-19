@@ -46,19 +46,31 @@ are not in this list.
 > future tooth-count change can't silently reintroduce a paper-thin boss. Still
 > confirm the vendor's actual boss OD when ordering the pilot-bore blank.
 
+## Printed structure (see `cad/drawings/bcr_drawing_set.pdf` for shop sheets)
+
+| Qty | Part | STEP / sheet | Note |
+|---|---|---|---|
+| 2 | Motor carriage | `motor_carriage.step` / BCR-02 | Slides on the cradle; M6 inserts for the motor, 4 lock slots |
+| 1+1 | Motor cradle L + R | `motor_cradle_L/R.step` / BCR-03 | RH mirrors LH; frame + 2 shear fins + jack block, one print each |
+| 8 | Bearing cap Ø72 | `bearing_cap.step` / BCR-01 | Top + bottom of each 7005 bore, bolted through the plate |
+| 1 | Bottom deck | BCR-04 | 294 × 240 × 12 — hole coordinate table on the sheet |
+| 1 | Top plate | BCR-05 | 156 × 92 × 10 (+4 Ø12×40 standoffs) — widened so the Ø72 caps sit fully on it |
+
 ## Fasteners (McMaster-Carr — stable catalog)
 
 | Qty | Part | Use |
 |---|---|---|
-| 8 | M6 socket-head cap screw (Ø90 BCD) | Motor → sliding carriage |
-| 2 | M6 jackscrew (~40 mm) + heat-set insert or nut | Belt tensioner — one per motor, through the tension block |
-| ~16 | M5 SHCS (in the ±6 mm carriage slots) | Carriage lock-down + rails/tension block → deck |
-| 16 | M4 SHCS + insert/nut | Bearing caps — 4 per bore, top+bottom cap bolted through each plate on the Ø58 BCD (2 bores × 2 plates) |
+| 8 | M6 × 18 SHCS (Ø90 BCD) | Motor flange → carriage, fitted **from below** through the flange into M6 inserts/taps in the carriage (full 8 mm engagement) |
+| 2 | M6 × 40 jackscrew + jam nut | Belt tensioner — through the cradle's block, tip pushes the carriage pad |
+| 8 | M5 × 16 SHCS + washer | Carriage lock bolts — through the ±6 mm slots into M5 inserts in the cradle frame (4 per side) |
+| 12 | M5 × 20 SHCS | Cradle fin flanges → deck underside (3 per fin, deck holes Ø5.2 thru, 10-deep flange with full M5 heat-set) |
+| 16 | M4 × 35 SHCS + nyloc + washers | Bearing caps — 4 per bore, top+bottom cap bolted **through** each plate on the Ø58 BCD (2 bores × 2 plates) |
 | 2 | M25×1.5 shaft locknut (or KM5 + tab washer) | Shoulder bearing preload, above the upper cap |
-| 8 | M5 SHCS | Deck ↔ top-plate standoffs (4 per plate) |
+| 4 | M5 × 70 SHCS + nyloc | Top plate → standoff → deck through-bolts (one per standoff — the Ø12 standoffs are clearance-bored Ø5.2, no threads) |
 | 4 | M3 SHCS + nut | Distal elbow split-clamp pinch bolts (2 per clamp) |
 | 2 | M5 set screw (cup point) | Shoulder D-bore axial retention onto the shaft flat |
 | 2 | Ø8 shaft clip / printed clip | Elbow-pin top retention (bottom head is integral to the pin) |
+| — | M5/M6 brass heat-set inserts | All printed bosses (cradle lock/fin/jack, carriage motor bosses) |
 | — | assorted M4/M5/M6 washers | as needed |
 
 [McMaster metric SHCS](https://www.mcmaster.com/products/screws/socket-head-screws~/system-of-measurement~metric/) · [set screws](https://www.mcmaster.com/products/set-screws/system-of-measurement~metric/)

@@ -21,6 +21,9 @@ A6-EC / AS715N drives over the IgH EtherLab master).
 
 - `python -m pytest -q` — full suite (should stay green before any merge).
 - `python cad/generate.py` — regenerate STEP models + `docs/cad/*.png`
-  (needs `cadquery`).
+  (needs `cadquery`). Layout dimensions live in `cad/params.py` (shared with
+  the drawings; `check_layout()` audits every clearance at build time).
+- `python cad/drawings.py` — regenerate the machine-shop drawing set
+  (`cad/drawings/bcr_drawing_set.pdf` + PNG previews, needs only matplotlib).
 - `make -C igh ETHERLAB=/opt/etherlab` — build the IgH RT daemon (rebuild
   whenever the shared-memory ABI in `igh/ec_master_daemon.c` changes).
