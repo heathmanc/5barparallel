@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -45,45 +46,27 @@ from ..ethercat.parameters import PARAMETERS, ParameterStore
 from ..robot.driver import HomingConfig, RobotDriverError
 from . import theme
 
-_SW_BITS = [  # (label, mask, kind-when-active)
-    ("Ready", cia402.SW_READY_TO_SWITCH_ON, "ok"),
-    ("Switched on", cia402.SW_SWITCHED_ON, "ok"),
-    ("Op enabled", cia402.SW_OPERATION_ENABLED, "ok"),
-    ("Voltage", cia402.SW_VOLTAGE_ENABLED, "ok"),
-    ("Quick stop", cia402.SW_QUICK_STOP, "ok"),
-    ("Warning", cia402.SW_WARNING, "warn"),
-    ("Fault", cia402.SW_FAULT, "bad"),
-    ("Target reached", cia402.SW_TARGET_REACHED, "ok"),
-    ("Internal limit", cia402.SW_INTERNAL_LIMIT, "warn"),
+_SW_BITS = [  # (label, statusword mask)
+    ("Ready", cia402.SW_READY_TO_SWITCH_ON),
+    ("Switched on", cia402.SW_SWITCHED_ON),
+    ("Op enabled", cia402.SW_OPERATION_ENABLED),
+    ("Voltage", cia402.SW_VOLTAGE_ENABLED),
+    ("Quick stop", cia402.SW_QUICK_STOP),
+    ("Warning", cia402.SW_WARNING),
+    ("Fault", cia402.SW_FAULT),
+    ("Target reached", cia402.SW_TARGET_REACHED),
+    ("Internal limit", cia402.SW_INTERNAL_LIMIT),
 ]
-_DI_BITS = [("Neg limit", 1 << 0, "warn"), ("Pos limit", 1 << 1, "warn"),
-            ("Home switch", 1 << 2, "ok")]
+_DI_BITS = [("Neg limit", 1 << 0), ("Pos limit", 1 << 1), ("Home switch", 1 << 2)]
 
-
-class _Bit(QLabel):
-    """ISA-101 bit indicator: light gray when inactive, filled when active;
-    red/amber reserved for fault/warning bits."""
-
-    def __init__(self, label: str, kind: str) -> None:
-        super().__init__(label)
-        self._kind = kind
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.set_active(False)
-
-    def set_active(self, on: bool) -> None:
-        if not on:
-            style = (f"background:#d4d7d8; color:{theme.TEXT_DIM}; "
-                     "border-radius:4px; padding:2px 7px;")
-        elif self._kind == "bad":
-            style = ("background:%s; color:#ffffff; border-radius:4px; "
-                     "padding:2px 7px; font-weight:600;" % theme.DANGER)
-        elif self._kind == "warn":
-            style = ("background:#e8ae1b; color:#22282b; border-radius:4px; "
-                     "padding:2px 7px; font-weight:600;")
-        else:
-            style = (f"background:#cbd0d2; color:{theme.TEXT}; "
-                     "border-radius:4px; padding:2px 7px; font-weight:600;")
-        self.setStyleSheet(style)
+# Rows of the single per-drive status table: (label, kind). kind is a scalar key
+# ("state"/"counts"/"angle"/"err"/"fe") or ("sw"|"di", mask) for an on/off bit.
+_STATUS_ROWS = (
+    [("State", "state"), ("Encoder (counts)", "counts"), ("Angle (deg)", "angle"),
+     ("Error code", "err"), ("Following error", "fe")]
+    + [(lbl, ("sw", mask)) for lbl, mask in _SW_BITS]
+    + [(lbl, ("di", mask)) for lbl, mask in _DI_BITS]
+)
 
 
 class _StatusPoller(QThread):
@@ -158,13 +141,11 @@ class EtherCatTab(QWidget):
         top = QHBoxLayout()
         top.addWidget(self._build_connection(), 1)
         root.addLayout(top)
-        # Drive-0 / Drive-1 status (narrow) with the jog pad to their right.
+        # One status table (rows = signals, columns = Drive 0 / Drive 1) with the
+        # jog pad to its right.
         mid = QHBoxLayout()
-        self._drive_panels = [self._build_drive_panel("Drive 0 — left shoulder"),
-                              self._build_drive_panel("Drive 1 — right shoulder")]
-        for panel, _ in self._drive_panels:
-            mid.addWidget(panel, 2)
-        mid.addWidget(self._build_jog(), 3)
+        mid.addWidget(self._build_status_table(), 3)
+        mid.addWidget(self._build_jog(), 2)
         root.addLayout(mid)
         # Parameters take the remaining height (both tables expand vertically).
         root.addWidget(self._build_parameters(), 1)
@@ -221,43 +202,44 @@ class EtherCatTab(QWidget):
         g.addLayout(row, 3, 0, 1, 2)
         return box
 
-    def _build_drive_panel(self, title: str):
-        box = QGroupBox(title)
+    def _build_status_table(self) -> QGroupBox:
+        """One table: rows are the per-drive signals (state, encoder, angle, err,
+        following error, then each statusword/DI bit as plain ON/OFF), columns
+        are Drive 0 and Drive 1."""
+        box = QGroupBox("Drive status")
         v = QVBoxLayout(box)
-        v.setContentsMargins(8, 6, 8, 6)
-        v.setSpacing(3)
-        state = QLabel("state: —")
-        state.setStyleSheet("font-family:monospace; font-weight:600;")
-        counts = QLabel("encoder: — counts   |   — °")
-        counts.setStyleSheet("font-family:monospace;")
-        detail = QLabel("err — · foll.err —")
-        detail.setStyleSheet(f"font-family:monospace; color:{theme.TEXT_DIM};")
-        # These carry live numbers. Fixed-width formatting (in _on_snapshot) keeps
-        # the text a constant length; Ignored horizontal policy stops any label
-        # from driving the panel width, so the two-panel split can't jitter as
-        # counts change. Wrap the long lines so the narrow panels don't clip the
-        # degrees / following error.
-        for lbl in (state, counts, detail):
-            lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        counts.setWordWrap(True)
-        detail.setWordWrap(True)
-        v.addWidget(state)
-        v.addWidget(counts)
-        v.addWidget(detail)
-        io = QGridLayout()
-        io.setSpacing(3)
-        bits = []
-        for i, (name, mask, kind) in enumerate(_SW_BITS):
-            b = _Bit(name, kind)
-            bits.append(("sw", mask, b))
-            io.addWidget(b, i // 3, i % 3)
-        for j, (name, mask, kind) in enumerate(_DI_BITS):
-            b = _Bit(name, kind)
-            bits.append(("di", mask, b))
-            io.addWidget(b, (len(_SW_BITS) + 2) // 3, j)   # next row, no empty gap
-        v.addLayout(io)
-        widgets = dict(state=state, counts=counts, detail=detail, bits=bits)
-        return box, widgets
+        v.setContentsMargins(6, 6, 6, 6)
+        t = QTableWidget(len(_STATUS_ROWS), 3)
+        t.setHorizontalHeaderLabels(["Signal", "Drive 0", "Drive 1"])
+        t.verticalHeader().setVisible(False)
+        t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        t.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        row_h = 20
+        t.verticalHeader().setDefaultSectionSize(row_h)
+        # Show every row at once — no internal scroll.
+        t.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        t.setMinimumHeight(row_h * len(_STATUS_ROWS) + 28)
+        for r, (label, _kind) in enumerate(_STATUS_ROWS):
+            t.setItem(r, 0, QTableWidgetItem(label))
+            for c in (1, 2):
+                cell = QTableWidgetItem("—")
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                t.setItem(r, c, cell)
+        hdr = t.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.status_table = t
+        v.addWidget(t)
+        return box
+
+    def _set_status_cell(self, row: int, col: int, text: str, danger: bool) -> None:
+        item = self.status_table.item(row, col)
+        if item is None:
+            return
+        item.setText(text)
+        item.setForeground(QColor(theme.DANGER) if danger else QColor(theme.TEXT))
 
     def _build_jog(self) -> QGroupBox:
         """Cartesian TCP jog: X/Y +/- pad, increment in mm, speed in mm/s. Moves
@@ -701,43 +683,44 @@ class EtherCatTab(QWidget):
             self._poller.stop()
             self._poller = None
 
+    @staticmethod
+    def _status_value(kind, d, deg, faulted):
+        """(text, danger) for one signal row of one drive."""
+        if kind == "state":
+            return cia402.decode_state(d["sw"]).value.replace("_", " ").upper(), faulted
+        if kind == "counts":
+            return f"{d['act']:+d}", False
+        if kind == "angle":
+            return f"{deg:+.3f}", False
+        if kind == "err":
+            return f"0x{d.get('err', 0):04X}", False
+        if kind == "fe":
+            return f"{d.get('fe', 0):+d}", False
+        src, mask = kind
+        on = bool((d["sw"] if src == "sw" else d["di"]) & mask)
+        return ("ON" if on else "OFF"), False
+
     def _on_snapshot(self, snap) -> None:
         connected = snap is not None
         self.conn_label.setText("CONNECTED" if connected else "DISCONNECTED")
         self.conn_label.setStyleSheet(
             f"color:{theme.TEXT}; font-weight:600;" if connected
             else f"color:{theme.TEXT_DIM}; font-weight:600;")
-        if not connected:
-            return
-        drv = self.controller.driver
         ppd = self.controller.kin.config.pulses_per_degree
-        home_counts = getattr(drv, "_home_counts", [0, 0])
-        for i, (panel, w) in enumerate(self._drive_panels):
-            if i >= len(snap):
-                # Fewer drives on the bus than panels (single-axis bench): mark absent.
-                w["state"].setText("state: — (not on bus)")
-                w["state"].setStyleSheet(f"color:{theme.TEXT_DIM}; font-weight:600;")
-                w["counts"].setText("encoder: —")
-                w["detail"].setText("—")
-                for _src, _mask, bit in w["bits"]:
-                    bit.set_active(False)
+        home_counts = getattr(self.controller.driver, "_home_counts", [0, 0])
+        for i in range(2):                       # columns: Drive 0, Drive 1
+            col = 1 + i
+            if not connected or i >= len(snap):
+                for r in range(len(_STATUS_ROWS)):
+                    self._set_status_cell(r, col, "—", False)
                 continue
             d = snap[i]
             home = home_counts[i] if i < len(home_counts) else 0
-            state = cia402.decode_state(d["sw"])
-            # Pad to a constant width so the label never changes length as the
-            # live values change (which would jitter the layout).
-            w["state"].setText(f"state: {state.value.replace('_', ' ').upper():<22}")
-            w["state"].setStyleSheet(
-                f"font-family:monospace; color:{theme.DANGER}; font-weight:600;"
-                if cia402.is_fault(d["sw"])
-                else "font-family:monospace; font-weight:600;")
             deg = (d["act"] + home) / ppd
-            w["counts"].setText(f"encoder: {d['act']:>+10d} counts   |   {deg:>+9.3f} °")
-            w["detail"].setText(
-                f"err 0x{d.get('err', 0):04X} · foll.err {d.get('fe', 0):>+7d}")
-            for src, mask, bit in w["bits"]:
-                bit.set_active(bool((d["sw"] if src == "sw" else d["di"]) & mask))
+            faulted = cia402.is_fault(d["sw"])
+            for r, (_label, kind) in enumerate(_STATUS_ROWS):
+                text, danger = self._status_value(kind, d, deg, faulted)
+                self._set_status_cell(r, col, text, danger)
 
     def refresh(self) -> None:
         connected = self._master() is not None

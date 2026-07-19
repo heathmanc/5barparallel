@@ -840,8 +840,9 @@ def test_drives_tab_sim_connect_params_and_disconnect(qapp, tmp_path):
     snap = [dict(sw=d.statusword, mode=d.mode_display, act=d.actual_position,
                  tgt=d.target_position, di=d.digital_inputs) for d in master.drives]
     tab._on_snapshot(snap)
-    assert "OPERATION ENABLED" in tab._drive_panels[0][1]["state"].text()
-    assert "counts" in tab._drive_panels[0][1]["counts"].text()
+    # status table: row 0 = State, row 1 = Encoder; column 1 = Drive 0
+    assert tab.status_table.item(0, 1).text() == "OPERATION ENABLED"
+    assert tab.status_table.item(1, 1).text() not in ("", "—")   # encoder count shown
     # parameter table: edit a value, save -> YAML persisted with the new value
     tab.table.item(0, 1).setText("150")        # speed_mm_s
     tab._on_save_params()
@@ -858,8 +859,8 @@ def test_drives_tab_sim_connect_params_and_disconnect(qapp, tmp_path):
 
 
 def test_drives_tab_single_axis_bench_mode(qapp, tmp_path):
-    """Drives=1 (single-axis bench): the master has one drive, panel 0 shows it
-    live, and the absent second panel is marked 'not on bus' — no stale data."""
+    """Drives=1 (single-axis bench): the master has one drive, the Drive 0 column
+    shows it live, and the absent Drive 1 column reads '—' — no stale data."""
     from bung_cover_robot.gui.ethercat_tab import EtherCatTab
 
     ctrl = build_dry_run_controller()
@@ -872,8 +873,8 @@ def test_drives_tab_single_axis_bench_mode(qapp, tmp_path):
             for d in ctrl.driver.master.drives]
     assert len(snap) == 1
     tab._on_snapshot(snap)
-    assert "counts" in tab._drive_panels[0][1]["counts"].text()
-    assert "not on bus" in tab._drive_panels[1][1]["state"].text()
+    assert tab.status_table.item(0, 1).text() not in ("", "—")   # Drive 0 State live
+    assert tab.status_table.item(0, 2).text() == "—"             # Drive 1 absent
     tab._on_disconnect()
     tab._stop_poller()
 
