@@ -19,6 +19,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -157,6 +158,7 @@ class EtherCatTab(QWidget):
             drives.addWidget(panel, 1)
         root.addLayout(drives)
         root.addWidget(self._build_jog())
+        root.addWidget(self._build_coordinated())
         root.addWidget(self._build_parameters(), 1)
         self.status_label = QLabel("Not connected — connect the EtherCAT master, "
                                    "or use the simulated network for bench-off work.")
@@ -237,7 +239,7 @@ class EtherCatTab(QWidget):
         return box, widgets
 
     def _build_jog(self) -> QGroupBox:
-        box = QGroupBox("Bench jog — axis 0  (motion)")
+        box = QGroupBox("Bench jog  (motion)")
         g = QGridLayout(box)
         self.enable_btn = QPushButton("Enable")
         self.enable_btn.clicked.connect(self._on_enable)
@@ -245,27 +247,61 @@ class EtherCatTab(QWidget):
         self.disable_btn.clicked.connect(self._on_disable)
         g.addWidget(self.enable_btn, 0, 0)
         g.addWidget(self.disable_btn, 0, 1)
-        g.addWidget(QLabel("step (counts)"), 0, 2)
+        g.addWidget(QLabel("axis"), 0, 2)
+        self.jog_axis = QSpinBox()
+        self.jog_axis.setRange(0, 1)     # bench max is 2 drives; index validated on jog
+        self.jog_axis.setToolTip(
+            "Which drive on the bus to jog (0 = first slave, 1 = second). "
+            "Jog each after wiring to confirm it maps to the axis you expect.")
+        g.addWidget(self.jog_axis, 0, 3)
+        g.addWidget(QLabel("step (counts)"), 0, 4)
         self.jog_step = QSpinBox()
         self.jog_step.setRange(1, 200000)
         self.jog_step.setValue(2000)
-        g.addWidget(self.jog_step, 0, 3)
-        g.addWidget(QLabel("speed (counts/s)"), 0, 4)
+        g.addWidget(self.jog_step, 0, 5)
+        g.addWidget(QLabel("speed (counts/s)"), 0, 6)
         self.jog_speed = QSpinBox()
         self.jog_speed.setRange(100, 500000)
         self.jog_speed.setValue(20000)
-        g.addWidget(self.jog_speed, 0, 5)
+        g.addWidget(self.jog_speed, 0, 7)
         self.jog_minus = QPushButton("– Jog")
         self.jog_minus.clicked.connect(lambda: self._on_jog(-1))
         self.jog_plus = QPushButton("Jog +")
         self.jog_plus.clicked.connect(lambda: self._on_jog(+1))
-        g.addWidget(self.jog_minus, 0, 6)
-        g.addWidget(self.jog_plus, 0, 7)
+        g.addWidget(self.jog_minus, 1, 6)
+        g.addWidget(self.jog_plus, 1, 7)
         warn = QLabel("Motion — only with the E-stop / contactor live and the motor "
                       "secured. Enable first, then jog. Keep steps small at first.")
         warn.setWordWrap(True)
         warn.setStyleSheet(f"color:{theme.WARN}; font-weight:600;")
-        g.addWidget(warn, 1, 0, 1, 8)
+        g.addWidget(warn, 2, 0, 1, 8)
+        return box
+
+    def _build_coordinated(self) -> QGroupBox:
+        """Coordinated two-axis move: both drives ramp through one shared time
+        profile (start + finish together). Joint-space, so it's safe before the
+        arm is in the linkage — this is the first lockstep-streaming test."""
+        box = QGroupBox("Coordinated move — both axes together  (motion)")
+        g = QGridLayout(box)
+        g.addWidget(QLabel("axis 0 Δ (counts)"), 0, 0)
+        self.coord_d0 = QSpinBox()
+        self.coord_d0.setRange(-200000, 200000)
+        self.coord_d0.setValue(2000)
+        g.addWidget(self.coord_d0, 0, 1)
+        g.addWidget(QLabel("axis 1 Δ (counts)"), 0, 2)
+        self.coord_d1 = QSpinBox()
+        self.coord_d1.setRange(-200000, 200000)
+        self.coord_d1.setValue(-2000)
+        g.addWidget(self.coord_d1, 0, 3)
+        self.coord_btn = QPushButton("Move both (coordinated)")
+        self.coord_btn.clicked.connect(self._on_coord_move)
+        g.addWidget(self.coord_btn, 0, 4)
+        hint = QLabel("Both axes reach their targets at the same instant "
+                      "(shared trapezoid). Opposite signs verify independent "
+                      "direction; small deltas first.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        g.addWidget(hint, 1, 0, 1, 5)
         return box
 
     def _ec_driver(self):
@@ -291,7 +327,8 @@ class EtherCatTab(QWidget):
         self._status("Disabled — torque off (drive tracks position).", theme.TEXT)
 
     def _set_motion_enabled(self, on: bool) -> None:
-        for b in (self.enable_btn, self.disable_btn, self.jog_minus, self.jog_plus):
+        for b in (self.enable_btn, self.disable_btn, self.jog_minus, self.jog_plus,
+                  self.coord_btn):
             b.setEnabled(on)
 
     def _on_jog(self, sign: int) -> None:
@@ -301,13 +338,14 @@ class EtherCatTab(QWidget):
             return
         if self._jog_worker is not None and self._jog_worker.isRunning():
             return
+        axis = int(self.jog_axis.value())
         delta = sign * int(self.jog_step.value())
         speed = float(self.jog_speed.value())
         # Run off the GUI thread so the poller keeps updating (see following error).
         self._set_motion_enabled(False)
-        self._status(f"Jogging axis 0 by {delta:+d} counts…", theme.TEXT)
+        self._status(f"Jogging axis {axis} by {delta:+d} counts…", theme.TEXT)
         self._jog_worker = _JogWorker(
-            lambda: drv.jog_counts(0, delta, speed_counts_s=speed))
+            lambda: drv.jog_counts(axis, delta, speed_counts_s=speed))
         self._jog_worker.done.connect(self._on_jog_done)
         self._jog_worker.start()
 
@@ -317,6 +355,23 @@ class EtherCatTab(QWidget):
             self._status(f"Jog failed: {err}", theme.DANGER)
         else:
             self._status("Jog complete.", theme.TEXT)
+
+    def _on_coord_move(self) -> None:
+        drv = self._ec_driver()
+        if drv is None:
+            self._status("Connect + enable the drives first.", theme.WARN)
+            return
+        if self._jog_worker is not None and self._jog_worker.isRunning():
+            return
+        n = len(drv.master.drives)
+        deltas = [int(self.coord_d0.value()), int(self.coord_d1.value())][:n]
+        speed = float(self.jog_speed.value())
+        self._set_motion_enabled(False)
+        self._status(f"Coordinated move {deltas} counts…", theme.TEXT)
+        self._jog_worker = _JogWorker(
+            lambda: drv.jog_counts_multi(deltas, speed_counts_s=speed))
+        self._jog_worker.done.connect(self._on_jog_done)
+        self._jog_worker.start()
 
     def _build_parameters(self) -> QGroupBox:
         box = QGroupBox("Parameters (motion + drive SDO)")
@@ -344,7 +399,106 @@ class EtherCatTab(QWidget):
         row.addWidget(self.apply_btn)
         row.addStretch(1)
         v.addLayout(row)
+        v.addWidget(self._build_custom_params())
         return box
+
+    def _build_custom_params(self) -> QGroupBox:
+        """User-added drive objects (gains/stiffness). Add any tuning parameter
+        by its friendly ``Cxx.NN`` address or a raw ``0xINDEX:SUB`` CoE address;
+        Apply writes them to the live drive over SDO."""
+        box = QGroupBox("Custom tuning parameters (drive SDO)")
+        v = QVBoxLayout(box)
+        hint = QLabel(
+            "Reduce following error / raise stiffness: add the drive's rigidity "
+            "and inertia-ratio objects (see the A6-EC manual, e.g. C09.NN gains) "
+            "by Cxx.NN or 0xINDEX:SUB, then Apply. Value is editable in the table.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        v.addWidget(hint)
+        self.custom_table = QTableWidget(0, 4)
+        self.custom_table.setHorizontalHeaderLabels(
+            ["Name", "Address", "Value", "Type"])
+        self.custom_table.horizontalHeader().setStretchLastSection(True)
+        v.addWidget(self.custom_table)
+        add = QHBoxLayout()
+        self.cp_name = QLineEdit()
+        self.cp_name.setPlaceholderText("name (e.g. rigidity)")
+        self.cp_addr = QLineEdit()
+        self.cp_addr.setPlaceholderText("Cxx.NN or 0x20xx:NN")
+        self.cp_val = QLineEdit()
+        self.cp_val.setPlaceholderText("value")
+        self.cp_val.setMaximumWidth(90)
+        self.cp_type = QComboBox()
+        self.cp_type.addItems(["int", "int16", "int8", "float"])
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._on_add_custom)
+        rm_btn = QPushButton("Remove selected")
+        rm_btn.clicked.connect(self._on_remove_custom)
+        for w in (self.cp_name, self.cp_addr, self.cp_val, self.cp_type,
+                  add_btn, rm_btn):
+            add.addWidget(w)
+        v.addLayout(add)
+        self._refresh_custom_table()
+        return box
+
+    def _refresh_custom_table(self) -> None:
+        cps = self.store.custom_parameters()
+        self.custom_table.setRowCount(len(cps))
+        for r, c in enumerate(cps):
+            for col, text, editable in ((0, c.name, False), (1, c.address, False),
+                                        (2, self._fmt(c.value), True),
+                                        (3, c.dtype, False)):
+                item = QTableWidgetItem(text)
+                if not editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.custom_table.setItem(r, col, item)
+        self.custom_table.resizeColumnsToContents()
+        self.custom_table.horizontalHeader().setStretchLastSection(True)
+
+    def _on_add_custom(self) -> None:
+        name = self.cp_name.text().strip()
+        addr = self.cp_addr.text().strip()
+        if not name or not addr:
+            self._status("Custom parameter needs a name and an address.", theme.WARN)
+            return
+        try:
+            self.store.add_custom(name, addr, self.cp_val.text() or 0,
+                                  self.cp_type.currentText())
+        except ValueError as exc:
+            self._status(f"Bad address: {exc}", theme.WARN)
+            return
+        self.store.save()
+        self.cp_name.clear()
+        self.cp_addr.clear()
+        self.cp_val.clear()
+        self._refresh_custom_table()
+        self._status(f"Added custom parameter '{name}'.", theme.TEXT)
+
+    def _on_remove_custom(self) -> None:
+        row = self.custom_table.currentRow()
+        if row < 0:
+            self._status("Select a custom parameter row to remove.", theme.WARN)
+            return
+        name_item = self.custom_table.item(row, 0)
+        if name_item is None:
+            return
+        self.store.remove_custom(name_item.text())
+        self.store.save()
+        self._refresh_custom_table()
+        self._status("Removed custom parameter.", theme.TEXT)
+
+    def _read_custom_table(self) -> bool:
+        for r, c in enumerate(self.store.custom_parameters()):
+            item = self.custom_table.item(r, 2)
+            if item is None:
+                continue
+            try:
+                self.store.set_custom_value(c.name, float(item.text()))
+            except (TypeError, ValueError):
+                self._status(f"'{c.name}' value is not a number - fix it and retry.",
+                             theme.WARN)
+                return False
+        return True
 
     @staticmethod
     def _fmt(v: float) -> str:
@@ -445,13 +599,13 @@ class EtherCatTab(QWidget):
         return True
 
     def _on_save_params(self) -> None:
-        if not self._read_table():
+        if not self._read_table() or not self._read_custom_table():
             return
         path = self.store.save()
         self._status(f"Parameters saved -> {path}", theme.TEXT)
 
     def _on_apply_params(self) -> None:
-        if not self._read_table():
+        if not self._read_table() or not self._read_custom_table():
             return
         drv = self.controller.driver
         if not isinstance(drv, EtherCatRobotDriver):

@@ -44,6 +44,27 @@ def test_jog_requires_enable():
         drv.jog_counts(0, 1000)
 
 
+def test_jog_counts_multi_moves_both_axes_together():
+    # Two-drive bench: coordinated joint move ramps both axes to their targets
+    # off one synchronized profile (opposite signs to prove independent direction).
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    drv.enable()
+    drv.jog_counts_multi([3000, -1500], speed_counts_s=50000, accel_counts_s2=200000)
+    assert master.drives[0].actual_position == 3000
+    assert master.drives[1].actual_position == -1500
+
+
+def test_jog_counts_multi_requires_enable_and_matching_deltas():
+    master = SimulatedEtherCatMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    with pytest.raises(RobotDriverError, match="enable"):
+        drv.jog_counts_multi([1000, 1000])
+    drv.enable()
+    with pytest.raises(RobotDriverError, match="delta"):
+        drv.jog_counts_multi([1000])          # only one delta for two drives
+
+
 def _mock_camera():
     return MockCamera(
         CameraConfig(mock_width=760, mock_height=520), frames=[demo_frame(760, 520)]

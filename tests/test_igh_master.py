@@ -11,6 +11,7 @@ from bung_cover_robot.ethercat.igh_master import (
     _DRIVE_BASE,
     _DRIVE_SZ,
     _MAX_DRIVES,
+    _SDO_BASE,
     _SHM_SIZE,
     IgHMaster,
 )
@@ -19,11 +20,13 @@ from bung_cover_robot.ethercat.master import EtherCatMaster, MasterError
 
 def test_shm_layout_matches_c_struct():
     # Mirror of shm_layout_t in igh/ec_master_daemon.c: 52-byte header, 2x32-byte
-    # drive blocks, then MAX_DRIVES x CSP_MAX int32 setpoints.
+    # drive blocks, MAX_DRIVES x CSP_MAX int32 setpoints, then a 28-byte SDO
+    # request/result channel (ABI 2).
     assert _DRIVE_BASE == 52
     assert _DRIVE_SZ == 32
     assert _CSP_BASE == _DRIVE_BASE + _MAX_DRIVES * _DRIVE_SZ == 116
-    assert _SHM_SIZE == _CSP_BASE + _MAX_DRIVES * _CSP_MAX * 4 == 524404
+    assert _SDO_BASE == _CSP_BASE + _MAX_DRIVES * _CSP_MAX * 4 == 524404
+    assert _SHM_SIZE == _SDO_BASE + 28 == 524432
 
 
 def test_is_a_master_with_requested_drives():

@@ -33,6 +33,7 @@ from .trajectory import (
     TrajectoryLimits,
     plan_linear_move,
     ramp_counts,
+    ramp_counts_multi,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,30 @@ class EtherCatRobotDriver(RobotDriver):
             self.master.run_csp(targets)
         except MasterError as exc:
             raise RobotDriverError(f"jog aborted: {exc}") from exc
+
+    def jog_counts_multi(self, deltas: List[int],
+                         speed_counts_s: float = 20000.0,
+                         accel_counts_s2: float = 100000.0) -> None:
+        """Coordinated bench move: ramp every axis simultaneously through one
+        shared time profile so they start and finish together — the first real
+        test of two drives streaming in lockstep off one CSP stream. Joint-space
+        (no kinematics), so it is safe before the arm is in the linkage. Motion —
+        only with the E-stop/contactor live. Requires Operation Enabled."""
+        if self.is_faulted:
+            raise RobotDriverError(f"cannot move: faulted (code {self.fault_code()})")
+        if not self.is_enabled:
+            raise RobotDriverError("cannot move: enable the drives first")
+        n = len(self.master.drives)
+        if len(deltas) != n:
+            raise RobotDriverError(f"expected {n} axis delta(s), got {len(deltas)}")
+        self.master.exchange()                        # fresh actuals
+        starts = [d.actual_position for d in self.master.drives]
+        ramp = ramp_counts_multi(starts, [int(x) for x in deltas],
+                                 speed_counts_s, accel_counts_s2, self.limits.cycle_dt_s)
+        try:
+            self.master.run_csp(ramp)
+        except MasterError as exc:
+            raise RobotDriverError(f"coordinated move aborted: {exc}") from exc
 
     def disable(self) -> None:
         for d in self.master.drives:

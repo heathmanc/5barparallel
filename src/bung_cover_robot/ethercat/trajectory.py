@@ -75,6 +75,58 @@ def ramp_counts(start: int, delta: int, speed: float, accel: float,
     return out
 
 
+def ramp_counts_multi(starts: List[int], deltas: List[int], speed: float,
+                      accel: float, dt: float) -> List[Tuple[int, ...]]:
+    """Synchronized N-axis trapezoidal ramp for a coordinated bench move.
+
+    Every axis follows ONE shared time profile — at each cycle all axes are at
+    the same fraction of their own delta — so they start and finish together
+    (the point of the test: two drives streaming in lockstep off one CSP
+    stream). The profile is trapezoidal in the dominant axis (largest |delta|),
+    so its velocity stays <= ``speed`` counts/s at ``accel`` counts/s^2; the
+    others move proportionally slower. Returns one per-cycle tuple of absolute
+    count targets per axis; the last tuple lands exactly on ``start+delta``.
+
+    Joint-space only (no kinematics/workspace check), so it is safe before the
+    arm is assembled into the linkage — you command explicit small count deltas.
+    """
+    if speed <= 0 or accel <= 0 or dt <= 0:
+        raise ValueError("speed, accel and dt must be positive")
+    if len(starts) != len(deltas):
+        raise ValueError("starts and deltas must have the same length")
+    ds = [int(x) for x in deltas]
+    D = max((abs(x) for x in ds), default=0)
+    if D == 0:
+        return [tuple(int(s) for s in starts)]
+    v, a = float(speed), float(accel)
+    t_acc = v / a
+    d_acc = 0.5 * a * t_acc * t_acc
+    if 2.0 * d_acc >= D:                      # triangular (never reaches cruise)
+        t_acc = math.sqrt(D / a)
+        v = a * t_acc
+        d_acc = 0.5 * a * t_acc * t_acc
+        t_flat = 0.0
+    else:
+        t_flat = (D - 2.0 * d_acc) / v
+    total = 2.0 * t_acc + t_flat
+    out: List[Tuple[int, ...]] = []
+    t = 0.0
+    while t < total:
+        if t < t_acc:
+            d = 0.5 * a * t * t
+        elif t < t_acc + t_flat:
+            d = d_acc + v * (t - t_acc)
+        else:
+            td = t - t_acc - t_flat
+            d = d_acc + v * t_flat + v * td - 0.5 * a * td * td
+        frac = d / D                          # shared fraction -> synchronized
+        out.append(tuple(int(s) + int(round(frac * dl))
+                         for s, dl in zip(starts, ds)))
+        t += dt
+    out.append(tuple(int(s) + dl for s, dl in zip(starts, ds)))   # exact endpoints
+    return out
+
+
 class TrajectoryError(Exception):
     """A path could not be planned (unreachable/near-singular sample, or bad
     limits). Raised at plan time so nothing partial is ever streamed."""
