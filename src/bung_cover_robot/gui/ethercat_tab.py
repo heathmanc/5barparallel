@@ -702,10 +702,15 @@ class EtherCatTab(QWidget):
 
     def _adopt(self, master) -> None:
         homing = HomingConfig()
+        # Build with the PERSISTED motion parameters — previously the stored
+        # position tolerance only took effect after pressing Apply, so every
+        # fresh Connect silently ran with the code default.
         driver = EtherCatRobotDriver(
             master, self.controller.kin, self.controller.validator,
             home_angles=homing.home_angles,
             limits=self.store.trajectory_limits(),
+            position_tol_counts=int(self.store.get("position_tol_counts")),
+            settle_timeout_s=float(self.store.get("settle_timeout_s")),
         ).connect()
         self.controller.set_driver(driver)
         self._start_poller()

@@ -142,6 +142,24 @@ starts `False`), so start-up is safe; the difference is only whether a routine
 power cycle forces an operator re-home. If C00.07 is left on **incremental**, the
 drive ignores the absolute datum entirely and homes from wherever it powered up.
 
+### 4c. "Move did not settle" — tolerance and settle window
+
+The end-of-move check is governed by two **Motion parameters** (Drives tab,
+persisted, applied on Connect and on Apply):
+
+- `position_tol_counts` — default **500** (~0.46° at the joint with the 17-bit
+  encoder × 3:1; ≈1.5–2 mm at the TCP). The old default of 5 counts (0.005°)
+  was only achievable in the simulator.
+- `settle_timeout_s` — default **2.0 s**. The servo's integrator needs real
+  time to pull in the last fraction of a degree after the CSP stream ends; a
+  longer window often lets you run a *tighter* tolerance.
+
+If moves still time out, the error now reports the per-drive shortfall in
+counts and degrees. A persistent shortfall of hundreds of counts is a tuning
+problem (raise stiffness, or auto-tune=0 and raise position loop gain / lower
+the speed-loop integral time) or belt wind-up — the tolerance only decides
+when to complain about it.
+
 ### 4b. Spurious "drives are faulted" aborts (fixed by debounce)
 
 A demo/move can only be refused for a fault if the CiA 402 fault bit survives

@@ -236,3 +236,33 @@ def test_add_custom_requires_name():
     assert s.custom_parameters() == []
     with pytest.raises(ValueError):
         s.add_custom("  ", "C09.00", 1)
+
+
+def test_settle_params_reach_the_driver(tmp_path):
+    # position_tol_counts + settle_timeout_s must land on the driver both at
+    # Apply time and (via the stored values) at connect time — the tolerance
+    # used to revert to the code default on every fresh Connect.
+    from bung_cover_robot.ethercat import EtherCatRobotDriver, SimulatedEtherCatMaster
+    from bung_cover_robot.ethercat.parameters import ParameterStore
+
+    store = ParameterStore.load(tmp_path / "p.yaml")
+    assert store.get("position_tol_counts") == 500      # hardware-sane default
+    assert store.get("settle_timeout_s") == 2.0
+    store.set("position_tol_counts", 250)
+    store.set("settle_timeout_s", 3.5)
+    drv = EtherCatRobotDriver(SimulatedEtherCatMaster().open())
+    store.apply(drv)
+    assert drv.position_tol_counts == 250
+    assert drv.settle_timeout_s == 3.5
+
+
+def test_old_yaml_without_settle_timeout_gets_default(tmp_path):
+    # Configs saved before the parameter existed must load with the default.
+    p = tmp_path / "p.yaml"
+    p.write_text("values:\n  position_tol_counts: 500\n  speed_mm_s: 120.0\n")
+    from bung_cover_robot.ethercat.parameters import ParameterStore
+
+    store = ParameterStore.load(p)
+    assert store.get("position_tol_counts") == 500
+    assert store.get("settle_timeout_s") == 2.0
+    assert store.get("speed_mm_s") == 120.0

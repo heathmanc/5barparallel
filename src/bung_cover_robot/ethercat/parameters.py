@@ -51,8 +51,14 @@ PARAMETERS: List[DriveParameter] = [
                    "EtherCAT DC cycle time; must match the master."),
     DriveParameter("max_joint_step_deg", "motion", "float", 0.0, "deg",
                    "Per-cycle shoulder step cap (0 = off) - singularity guard."),
-    DriveParameter("position_tol_counts", "motion", "int", 5, "counts",
-                   "End-of-move following-error tolerance."),
+    DriveParameter("position_tol_counts", "motion", "int", 500, "counts",
+                   "End-of-move tolerance. 500 counts ~ 0.46 deg at the joint "
+                   "(17-bit encoder, 3:1) - a realistic servo settling window; "
+                   "tighten as the gain tuning improves."),
+    DriveParameter("settle_timeout_s", "motion", "float", 2.0, "s",
+                   "How long a move may take to settle into the tolerance "
+                   "after the CSP stream ends (integral action needs time - "
+                   "a longer wait often allows a TIGHTER tolerance)."),
     # --- CiA 402 drive objects (written to both drives) ----------------------
     DriveParameter("homing_method", "drive", "int", 24, "-",
                    "0x6098 homing method (switch + index pulse).", sdo=(0x6098, 0), size=1),
@@ -331,6 +337,7 @@ class ParameterStore:
         notes: List[str] = []
         driver.limits = self.trajectory_limits()
         driver.position_tol_counts = int(self.get("position_tol_counts"))
+        driver.settle_timeout_s = float(self.get("settle_timeout_s"))
         notes.append("motion limits applied")
         sdo_write = getattr(driver.master, "sdo_write", None)
         sdo_read = getattr(driver.master, "sdo_read", None)
