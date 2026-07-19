@@ -306,18 +306,15 @@ def motor_cradle(mp_top, s):
     w = (cq.Workplane("XY").polyline(poly).close().extrude(FR_T)
          .translate((0, 0, ft - FR_T)))
     w = w.cut(abox(-WIN_A, WIN_A, -WIN_B, WIN_B, ft - FR_T - 1, ft + 1))
-    # outboard fin: wall to the deck + top flange with 3x M5 deck-bolt bosses
+    # fins: SOLID full-depth walls (guide face to frame edge, bottom to deck)
+    # with full-depth M5 heat-set pilots drilled from the top face
     w = w.union(abox(-FR_A, FIN_A_OUT, s * FIN_BI, s * FIN_BO, ft - FR_T, DECK_Z0))
-    w = w.union(abox(-FR_A, FIN_A_OUT, s * FIN_BI, s * FLG_B,
-                     DECK_Z0 - FLG_T, DECK_Z0))
     for a in FIN_BOLTS_OUT:
-        w = w.cut(zcyl(a, s * FIN_BOLT_B, 2.1, DECK_Z0 - FLG_T - 1, DECK_Z0 + 1))
-    # inboard fin: shorter (stops at the centreline clip) + its flange
+        w = w.cut(zcyl(a, s * FIN_BOLT_B, 2.1, DECK_Z0 - 13, DECK_Z0 + 1))
+    # inboard fin: shorter (its full-width end stops at the centreline clip)
     w = w.union(abox(-FR_A, FIN_A_INN, -s * FIN_BI, -s * FIN_BO, ft - FR_T, DECK_Z0))
-    w = w.union(abox(-FR_A, FLG_A_INN, -s * FIN_BI, -s * FLG_B,
-                     DECK_Z0 - FLG_T, DECK_Z0))
     for a in FIN_BOLTS_INN:
-        w = w.cut(zcyl(a, -s * FIN_BOLT_B, 2.1, DECK_Z0 - FLG_T - 1, DECK_Z0 + 1))
+        w = w.cut(zcyl(a, -s * FIN_BOLT_B, 2.1, DECK_Z0 - 13, DECK_Z0 + 1))
     # lock-bolt tapped holes (M5) in the frame border, under the carriage slots
     for sa in (LOCK_A, -LOCK_A):
         for sb in (LOCK_B, -LOCK_B):

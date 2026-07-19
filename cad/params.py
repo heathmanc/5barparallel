@@ -85,18 +85,18 @@ FR_B = 62.0                            # frame half-width (b)
 FR_T = 8.0                             # frame plate thickness
 WIN_A = 48.0                           # window half-length (motor + travel)
 WIN_B = 41.0                           # window half-width (80 flange + 1)
+# Fins are SOLID full-depth walls (no web-and-flange section): from the guide
+# face at FIN_BI out to the frame edge at FIN_BO, frame bottom to the deck.
+# Simpler print, stiffer, and the deck bolts get full-depth heat-sets.
 FIN_BI = 52.5                          # fin wall inner face (guides carriage)
-FIN_BO = 57.5                          # fin wall outer face (5 thick)
+FIN_BO = 62.0                          # fin wall outer face = frame edge (9.5 solid)
 FIN_A_OUT = 62.0                       # outboard fin wall ends (a)  [both +-]
-FIN_A_INN = 30.0                       # inboard fin wall forward end (a)
-FLG_B = 62.0                           # fin top flange out to frame edge
-FLG_T = 10.0                           # fin top flange thickness (z 42..52):
-                                       # deep enough for a full M5 heat-set, so
-                                       # the deck bolts get real engagement.
-                                       # Laterally outside the belt corridor,
-                                       # so overlapping the belt z-band is fine.
-FLG_A_INN = 20.0                       # inboard flange forward end (a)
-FIN_BOLT_B = 57.25                     # fin->deck M5 line (mid-flange)
+FIN_A_INN = 19.0                       # inboard fin wall forward end (a) —
+                                       # limited by the centreline clip at the
+                                       # full 62 width (asserted)
+FLG_B = 62.0                           # fin outer edge (= FIN_BO; kept for the
+                                       # deck-containment corner points)
+FIN_BOLT_B = 57.25                     # fin->deck M5 line (mid-wall)
 FIN_BOLTS_OUT = (-52.0, 0.0, 50.0)     # a-positions, outboard fin
 FIN_BOLTS_INN = (-52.0, -16.0, 12.0)   # a-positions, inboard fin
 BLK_A0, BLK_A1 = 56.0, 66.0            # jack block along a (front border)
@@ -334,8 +334,6 @@ def check_layout(verbose: bool = False) -> list:
     # inboard fin / flange forward ends respect the centreline clip
     m = -FIN_BO - clip_b(FIN_A_INN)
     ok(m >= 0.5, m - 0.5, "inboard fin end inside centreline clip")
-    m = -FLG_B - clip_b(FLG_A_INN)
-    ok(m >= -0.05, m, "inboard flange end inside centreline clip")
 
     # -- centreline gaps -----------------------------------------------------
     # nearest carriage corner to x=0 is the front-inboard one at full travel
@@ -376,7 +374,7 @@ def check_layout(verbose: bool = False) -> list:
     for a, b in fp:
         pts[f"frame({a:.0f},{b:.0f})"] = (a, b)
     pts["flangeO-rear"] = (-FR_A, FLG_B); pts["flangeO-frnt"] = (FIN_A_OUT, FLG_B)
-    pts["flangeI-rear"] = (-FR_A, -FLG_B); pts["flangeI-frnt"] = (FLG_A_INN, -FLG_B)
+    pts["flangeI-rear"] = (-FR_A, -FLG_B); pts["flangeI-frnt"] = (FIN_A_INN, -FLG_B)
     for cx in (-1, 1):
         for cy in (-1, 1):
             pts[f"carriage({cx},{cy})"] = (cx * (CAR_L / 2 + TENSION), cy * CAR_W / 2)
