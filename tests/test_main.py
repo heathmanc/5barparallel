@@ -51,14 +51,15 @@ def test_build_controller_backends():
     assert isinstance(build_controller(config_path=None).driver, DryRunRobotDriver)
 
 
-def test_ethercat_without_interface_gives_clear_error(tmp_path):
-    # --ethercat with no configured interface must fail with actionable guidance,
-    # not a hardcoded-eth0 ConnectionError.
-    (tmp_path / "app_settings.yaml").write_text("plc_ip: unused\n")
+def test_ethercat_num_drives_reads_settings(tmp_path):
+    # --ethercat drive count comes from app_settings (IgH gets its NIC from
+    # ethercat.conf, so no interface name is needed).
+    from bung_cover_robot.app.launch import _ethercat_num_drives
+
+    (tmp_path / "app_settings.yaml").write_text("ethercat_num_drives: 1\n")
     cfg = tmp_path / "robot_config.yaml"
     cfg.write_text("{}\n")
-    with pytest.raises(RuntimeError, match="ethercat_ifname"):
-        build_controller(config_path=cfg, ethercat=True)
+    assert _ethercat_num_drives(cfg) == 1
 
 
 def test_build_camera_mock_is_none():

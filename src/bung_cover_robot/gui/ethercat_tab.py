@@ -35,7 +35,8 @@ from PySide6.QtWidgets import (
 from ..app.robot_test_controller import RobotTestController
 from ..ethercat import cia402
 from ..ethercat.ethercat_driver import EtherCatRobotDriver
-from ..ethercat.master import MasterError, PysoemMaster, SimulatedEtherCatMaster
+from ..ethercat.igh_master import IgHMaster
+from ..ethercat.master import MasterError, SimulatedEtherCatMaster
 from ..ethercat.parameters import PARAMETERS, ParameterStore
 from ..robot.driver import HomingConfig
 from . import theme
@@ -166,8 +167,9 @@ class EtherCatTab(QWidget):
             "Drives expected on the EtherCAT chain. Set 1 for single-axis bench "
             "bring-up; 2 for the assembled robot.")
         g.addWidget(self.drives_spin, 1, 1, Qt.AlignmentFlag.AlignLeft)
-        note = QLabel("EtherCAT is not IP-based: the master owns this interface "
-                      "directly (raw frames). Dedicate a NIC to the drive chain.")
+        note = QLabel("Real hardware uses the IgH EtherCAT master (the drive is "
+                      "DC-SYNC0-only). The NIC is set in IgH's ethercat.conf; this "
+                      "field is informational. Connect launches/maps the RT daemon.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{theme.TEXT_DIM};")
         g.addWidget(note, 2, 0, 1, 2)
@@ -265,26 +267,20 @@ class EtherCatTab(QWidget):
         self.refresh()
 
     def _on_connect_real(self) -> None:
-        ifname = self.if_edit.text().strip()
-        if not ifname:
-            self._status("Enter the EtherCAT network interface first.", theme.WARN)
-            return
         n_drives = self.drives_spin.value()
         if self.settings is not None:
-            self.settings.set("ethercat_ifname", ifname)
             self.settings.set("ethercat_num_drives", n_drives)
-        # Single-axis bench uses Profile Position (async, no SYNC0) to sidestep the
-        # A6 CSP sync fault; the assembled 2-drive robot uses CSP.
-        mode = cia402.MODE_PROFILE_POSITION if n_drives == 1 else cia402.MODE_CSP
+        # Real hardware runs on the IgH master (the AS715N is DC-SYNC0-only and
+        # pysoem can't generate SYNC0); IgHMaster launches/maps the C RT daemon.
         try:
-            master = PysoemMaster(ifname=ifname, num_drives=n_drives, mode=mode,
-                                  cycle_dt_s=self.store.get("cycle_dt_s")).open()
+            master = IgHMaster(num_drives=n_drives,
+                               cycle_dt_s=self.store.get("cycle_dt_s")).open()
         except MasterError as exc:
             self._status(f"Connect failed: {exc}", theme.DANGER)
             return
         self._adopt(master)  # pragma: no cover - real hardware path
-        bench = "  [single-axis bench — Profile Position]" if n_drives == 1 else ""
-        self._status(f"Connected — EtherCAT on {ifname}.{bench}", theme.TEXT)
+        bench = "  [single-axis bench]" if n_drives == 1 else ""
+        self._status(f"Connected — IgH EtherCAT master.{bench}", theme.TEXT)
 
     def _on_connect_sim(self) -> None:
         self._adopt(SimulatedEtherCatMaster(
