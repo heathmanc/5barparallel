@@ -511,11 +511,33 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
             s.sdo_write(OD_PROFILE_DECEL, 0, struct.pack("<I", self.pp_accel))
 
     # --- real-time loop ---------------------------------------------------- #
+    def _dc_offset(self, integral: List[float]) -> float:
+        """SOEM ec_sync PI step: steer the loop so our frame lands just before the
+        drive's SYNC0 pulse. Returns a schedule offset in seconds. Without this the
+        send phase free-runs against SYNC0 and the drive sync-faults (A6 Er741)
+        even with SYNC0 programmed. ``integral`` is a 1-element accumulator."""
+        cyc_ns = self.cycle_dt_s * 1e9
+        try:
+            dc = int(self._master.dc_time)
+        except (AttributeError, TypeError):
+            return 0.0
+        delta = dc % cyc_ns
+        if delta > cyc_ns / 2.0:
+            delta -= cyc_ns
+        integral[0] += 1.0 if delta > 0 else (-1.0 if delta < 0 else 0.0)
+        return (-(delta / 100.0) - (integral[0] / 20.0)) / 1e9   # ns -> s
+
     def _rt_loop(self) -> None:
-        import pysoem
         set_realtime(self.rt_priority)
-        next_t = time.perf_counter()
+        cyc = self.cycle_dt_s
+        toff = 0.0
+        integral = [0.0]
+        next_t = time.perf_counter() + cyc
         while not self._rt_stop.is_set():
+            # absolute, DC-corrected wake-up so sends stay phase-locked to SYNC0
+            slack = (next_t + toff) - time.perf_counter()
+            if slack > 0:
+                time.sleep(slack)
             # advance the CSP stream (RT-owned: no allocation here)
             if self._csp_running:
                 if self._csp_index < len(self._csp):
@@ -545,13 +567,12 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
             if self._faulted():
                 self._fault = True
                 self._csp_running = False
+            if self.use_dc:                              # DC phase-lock correction
+                toff = self._dc_offset(integral)
             self._cycle_count += 1
-            next_t += self.cycle_dt_s
-            slack = next_t - time.perf_counter()
-            if slack > 0:
-                time.sleep(slack)
-            else:
-                next_t = time.perf_counter()   # we overran; resync the phase
+            next_t += cyc
+            if (next_t + toff) - time.perf_counter() < -cyc:
+                next_t = time.perf_counter()   # overran badly; resync the phase
 
     # --- EtherCatMaster API ------------------------------------------------ #
     def exchange(self) -> None:
