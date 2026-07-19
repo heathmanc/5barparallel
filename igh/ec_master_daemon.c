@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sched.h>
+#include <pthread.h>
 
 #include "ecrt.h"
 
@@ -32,7 +33,7 @@
 #define CSP_MAX      65536
 #define SHM_NAME     "/bcr_ethercat"
 #define SHM_MAGIC    0x42435231u   /* 'BCR1' */
-#define SHM_ABI      1u
+#define SHM_ABI      2u            /* bumped: added the SDO channel */
 
 #define NSEC_PER_SEC 1000000000L
 #define TS2NS(T) ((uint64_t)(T).tv_sec * NSEC_PER_SEC + (T).tv_nsec)
@@ -63,6 +64,12 @@ typedef struct {
     uint32_t csp_start, csp_running, csp_len, csp_index;
     drive_shm_t drive[MAX_DRIVES];
     int32_t  csp[MAX_DRIVES][CSP_MAX];
+    /* SDO channel (appended so existing offsets don't move): Python fills a
+     * request and sets sdo_req; the SDO thread downloads it and sets sdo_done. */
+    uint32_t sdo_req, sdo_done;
+    int32_t  sdo_result;                 /* 0 = ok, else abort/return code */
+    uint32_t sdo_index, sdo_sub, sdo_size;
+    int32_t  sdo_value;
 } shm_layout_t;
 #pragma pack(pop)
 
@@ -89,6 +96,32 @@ struct off {                       /* per-drive process-image byte offsets */
 static volatile sig_atomic_t running = 1;
 static void on_sig(int s){ (void)s; running = 0; }
 
+static ec_master_t *master;      /* file-scope so the SDO thread can use them */
+static shm_layout_t *shm;
+
+/* SDO download worker: runs OFF the RT loop (SDO is a blocking mailbox op).
+ * Services one request at a time; Python sets sdo_req and waits for sdo_done. */
+static void *sdo_thread(void *arg)
+{
+    (void)arg;
+    while (running) {
+        if (shm->sdo_req && !shm->sdo_done) {
+            size_t sz = shm->sdo_size ? shm->sdo_size : 4;
+            if (sz > 4) sz = 4;
+            uint8_t buf[4] = {0};
+            int32_t v = shm->sdo_value;
+            memcpy(buf, &v, sz);                       /* little-endian */
+            uint32_t abort = 0;
+            int ret = ecrt_master_sdo_download(master, 0, (uint16_t)shm->sdo_index,
+                                               (uint8_t)shm->sdo_sub, buf, sz, &abort);
+            shm->sdo_result = ret ? (int)(abort ? abort : (uint32_t)(-ret)) : 0;
+            shm->sdo_done = 1;
+        }
+        usleep(1000);
+    }
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
     int num_drives = 1;
@@ -107,15 +140,15 @@ int main(int argc, char **argv)
     int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0660);
     if (fd < 0) { perror("shm_open"); return 1; }
     if (ftruncate(fd, sizeof(shm_layout_t))) { perror("ftruncate"); return 1; }
-    shm_layout_t *shm = mmap(NULL, sizeof(shm_layout_t), PROT_READ|PROT_WRITE,
-                             MAP_SHARED, fd, 0);
+    shm = mmap(NULL, sizeof(shm_layout_t), PROT_READ|PROT_WRITE,
+               MAP_SHARED, fd, 0);
     if (shm == MAP_FAILED) { perror("mmap"); return 1; }
     memset(shm, 0, sizeof(*shm));
     shm->magic = SHM_MAGIC; shm->abi = SHM_ABI;
     shm->num_drives = num_drives; shm->cycle_dt_ns = (uint32_t)cycle_ns;
 
     /* IgH master + slaves */
-    ec_master_t *master = ecrt_request_master(0);
+    master = ecrt_request_master(0);
     if (!master) { fprintf(stderr, "request_master failed\n"); return 1; }
     ec_domain_t *domain = ecrt_master_create_domain(master);
 
@@ -154,6 +187,9 @@ int main(int argc, char **argv)
     mlockall(MCL_CURRENT | MCL_FUTURE);
     struct sched_param sp = { .sched_priority = 80 };
     sched_setscheduler(0, SCHED_FIFO, &sp);
+
+    pthread_t sdot;
+    pthread_create(&sdot, NULL, sdo_thread, NULL);
 
     struct timespec wk; clock_gettime(CLOCK_MONOTONIC, &wk);
     fprintf(stderr, "ec_master_daemon: %d drive(s), %ld ns cycle, running\n",
@@ -216,6 +252,9 @@ int main(int argc, char **argv)
                     shm->op, shm->drive[0].statusword, shm->drive[0].error_code,
                     shm->drive[0].actual_position, shm->wkc_bad);
     }
+
+    running = 0;                     /* stop the SDO worker */
+    pthread_join(sdot, NULL);
 
     /* Safety: command the drives disabled (controlword=0 -> torque off) for a
      * short burst, with DC maintained, before tearing down — so a stop via the

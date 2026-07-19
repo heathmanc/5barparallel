@@ -19,6 +19,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -344,7 +345,106 @@ class EtherCatTab(QWidget):
         row.addWidget(self.apply_btn)
         row.addStretch(1)
         v.addLayout(row)
+        v.addWidget(self._build_custom_params())
         return box
+
+    def _build_custom_params(self) -> QGroupBox:
+        """User-added drive objects (gains/stiffness). Add any tuning parameter
+        by its friendly ``Cxx.NN`` address or a raw ``0xINDEX:SUB`` CoE address;
+        Apply writes them to the live drive over SDO."""
+        box = QGroupBox("Custom tuning parameters (drive SDO)")
+        v = QVBoxLayout(box)
+        hint = QLabel(
+            "Reduce following error / raise stiffness: add the drive's rigidity "
+            "and inertia-ratio objects (see the A6-EC manual, e.g. C09.NN gains) "
+            "by Cxx.NN or 0xINDEX:SUB, then Apply. Value is editable in the table.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        v.addWidget(hint)
+        self.custom_table = QTableWidget(0, 4)
+        self.custom_table.setHorizontalHeaderLabels(
+            ["Name", "Address", "Value", "Type"])
+        self.custom_table.horizontalHeader().setStretchLastSection(True)
+        v.addWidget(self.custom_table)
+        add = QHBoxLayout()
+        self.cp_name = QLineEdit()
+        self.cp_name.setPlaceholderText("name (e.g. rigidity)")
+        self.cp_addr = QLineEdit()
+        self.cp_addr.setPlaceholderText("Cxx.NN or 0x20xx:NN")
+        self.cp_val = QLineEdit()
+        self.cp_val.setPlaceholderText("value")
+        self.cp_val.setMaximumWidth(90)
+        self.cp_type = QComboBox()
+        self.cp_type.addItems(["int", "int16", "int8", "float"])
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._on_add_custom)
+        rm_btn = QPushButton("Remove selected")
+        rm_btn.clicked.connect(self._on_remove_custom)
+        for w in (self.cp_name, self.cp_addr, self.cp_val, self.cp_type,
+                  add_btn, rm_btn):
+            add.addWidget(w)
+        v.addLayout(add)
+        self._refresh_custom_table()
+        return box
+
+    def _refresh_custom_table(self) -> None:
+        cps = self.store.custom_parameters()
+        self.custom_table.setRowCount(len(cps))
+        for r, c in enumerate(cps):
+            for col, text, editable in ((0, c.name, False), (1, c.address, False),
+                                        (2, self._fmt(c.value), True),
+                                        (3, c.dtype, False)):
+                item = QTableWidgetItem(text)
+                if not editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.custom_table.setItem(r, col, item)
+        self.custom_table.resizeColumnsToContents()
+        self.custom_table.horizontalHeader().setStretchLastSection(True)
+
+    def _on_add_custom(self) -> None:
+        name = self.cp_name.text().strip()
+        addr = self.cp_addr.text().strip()
+        if not name or not addr:
+            self._status("Custom parameter needs a name and an address.", theme.WARN)
+            return
+        try:
+            self.store.add_custom(name, addr, self.cp_val.text() or 0,
+                                  self.cp_type.currentText())
+        except ValueError as exc:
+            self._status(f"Bad address: {exc}", theme.WARN)
+            return
+        self.store.save()
+        self.cp_name.clear()
+        self.cp_addr.clear()
+        self.cp_val.clear()
+        self._refresh_custom_table()
+        self._status(f"Added custom parameter '{name}'.", theme.TEXT)
+
+    def _on_remove_custom(self) -> None:
+        row = self.custom_table.currentRow()
+        if row < 0:
+            self._status("Select a custom parameter row to remove.", theme.WARN)
+            return
+        name_item = self.custom_table.item(row, 0)
+        if name_item is None:
+            return
+        self.store.remove_custom(name_item.text())
+        self.store.save()
+        self._refresh_custom_table()
+        self._status("Removed custom parameter.", theme.TEXT)
+
+    def _read_custom_table(self) -> bool:
+        for r, c in enumerate(self.store.custom_parameters()):
+            item = self.custom_table.item(r, 2)
+            if item is None:
+                continue
+            try:
+                self.store.set_custom_value(c.name, float(item.text()))
+            except (TypeError, ValueError):
+                self._status(f"'{c.name}' value is not a number - fix it and retry.",
+                             theme.WARN)
+                return False
+        return True
 
     @staticmethod
     def _fmt(v: float) -> str:
@@ -445,13 +545,13 @@ class EtherCatTab(QWidget):
         return True
 
     def _on_save_params(self) -> None:
-        if not self._read_table():
+        if not self._read_table() or not self._read_custom_table():
             return
         path = self.store.save()
         self._status(f"Parameters saved -> {path}", theme.TEXT)
 
     def _on_apply_params(self) -> None:
-        if not self._read_table():
+        if not self._read_table() or not self._read_custom_table():
             return
         drv = self.controller.driver
         if not isinstance(drv, EtherCatRobotDriver):

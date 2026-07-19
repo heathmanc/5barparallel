@@ -29,16 +29,22 @@ from .master import CspTargets, DriveProcessData, EtherCatMaster, MasterError
 
 _SHM_PATH = "/dev/shm/bcr_ethercat"
 _SHM_MAGIC = 0x42435231
+_SHM_ABI = 2
 _MAX_DRIVES = 2
 _CSP_MAX = 65536
 
 # header field offsets (see shm_layout_t)
-_H_MAGIC, _H_NUM, _H_CYCLE = 0, 8, 16
+_H_MAGIC, _H_ABI, _H_NUM, _H_CYCLE = 0, 4, 8, 16
 _H_OP, _H_STOP = 28, 32
 _H_CSP_START, _H_CSP_RUN, _H_CSP_LEN = 36, 40, 44
 _DRIVE_BASE, _DRIVE_SZ = 52, 32
 _CSP_BASE = _DRIVE_BASE + _MAX_DRIVES * _DRIVE_SZ
-_SHM_SIZE = _CSP_BASE + _MAX_DRIVES * _CSP_MAX * 4
+# SDO channel appended after the CSP buffer (existing offsets unchanged).
+_SDO_BASE = _CSP_BASE + _MAX_DRIVES * _CSP_MAX * 4
+_SDO_REQ, _SDO_DONE, _SDO_RESULT = _SDO_BASE, _SDO_BASE + 4, _SDO_BASE + 8
+_SDO_INDEX, _SDO_SUB, _SDO_SIZE, _SDO_VALUE = (
+    _SDO_BASE + 12, _SDO_BASE + 16, _SDO_BASE + 20, _SDO_BASE + 24)
+_SHM_SIZE = _SDO_BASE + 28
 
 # drive_shm_t sub-offsets
 _O_CTRL, _O_MODE, _O_TARGET, _O_DOUT = 0, 2, 4, 8
@@ -198,6 +204,31 @@ class IgHMaster(EtherCatMaster):
             self._drives[d].target_position = int(last[d])
         self.exchange()
 
+    def sdo_write(self, index: int, sub: int, value: int, size: int = 4,
+                  timeout_s: float = 2.0) -> None:
+        """Download an SDO to drive 0 via the daemon's SDO worker (blocking mailbox
+        op, off the RT loop). Raises MasterError on abort/timeout. This is what
+        makes the Drives-tab 'Apply' write parameters/gains to the live drive."""
+        if self._mm is None:
+            raise MasterError("master is not open")
+        self._u32_set(_SDO_INDEX, index & 0xFFFF)
+        self._u32_set(_SDO_SUB, sub & 0xFF)
+        self._u32_set(_SDO_SIZE, size)
+        struct.pack_into("<i", self._mm, _SDO_VALUE, int(value))
+        self._u32_set(_SDO_DONE, 0)
+        self._u32_set(_SDO_REQ, 1)
+        deadline = time.perf_counter() + timeout_s
+        while self._u32(_SDO_DONE) != 1:
+            if time.perf_counter() > deadline:
+                self._u32_set(_SDO_REQ, 0)
+                raise MasterError(f"SDO 0x{index:04X}:{sub} timed out")
+            time.sleep(0.002)
+        result = struct.unpack_from("<i", self._mm, _SDO_RESULT)[0]
+        self._u32_set(_SDO_REQ, 0)
+        if result != 0:
+            raise MasterError(
+                f"SDO 0x{index:04X}:{sub} failed (code 0x{result & 0xFFFFFFFF:08X})")
+
     # --- shared memory helpers --------------------------------------------- #
     def _launch_daemon(self) -> None:
         if not self.daemon_path.exists():
@@ -237,6 +268,13 @@ class IgHMaster(EtherCatMaster):
             os.close(fd)
         if self._u32(_H_MAGIC) != _SHM_MAGIC:
             raise MasterError("shared-memory magic mismatch — daemon/Python ABI skew")
+        abi = self._u32(_H_ABI)
+        if abi != _SHM_ABI:
+            self._mm.close()
+            self._mm = None
+            raise MasterError(
+                f"daemon ABI {abi} != {_SHM_ABI} — rebuild it (make -C igh) and stop "
+                "the old one (sudo pkill ec_master_daemon)")
 
     def _u32(self, off: int) -> int:
         return struct.unpack_from("<I", self._mm, off)[0]

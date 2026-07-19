@@ -6,6 +6,7 @@ from bung_cover_robot.ethercat.parameters import (
     PARAMETERS,
     ParameterStore,
     default_values,
+    parse_drive_address,
 )
 
 
@@ -51,3 +52,40 @@ def test_apply_to_sim_driver_updates_limits():
     notes = s.apply(drv)
     assert drv.limits.speed_mm_s == 75.0 and drv.position_tol_counts == 9
     assert any("sim master" in n for n in notes)  # honest about no SDO channel
+
+
+def test_parse_drive_address_forms():
+    # Cxx.NN maps to 0x20xx : NN+1 (the A6-EC rule, e.g. C0A.08 -> 0x200A:09).
+    assert parse_drive_address("C0A.08") == (0x200A, 0x09)
+    assert parse_drive_address("C10.00") == (0x2010, 0x01)
+    # Raw CoE addresses pass through (0x optional, second field hex).
+    assert parse_drive_address("0x6098:00") == (0x6098, 0)
+    assert parse_drive_address("6041:0") == (0x6041, 0)
+    with pytest.raises(ValueError):
+        parse_drive_address("garbage")
+
+
+def test_custom_parameters_roundtrip_and_apply(tmp_path):
+    from bung_cover_robot.ethercat import EtherCatRobotDriver, SimulatedEtherCatMaster
+
+    p = tmp_path / "drive_parameters.yaml"
+    s = ParameterStore.load(p)
+    cp = s.add_custom("rigidity", "C09.00", 12, "int")
+    assert cp.index == 0x2009 and cp.sub == 0x01 and cp.address == "0x2009:1"
+    s.set_custom_value("rigidity", 15)
+    s.save()
+    s2 = ParameterStore.load(p)
+    assert [c.name for c in s2.custom_parameters()] == ["rigidity"]
+    assert s2.custom_parameters()[0].value == 15
+    # Applies alongside the built-ins; sim master has no SDO channel.
+    drv = EtherCatRobotDriver(SimulatedEtherCatMaster().open())
+    notes = s2.apply(drv)
+    assert any("rigidity" in n and "sim master" in n for n in notes)
+    s2.remove_custom("rigidity")
+    assert s2.custom_parameters() == []
+
+
+def test_add_custom_requires_name():
+    s = ParameterStore()
+    with pytest.raises(ValueError):
+        s.add_custom("  ", "C09.00", 1)
