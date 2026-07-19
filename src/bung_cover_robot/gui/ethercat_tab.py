@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -231,11 +232,17 @@ class EtherCatTab(QWidget):
         box = QGroupBox(title)
         v = QVBoxLayout(box)
         state = QLabel("state: —")
-        state.setStyleSheet("font-weight:600;")
+        state.setStyleSheet("font-family:monospace; font-weight:600;")
         counts = QLabel("encoder: — counts   |   — °")
         counts.setStyleSheet("font-family:monospace;")
         detail = QLabel("statusword — · mode — · target —")
         detail.setStyleSheet(f"font-family:monospace; color:{theme.TEXT_DIM};")
+        # These carry live numbers. Fixed-width formatting (in _on_snapshot) keeps
+        # the text a constant length; Ignored horizontal policy stops any label
+        # from driving the panel width, so the two-panel split can't jitter as
+        # counts change.
+        for lbl in (state, counts, detail):
+            lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         v.addWidget(state)
         v.addWidget(counts)
         v.addWidget(detail)
@@ -668,15 +675,19 @@ class EtherCatTab(QWidget):
             d = snap[i]
             home = home_counts[i] if i < len(home_counts) else 0
             state = cia402.decode_state(d["sw"])
-            w["state"].setText(f"state: {state.value.replace('_', ' ').upper()}")
+            # Pad to a constant width so the label never changes length as the
+            # live values change (which would jitter the layout).
+            w["state"].setText(f"state: {state.value.replace('_', ' ').upper():<22}")
             w["state"].setStyleSheet(
-                f"color:{theme.DANGER}; font-weight:600;" if cia402.is_fault(d["sw"])
-                else "font-weight:600;")
+                f"font-family:monospace; color:{theme.DANGER}; font-weight:600;"
+                if cia402.is_fault(d["sw"])
+                else "font-family:monospace; font-weight:600;")
             deg = (d["act"] + home) / ppd
-            w["counts"].setText(f"encoder: {d['act']:>9d} counts   |   {deg:8.3f} °")
+            w["counts"].setText(f"encoder: {d['act']:>+10d} counts   |   {deg:>+9.3f} °")
             w["detail"].setText(
                 f"statusword 0x{d['sw']:04X} · err 0x{d.get('err', 0):04X} · "
-                f"foll.err {d.get('fe', 0)} · mode {d['mode']} · target {d['tgt']}")
+                f"foll.err {d.get('fe', 0):>+7d} · mode {d['mode']:>2d} · "
+                f"target {d['tgt']:>+10d}")
             for src, mask, bit in w["bits"]:
                 bit.set_active(bool((d["sw"] if src == "sw" else d["di"]) & mask))
 
