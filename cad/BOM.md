@@ -26,8 +26,8 @@ are not in this list.
 
 | Qty | Part | Spec | Note | Link |
 |---|---|---|---|---|
-| **2** | Shoulder shaft | Ø25 h6 × ~180 mm, steel/SS | **Semi-custom:** cut from 25 h6 ground stock, machine the long D-flat (see `shoulder_shaft.step`) | [Motedis 25 h6](https://www.motedis.com/en/Precision-shaft-25-mm-h6-steel-hardened-and-ground?products_id=6500) · [Ondrives](https://www.ondrivesus.com/precision-ground-stock-saw-cut-ends/metric) |
-| **2** | Elbow pin | Ø8 × 65 mm, hardened | DIN 6325 dowel (cut to length) or an Ø8 shoulder screw | [McMaster 8 mm dowel](https://www.mcmaster.com/products/dowel-pins/diameter~8-mm/) · [Huyett DIN 6325](https://www.huyett.com/dowmh-080-060) |
+| **2** | Shoulder shaft | Ø25 h6 × ~205 mm, steel/SS | **Semi-custom:** cut from 25 h6 ground stock, machine the long D-flat + a locknut thread at the top (see `shoulder_shaft.step`) | [Motedis 25 h6](https://www.motedis.com/en/Precision-shaft-25-mm-h6-steel-hardened-and-ground?products_id=6500) · [Ondrives](https://www.ondrivesus.com/precision-ground-stock-saw-cut-ends/metric) |
+| **2** | Elbow pin | Ø8 × ~75 mm, hardened, w/ head | Ø8 shoulder screw (head = bottom retention) or a DIN 6325 dowel + a clip both ends | [McMaster 8 mm dowel](https://www.mcmaster.com/products/dowel-pins/diameter~8-mm/) · [Huyett DIN 6325](https://www.huyett.com/dowmh-080-060) |
 | **1** | TCP spindle | Ø20 OD / Ø16 bore × ~75 mm, w/ flange | **Custom turned part** — see `dual_base_full.step` (`tcp_spindle`). Start from Ø20 tube/bar | (machine shop / lathe) |
 | — | TCP collar | Ø28 clamp collar, Ø20 bore | Off-the-shelf shaft collar retains the spindle | [McMaster shaft collars](https://www.mcmaster.com/products/shaft-collars/) |
 
@@ -48,11 +48,16 @@ are not in this list.
 
 | Qty | Part | Use |
 |---|---|---|
-| 8 | M6 socket-head cap screw (into the Ø90 BCD flange slots) | Motor → motor plate |
-| ~24 | M5 SHCS | Motor plate → shear walls, walls → base plate |
+| 8 | M6 socket-head cap screw (Ø90 BCD) | Motor → sliding carriage |
+| 2 | M6 jackscrew (~40 mm) + heat-set insert or nut | Belt tensioner — one per motor, through the tension block |
+| ~16 | M5 SHCS (in the ±6 mm carriage slots) | Carriage lock-down + rails/tension block → deck |
+| 16 | M4 SHCS + insert/nut | Bearing caps — 4 per bore, top+bottom cap bolted through each plate on the Ø58 BCD (2 bores × 2 plates) |
+| 2 | M25×1.5 shaft locknut (or KM5 + tab washer) | Shoulder bearing preload, above the upper cap |
+| 8 | M5 SHCS | Deck ↔ top-plate standoffs (4 per plate) |
 | 4 | M3 SHCS + nut | Distal elbow split-clamp pinch bolts (2 per clamp) |
 | 2 | M5 set screw (cup point) | Shoulder D-bore axial retention onto the shaft flat |
-| — | assorted M5/M6 washers | as needed |
+| 2 | Ø8 shaft clip / printed clip | Elbow-pin top retention (bottom head is integral to the pin) |
+| — | assorted M4/M5/M6 washers | as needed |
 
 [McMaster metric SHCS](https://www.mcmaster.com/products/screws/socket-head-screws~/system-of-measurement~metric/) · [set screws](https://www.mcmaster.com/products/set-screws/system-of-measurement~metric/)
 
