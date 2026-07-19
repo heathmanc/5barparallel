@@ -5,20 +5,26 @@ spacing, and the home pose come from ``FiveBarConfig`` / ``FiveBarKinematics``,
 and the link-collision check sweeps the same ``WorkspaceValidator`` the runtime
 uses, so the mechanical design and the motion software cannot silently drift.
 
-Level assignment (the "cross" arrangement — distal of one side pairs with the
-proximal of the other):
+Layout (this revision):
 
-    plane A (z111-141): proximal L  +  distal R
-    plane B (z146-176): proximal R  +  distal L
+  * Motors sit BEHIND the shoulders (belts run rearward in -Y), splayed out by
+    SPLAY just enough that the two 80-frame bodies clear each other — they are
+    NOT exactly behind each shaft, which is fine. This collapses the base deck
+    from 430 mm wide to a footprint that prints on a 300x300 bed.
+  * Belt tension is a JACKSCREW SLIDER: each motor bolts to a carriage that
+    slides on two rails along the belt axis; a jackscrew on the shoulder side
+    pushes the carriage away to tension, then lock bolts clamp it. The lock
+    bolts and rails sit outside the belt corridor (asserted).
+  * Each 7005 angular-contact bearing is trapped by a printed cap on the top
+    AND bottom face of its plate, bolted together on a Ø58 BCD — the outer race
+    is captured both ways; shaft preload is by shim + locknut.
+  * The elbow pins get a bottom head and a top retaining clip so no link (the
+    flipped lower distal included) can walk off its pin.
 
-  * the two proximals are on different planes -> they can never collide;
-  * the two distals land on adjacent planes -> they stack naturally at the TCP
-    (full-height bosses, shared pin, one 5 mm spacer);
-  * each distal shares a plane only with the OPPOSITE proximal, and the sweep
-    below proves those cross pairs keep >80 mm centerline clearance everywhere
-    the workspace validator allows the TCP to be;
-  * proximals are identical parts (the right one clamps higher on the shaft's
-    long D-flat); distals are identical parts.
+Cross level assignment (distal of one side pairs with the proximal of the
+other): plane A = proximal L + distal R; plane B = proximal R + distal L. The
+two proximals are on different planes so they can never collide; the two distals
+land on adjacent planes so they stack at the TCP.
 
 Regenerate:  pip install cadquery   (only needed for CAD, not the runtime)
              python cad/generate.py
@@ -54,29 +60,59 @@ BELT_LEN = 450.0                       # stock 450-5M-15 (90T)
 _wrap = math.pi * (PD20 + PD60) / 2
 _k = (PD60 - PD20) ** 2 / 4
 C = ((BELT_LEN - _wrap) + math.sqrt((BELT_LEN - _wrap) ** 2 - 8 * _k)) / 4
-XM = HX + C                            # motor axis x (160.8)
-ZL, ZR = 5.0, 25.0                     # 60T body bottom z: left low / right high
-PW = 15.0                              # pulley/belt face width
-PLANE_A, PLANE_B = 126.0, 161.0        # arm plane centers: A=111-141, B=146-176
+
+# Motors BEHIND the shoulders (belts rearward). Two 80-frame bodies can't both
+# sit exactly behind shafts 80 mm apart, so each is splayed out by SPLAY from
+# the -Y axis just enough to clear — approximately-behind is acceptable.
+SPLAY = math.radians(16.0)
+MXx = HX + C * math.sin(SPLAY)         # motor axis x  (~73.3): splayed outward
+MXy = -C * math.cos(SPLAY)             # motor axis y  (~-116): behind the shafts
+
+ZL, ZR = 5.0, 25.0                     # belt plane bottoms (staggered so the two 60T pass)
+PW = 15.0                              # pulley / belt face width
 ARM_H = 30.0
-MP_T = 8.0                             # motor plate thickness
-MPL_TOP, MPR_TOP = 1.0, 21.0           # motor plate top faces
-WALL_T, WALL_Y = 10.0, 50.0            # mount shear walls: thickness, centerline +/-y
-WALL_L, WALL_R = 45.0 - MPL_TOP, 45.0 - MPR_TOP   # wall heights 44 / 24
-TENSION = 4.0                          # belt tension adjustment +/- (motor slides on plate)
+
+# --- jackscrew-slider tensioner -------------------------------------------- #
+MP_T = 8.0                             # carriage plate thickness
+MPL_TOP, MPR_TOP = 1.0, 21.0           # carriage top faces (staggered with the belts)
+TENSION = 6.0                          # jackscrew travel along the belt (+/-)
+CAR_L, CAR_W = 96.0, 108.0             # carriage: length (along belt) x width
+SLOT_V = 40.0                          # lock-slot lateral offset from the belt axis
+RAIL_V = 52.0                          # guide-rail lateral offset from the belt axis
+
+# --- bottom-up Z stack (derived, so the bearing caps can't silently collide) -
+CAP_T = 5.0                            # bearing-cap thickness
+BRG_W = 12.0                           # 7005 width (= deck thickness)
+DECK_T = 12.0
+DECK_Z0 = ZR + PW + 12.0               # deck bottom, clear above the high belt (52)
+DECK_Z1 = DECK_Z0 + DECK_T             # 64
+STANDOFF = 40.0                        # deck top -> top-plate bottom
+TOPP_Z0 = DECK_Z1 + STANDOFF           # top-plate bottom (104)
+TOPP_T = 10.0
+TOPP_Z1 = TOPP_Z0 + TOPP_T             # 114
+LOCKNUT_T = 8.0                        # shaft preload locknut, above the upper top cap
+# stack above the upper bearing: plate -> top cap (CAP_T) -> locknut -> arm
+UCAP_TOP = TOPP_Z1 + CAP_T             # top of the upper bearing's top cap (119)
+LOCKNUT_Z = UCAP_TOP                   # locknut sits directly on the top cap
+ARM_GAP = 4.0
+PLANE_A = LOCKNUT_Z + LOCKNUT_T + ARM_GAP + ARM_H / 2   # lower arm plane center (146)
+PLANE_B = PLANE_A + 35.0                                # upper arm plane center (181)
+SHAFT_LEN = 205.0
+A0, A1 = PLANE_A - ARM_H / 2, PLANE_A + ARM_H / 2   # 125..155
+B0, B1 = PLANE_B - ARM_H / 2, PLANE_B + ARM_H / 2   # 160..190
+
 # TCP joint: hollow spindle so a miniature air cylinder runs through the axis.
-# Default cylinder: ISO 6432 O10 bore (O15 barrel) — CHANGE CYL_BARREL_OD to
-# your actual cylinder and keep SPINDLE_ID ~1 mm larger.
-SPINDLE_OD, SPINDLE_ID = 20.0, 16.2    # hollow TCP spindle (rides in 6804s)
+SPINDLE_OD, SPINDLE_ID = 20.0, 16.2
 TCP_BRG_OD, TCP_BRG_W = 32.0, 7.0      # 6804-2RS 20x32x7, one per distal boss
-CYL_BARREL_OD = 15.0                   # ISO 6432 O10-bore mini cylinder barrel
+CYL_BARREL_OD = 15.0
 assert SPINDLE_ID >= CYL_BARREL_OD + 1.0, "cylinder must clear the spindle bore"
+
 
 # ------------------------------------------------------------------- checks
 def check_cross_pairs(grid: float = 8.0) -> float:
     """Min centerline distance of the same-plane cross pairs (proxL-distR and
-    proxR-distL) over the ENTIRE validated workspace. Beams are 20-22 wide, so
-    anything above ~24 mm is safe; the design point gives >80 mm."""
+    proxR-distL) over the ENTIRE validated workspace (XY only — unaffected by
+    the Z stack)."""
     bL, bR = CFG.left_base, CFG.right_base
 
     def segd(p1, p2, p3, p4):
@@ -104,18 +140,25 @@ def check_cross_pairs(grid: float = 8.0) -> float:
     return worst
 
 
+# belt half-width at distance d (mm) from the 20T (motor) end toward the 60T
+_bh = lambda d: PD20 / 2 + (d / C) * ((PD60 - PD20) / 2) + 2.0
+
 # geometric interference asserts (fail the build, never ship a colliding model)
 assert (ZR - 1.5) - (ZL + PW + 1.5) >= 2.0, "staggered 60T pulleys must clear"
-assert ZR + PW + 1.5 <= 45.0 - 3.0, "high 60T must clear bottom plate"
-assert MPR_TOP - MP_T + 38 < 57.0, "right motor shaft tip inside plate bore"
-assert PLANE_B - ARM_H / 2 - (PLANE_A + ARM_H / 2) >= 5.0, "arm plane gap"
-_bh = lambda d: PD20 / 2 + (d / C) * ((PD60 - PD20) / 2) + 2.0  # belt half-width
-assert (WALL_Y - WALL_T / 2) - _bh(55.0) > 10.0, "mount walls clear the belt run"
-assert (WALL_Y - WALL_T / 2) - 40.0 >= 5.0, "mount walls clear the motor body"
+assert ZR + PW + 1.5 <= DECK_Z0 - 3.0, "high 60T must clear the deck underside"
+assert 2 * MXx >= 84.0, "the two motor frames must clear each other behind the shafts"
+assert B0 - A1 >= 4.0, "arm plane gap"
+assert SLOT_V - _bh(CAR_L / 2) > 6.0, "carriage lock bolts must clear the belt path"
+assert RAIL_V - _bh(CAR_L / 2) > 6.0, "guide rails must clear the belt path"
+assert (DECK_Z0 - CAP_T - 2.0) - (ZR + PW) >= 3.0, "deck bottom bearing-cap must clear the belt"
+assert A0 >= LOCKNUT_Z + LOCKNUT_T + 2.0, "arm boss must clear the shaft locknut"
+assert SHAFT_LEN >= B1 + 4.0, "shaft must extend past the upper arm clamp"
 _clear = check_cross_pairs()
 assert _clear > 24.0, f"cross-pair clearance {_clear:.1f} mm too small"
-print(f"layout OK: C={C:.1f} (belt 450-5M-15), wall mounts L={WALL_L:.0f}/R={WALL_R:.0f}, "
+print(f"layout OK: C={C:.1f} (belt 450-5M-15), motors back+splayed to ({MXx:.0f},{MXy:.0f}), "
+      f"deck z{DECK_Z0:.0f}-{DECK_Z1:.0f}, arm planes {PLANE_A:.0f}/{PLANE_B:.0f}, "
       f"cross-pair clearance {_clear:.1f} mm")
+
 
 # ------------------------------------------------------------- part builders
 def i_pts(W, H, tf, tw):
@@ -140,9 +183,7 @@ def dbore(arm, x, r, H, bore, flat, ss):
 
 def brg_pocket(arm, x, r, H, od=16.0, w=5.0, thru=4.0, faces="both"):
     """Bearing pocket(s) of OD ``od`` x width ``w`` with a ``thru`` radius
-    clearance bore. ``faces``: 'both' (688 pair), 'top' or 'bottom' (single
-    bearing pocketed from that face — used at the TCP so the two distals'
-    bearings sit in the OUTER faces for maximum span on the spindle)."""
+    clearance bore. ``faces``: 'both' (688 pair), 'top' or 'bottom'."""
     arm = arm.cut(zcyl(x, 0, thru, -H, 2 * H))
     if faces in ("both", "top"):
         arm = arm.cut(zcyl(x, 0, od / 2, H / 2 - w, H / 2 + 2))
@@ -153,13 +194,8 @@ def brg_pocket(arm, x, r, H, od=16.0, w=5.0, thru=4.0, faces="both"):
 
 def pin_clamp(arm, x, r, H):
     arm = arm.cut(zcyl(x, 0, 4.0, -H, 2 * H))
-    # The slit must run from OUTSIDE the boss all the way into the bore, or the
-    # clamp can't compress: span x-(r+5) .. x+1 (through the bore center), and
-    # taller than the boss so the cut is unambiguously through top and bottom.
     arm = arm.cut(cq.Workplane("XY").box(r + 6, 1.4, H + 2)
                   .translate((x - (r + 6) / 2 + 1.0, 0, 0)))
-    # Two M3 pinch bolts, stacked at +/-H/4, both crossing the slit so the
-    # clamp compresses evenly along the pin instead of cocking.
     for dz in (-H / 4, H / 4):
         bolt = (cq.Workplane("XY").circle(1.7).extrude(2 * r + 6)
                 .rotate((0, 0, 0), (1, 0, 0), -90)
@@ -178,12 +214,8 @@ def proximal():
 
 def distal():
     """L2 link: O8 pin clamp at elbow -> 6804 bearing at TCP (single pocket,
-    outer face). Full height everywhere — the cross level assignment needs no
-    lap joint. The TCP boss is O40 around a hollow O20 spindle so a miniature
-    air cylinder can run THROUGH the TCP axis (cup on-axis = immune to the
-    platform's free spin). The plane-A distal is this same part flipped about
-    its long axis, which puts its pocket on the bottom face — bearings land in
-    the OUTER faces for maximum span."""
+    outer face). The plane-A distal is this same part flipped about its long
+    axis, so its TCP pocket faces down (bearings land in the OUTER faces)."""
     b = cq.Workplane("YZ").polyline(i_pts(20, 30, 3.0, 3.5)).close().extrude(CFG.l2_mm)
     b = b.union(cq.Workplane("XY").workplane(offset=-15).circle(12).extrude(30))
     b = b.union(cq.Workplane("XY").workplane(offset=-15).moveTo(CFG.l2_mm, 0).circle(20).extrude(30))
@@ -192,17 +224,35 @@ def distal():
 
 
 def shoulder_shaft():
-    """O25 x 180. One long D-flat so the SAME part serves both sides: the left
-    arm clamps at plane A (111-141), the right at plane B (146-176). The flat
-    runs THROUGH the top end (z109 -> past 180) — any full-round section above
-    the flat would make it impossible to slide the D-bore arm on from the top."""
-    s = cq.Workplane("XY").circle(12.5).extrude(180)
-    return s.cut(cq.Workplane("XY").box(40, 40, 76).translate((0, 10.5 + 20, 109 + 38)))
+    """O25 x 195. One long D-flat serves both sides (left arm clamps at plane A,
+    right at plane B). The flat runs from below plane A through the top so a
+    D-bore arm can slide on from the top."""
+    s = cq.Workplane("XY").circle(12.5).extrude(SHAFT_LEN)
+    flat_z0, flat_len = A0 - 4, SHAFT_LEN - (A0 - 4)
+    return s.cut(cq.Workplane("XY").box(40, 40, flat_len * 2)
+                 .translate((0, 10.5 + 20, flat_z0 + flat_len)))
 
 
 def ring(od, idd, w):
     return (cq.Workplane("XY").circle(od / 2).extrude(w)
             .cut(cq.Workplane("XY").circle(idd / 2).extrude(w + 1).translate((0, 0, -0.5))))
+
+
+def bearing_cap():
+    """Printed retainer that traps a 7005 outer race. Bolts on a Ø58 BCD; a
+    Ø46.6 register spigot centers it in the Ø47 bore; the spigot's outer ring
+    (Ø41-46.6) presses ONLY the outer race, relieved inboard to clear the
+    rotating inner race; Ø27 shaft clearance. Built spigot-up; flip for the top
+    cap so top+bottom bolt together through the plate and capture the race both
+    ways."""
+    cap = zcyl(0, 0, 31, 0, CAP_T)                        # OD62 disc
+    cap = cap.union(zcyl(0, 0, 23.3, CAP_T, CAP_T + 2))   # Ø46.6 register spigot
+    cap = cap.cut(zcyl(0, 0, 13.5, -1, CAP_T + 3))        # Ø27 shaft clearance
+    cap = cap.cut(zcyl(0, 0, 20.5, CAP_T + 0.5, CAP_T + 3))  # relieve inboard of Ø41 (clear inner race)
+    for a in (45, 135, 225, 315):
+        bx, by = 29 * math.cos(math.radians(a)), 29 * math.sin(math.radians(a))
+        cap = cap.cut(zcyl(bx, by, 2.2, -1, CAP_T + 3))   # 4x M4 on Ø58 BCD
+    return cap
 
 
 def pulley(T, bore, z):
@@ -214,7 +264,7 @@ def pulley(T, bore, z):
 
 
 def belt(z):
-    """Belt band, local frame: shoulder pulley at origin, motor at (-C, 0)."""
+    """Belt band, local frame: 60T at origin, 20T at (-C, 0)."""
     ang = math.degrees(math.asin((PD60 - PD20) / 2 / C))
     def hull(rb, rs):
         pts = [(rb * math.cos(math.radians(a)), rb * math.sin(math.radians(a)))
@@ -225,36 +275,56 @@ def belt(z):
     return hull(PD60 / 2 + 1.6, PD20 / 2 + 1.6).cut(hull(PD60 / 2 - 2.2, PD20 / 2 - 2.2)).translate((0, 0, z + 0.5))
 
 
-def motor():
-    """A6M80-750 stand-in: 80 sq flange x10, O70x3 pilot, O19x35 shaft, 80 sq body.
-    Standard 80-frame pattern — VERIFY against the boxed datasheet."""
+def motor(mp_top):
+    """A6M80-750 stand-in: 80 sq flange x10, O70x3 pilot, O19x38 shaft, 80 sq
+    body. Flange top sits under the carriage (top face at mp_top)."""
+    dz = mp_top - MP_T - 5
     m = cq.Workplane("XY").box(80, 80, 10).translate((0, 0, -5))
     m = m.union(cq.Workplane("XY").circle(35).extrude(3))
     m = m.union(cq.Workplane("XY").circle(9.5).extrude(38))
     m = m.union(cq.Workplane("XY").box(80, 80, 112).translate((0, 0, -10 - 56)))
-    return m.union(cq.Workplane("XY").box(14, 46, 30).translate((-47, 0, -100)))
+    return m.translate((0, 0, dz))
 
 
-def motor_plate():
-    """Belt tension adjusts HERE: the pilot bore and the four flange holes are
-    slots (+/-TENSION along the belt direction), so the motor slides on a rigid,
-    FIXED plate — the mount itself never moves. The slot width still registers
-    the motor in Y, preserving belt tracking alignment."""
-    p = (cq.Workplane("XY").box(110, 110, MP_T)
-         .faces(">Z").workplane().slot2D(70.4 + 2 * TENSION, 70.4, 0).cutThruAll())
-    bcd = [(45 * math.cos(math.radians(a)), 45 * math.sin(math.radians(a)))
-           for a in (45, 135, 225, 315)]
-    p = (p.faces(">Z").workplane().pushPoints(bcd)
-         .slot2D(6.6 + 2 * TENSION, 6.6, 0).cutThruAll())
-    edge = [(dx, sy * WALL_Y) for dx in (-40, 0, 40) for sy in (-1, 1)]
-    return p.faces(">Z").workplane().pushPoints(edge).hole(4.5)
+def motor_carriage(mp_top):
+    """The motor bolts to this; it slides on the rails along the belt axis (x_l)
+    to tension. Top face at mp_top. Pilot bore + Ø90-BCD clearance for the
+    motor; two tension lock-slots (along x_l) at +/-SLOT_V, well outside the
+    belt corridor."""
+    t = MP_T
+    p = cq.Workplane("XY").box(CAR_L, CAR_W, t).translate((0, 0, mp_top - t / 2))
+    p = p.cut(zcyl(0, 0, 35.5, mp_top - t - 1, mp_top + 1))          # Ø71 pilot
+    for a in (45, 135, 225, 315):
+        bx, by = 45 * math.cos(math.radians(a)), 45 * math.sin(math.radians(a))
+        p = p.cut(zcyl(bx, by, 3.4, mp_top - t - 1, mp_top + 1))     # 4x Ø6.8 flange
+    for sy in (SLOT_V, -SLOT_V):
+        slot = (cq.Workplane("XY").slot2D(2 * TENSION + 5.5, 5.5, 0).extrude(t + 2)
+                .translate((0, sy, mp_top - t - 1)))
+        p = p.cut(slot)
+    return p
 
 
-def mount_walls(h):
-    """Two shear walls per motor, aligned WITH the belt pull (their strong axis)
-    — replaces the four O10 posts, ~1000x stiffer in the tension direction."""
-    w = cq.Workplane("XY").box(110, WALL_T, h).translate((0, WALL_Y, h / 2))
-    return w.union(cq.Workplane("XY").box(110, WALL_T, h).translate((0, -WALL_Y, h / 2)))
+def carriage_rails(mp_top):
+    """Two rails (along the belt axis) from the deck underside down to the
+    carriage — they take belt-tension shear so the lock bolts only need to
+    clamp. Outside the belt corridor at +/-RAIL_V."""
+    h = DECK_Z0 - mp_top
+    rail = cq.Workplane("XY").box(CAR_L + 2 * TENSION + 16, 6, h)
+    w = rail.translate((0, RAIL_V, mp_top + h / 2))
+    w = w.union(rail.translate((0, -RAIL_V, mp_top + h / 2)))
+    return w
+
+
+def tension_block(mp_top):
+    """Fixed block on the SHOULDER side of the carriage. A jackscrew threads
+    through it (Ø5 clearance / tap M6) and its tip pushes the carriage away from
+    the shoulder to tension; belt tension keeps the screw in compression."""
+    x0 = -(CAR_L / 2 + TENSION + 12)
+    blk = (cq.Workplane("XY").box(12, 2 * RAIL_V, DECK_Z0 - (mp_top - MP_T))
+           .translate((x0, 0, (DECK_Z0 + mp_top - MP_T) / 2)))
+    screw = (cq.Workplane("YZ").circle(3.0).extrude(30)
+             .translate((x0 - 15, 0, mp_top - MP_T / 2)))
+    return blk.cut(screw)
 
 
 # ------------------------------------------------------------- single parts
@@ -270,6 +340,7 @@ def export(wp, name):
 prox = export(proximal(), "proximal_arm")
 dist = export(distal(), "distal_arm")
 shaft = export(shoulder_shaft(), "shoulder_shaft")
+cap = export(bearing_cap(), "bearing_cap")
 
 # ------------------------------------------------------------- full assembly
 jt = KIN.inverse(0.0, 250.0)
@@ -277,72 +348,123 @@ eL, eR = jt.left_elbow, jt.right_elbow
 dLa = math.degrees(math.atan2(250 - eL[1], 0 - eL[0]))
 dRa = math.degrees(math.atan2(250 - eR[1], 0 - eR[0]))
 
+
+def xf(px, py, adeg, ox, oy):
+    a = math.radians(adeg)
+    return (ox + px * math.cos(a) - py * math.sin(a),
+            oy + px * math.sin(a) + py * math.cos(a))
+
+
 P: list = []
-plate_b = (cq.Workplane("XY").box(430, 110, 12)
+
+# --- bottom deck: fits 300x300, only deliberate holes ---------------------- #
+deck_pts = [(-72, 55), (72, 55), (125, -60), (125, -200), (-125, -200), (-125, -60)]
+BCD = [(29 * math.cos(math.radians(a)), 29 * math.sin(math.radians(a))) for a in (45, 135, 225, 315)]
+STANDOFF_PTS = [(60, 32), (60, -32), (-60, 32), (-60, -32)]
+# carriage rail-bolt landing points on the deck underside (per motor)
+rail_pts = []
+for sgn in (-1, 1):
+    adir = math.degrees(math.atan2(-math.cos(SPLAY), sgn * math.sin(SPLAY)))
+    mx = sgn * MXx
+    for px in (-CAR_L / 2 + 6, CAR_L / 2 - 6):
+        for py in (RAIL_V, -RAIL_V):
+            rail_pts.append(xf(px, py, adir, mx, MXy))
+
+deck = (cq.Workplane("XY").polyline(deck_pts).close().extrude(DECK_T)
+        .edges("|Z").fillet(8))
+deck = (deck.faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47)          # shoulder bearings
+        .faces(">Z").workplane().pushPoints([(sx + bx, by) for sx in (HX, -HX) for bx, by in BCD]).hole(4.4)  # cap bolts
+        .faces(">Z").workplane().pushPoints(STANDOFF_PTS).hole(5.2)                     # standoff bolts
+        .faces(">Z").workplane().pushPoints(rail_pts).hole(4.4))                        # carriage rail bolts
+deck = deck.translate((0, 0, DECK_Z0))
+P.append((deck, (0.35, 0.5, 0.65), "bottom_deck"))
+
+# --- top plate (small, over the shoulders) --------------------------------- #
+plate_t = (cq.Workplane("XY").box(150, 92, TOPP_T).edges("|Z").fillet(8)
            .faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47)
-           .faces(">Z").workplane().pushPoints([(XM, 0), (-XM, 0)]).hole(26)
-           .faces(">Z").workplane().pushPoints(
-               [(sx * XM + dx, sy * WALL_Y) for sx in (-1, 1) for dx in (-40, 0, 40) for sy in (-1, 1)])
-           .hole(4.5)
-           .faces(">Z").workplane().pushPoints([(x, y) for x in (-205, 205) for y in (-47, 47)]).hole(8)
-           ).translate((0, 0, 51))
-P.append((plate_b, (0.35, 0.5, 0.65), "bottom_plate"))
-plate_t = (cq.Workplane("XY").box(210, 96, 10)
-           .faces(">Z").workplane().pushPoints([(HX, 0), (-HX, 0)]).hole(47))
-P.append((plate_t.translate((0, 0, 105)), (0.35, 0.5, 0.65), "top_plate"))
-P.append((cq.Workplane("XY").pushPoints([(x, y) for x in (-92, 0, 92) for y in (-40, 40)])
-          .circle(4.5).extrude(43).translate((0, 0, 57)), (0.6, 0.6, 0.62), "plate_standoffs_43mm"))
+           .faces(">Z").workplane().pushPoints([(sx + bx, by) for sx in (HX, -HX) for bx, by in BCD]).hole(4.4)
+           .faces(">Z").workplane().pushPoints(STANDOFF_PTS).hole(5.2))
+P.append((plate_t.translate((0, 0, TOPP_Z0)), (0.35, 0.5, 0.65), "top_plate"))
 
-for sgn, tag, zp, mp_top, wall_h in ((-1, "L", ZL, MPL_TOP, WALL_L), (1, "R", ZR, MPR_TOP, WALL_R)):
-    x, xm = sgn * HX, sgn * XM
-    # Rotate the shaft with its arm's home angle so the D-flat actually mates
-    # with the arm's D-bore at the home pose (the flat's azimuth on the shaft is
-    # set at assembly; the model shows the assembled home state).
+standoffs = cq.Workplane("XY")
+for px, py in STANDOFF_PTS:
+    standoffs = standoffs.union(ring(12, 5.2, STANDOFF).translate((px, py, DECK_Z1)))
+P.append((standoffs, (0.6, 0.6, 0.62), "plate_standoffs_40mm"))
+
+# --- shoulders: shaft, bearings + caps, pulley, belt, tensioner, motor ----- #
+for sgn, tag, zp, mp_top in ((-1, "L", ZL, MPL_TOP), (1, "R", ZR, MPR_TOP)):
+    sx = sgn * HX
+    dirx, diry = sgn * math.sin(SPLAY), -math.cos(SPLAY)
+    mx, my = sx + C * dirx, C * diry
+    adir = math.degrees(math.atan2(diry, dirx))               # carriage/motor group azimuth
+    rot_belt = math.degrees(math.atan2(-diry, -dirx))         # maps belt local (-C,0) -> motor dir
+
     arm_ang = jt.left_deg if sgn < 0 else jt.right_deg
-    P.append((shaft.rotate((0, 0, 0), (0, 0, 1), arm_ang).translate((x, 0, 0)),
+    P.append((shaft.rotate((0, 0, 0), (0, 0, 1), arm_ang).translate((sx, 0, 0)),
               (0.55, 0.55, 0.58), f"shaft_{tag}"))
-    P.append((ring(47, 25, 12).translate((x, 0, 45)), (0.85, 0.68, 0.2), f"brg7005_lo_{tag}"))
-    P.append((ring(47, 25, 12).translate((x, 0, 98)), (0.85, 0.68, 0.2), f"brg7005_up_{tag}"))
-    P.append((pulley(60, 25, zp).translate((x, 0, 0)), (0.30, 0.32, 0.36), f"pulley60T_{tag}"))
-    P.append((pulley(20, 19, zp).translate((xm, 0, 0)), (0.30, 0.32, 0.36), f"pulley20T_{tag}"))
-    bl = belt(zp)
-    if sgn > 0:
-        bl = bl.mirror("YZ")
-    P.append((bl.translate((x, 0, 0)), (0.12, 0.12, 0.14), f"belt_450_5M_{tag}"))
-    P.append((motor_plate().translate((xm, 0, mp_top - MP_T / 2)), (0.72, 0.6, 0.42), f"motor_plate_{tag}"))
-    P.append((mount_walls(wall_h).translate((xm, 0, mp_top)),
-              (0.6, 0.6, 0.62), f"motor_mount_walls_{tag}_{wall_h:.0f}mm"))
-    P.append((motor().translate((xm, 0, mp_top - MP_T)), (0.42, 0.44, 0.5), f"motor_A6M80_{tag}"))
 
-# arms — CROSS level assignment: proxL+distR on plane A, proxR+distL on plane B
+    # angular-contact bearings + their capture caps (deck = lower, top plate = upper)
+    P.append((ring(47, 25, BRG_W).translate((sx, 0, DECK_Z0)), (0.85, 0.68, 0.2), f"brg7005_lo_{tag}"))
+    P.append((ring(47, 25, BRG_W).translate((sx, 0, TOPP_Z0 + TOPP_T / 2 - BRG_W / 2)),
+              (0.85, 0.68, 0.2), f"brg7005_up_{tag}"))
+    # lower: bottom cap under the deck (spigot up), top cap on the deck (spigot down)
+    P.append((cap.translate((sx, 0, DECK_Z0 - CAP_T - 2)), (0.5, 0.5, 0.52), f"brgcap_lo_bot_{tag}"))
+    P.append((cap.rotate((0, 0, 0), (1, 0, 0), 180).translate((sx, 0, DECK_Z1 + CAP_T)),
+              (0.5, 0.5, 0.52), f"brgcap_lo_top_{tag}"))
+    # upper: caps on both faces of the top plate
+    P.append((cap.translate((sx, 0, TOPP_Z0 - CAP_T - 2)), (0.5, 0.5, 0.52), f"brgcap_up_bot_{tag}"))
+    P.append((cap.rotate((0, 0, 0), (1, 0, 0), 180).translate((sx, 0, TOPP_Z1 + CAP_T)),
+              (0.5, 0.5, 0.52), f"brgcap_up_top_{tag}"))
+    # shaft preload locknut, on top of the upper top cap (clears the arm above)
+    P.append((ring(38, 25, LOCKNUT_T).translate((sx, 0, LOCKNUT_Z)), (0.5, 0.5, 0.52), f"locknut_{tag}"))
+
+    # drive
+    P.append((pulley(60, 25, zp).translate((sx, 0, 0)), (0.30, 0.32, 0.36), f"pulley60T_{tag}"))
+    P.append((pulley(20, 19, zp).translate((mx, my, 0)), (0.30, 0.32, 0.36), f"pulley20T_{tag}"))
+    P.append((belt(zp).rotate((0, 0, 0), (0, 0, 1), rot_belt).translate((sx, 0, 0)),
+              (0.12, 0.12, 0.14), f"belt_450_5M_{tag}"))
+
+    # jackscrew-slider tensioner + motor (built in the belt frame, rotated to azimuth)
+    place = lambda part: part.rotate((0, 0, 0), (0, 0, 1), adir).translate((mx, my, 0))
+    P.append((place(motor_carriage(mp_top)), (0.72, 0.6, 0.42), f"motor_carriage_{tag}"))
+    P.append((place(carriage_rails(mp_top)), (0.6, 0.6, 0.62), f"carriage_rails_{tag}"))
+    P.append((place(tension_block(mp_top)), (0.6, 0.6, 0.62), f"tension_block_{tag}"))
+    P.append((place(motor(mp_top)), (0.42, 0.44, 0.5), f"motor_A6M80_{tag}"))
+
+# --- arms — CROSS level assignment ----------------------------------------- #
 P.append((prox.rotate((0, 0, 0), (0, 0, 1), jt.left_deg).translate((-HX, 0, PLANE_A)),
           (0.80, 0.82, 0.84), "proximal_L_planeA"))
 P.append((prox.rotate((0, 0, 0), (0, 0, 1), jt.right_deg).translate((HX, 0, PLANE_B)),
           (0.80, 0.82, 0.84), "proximal_R_planeB"))
 P.append((dist.rotate((0, 0, 0), (0, 0, 1), dLa).translate((eL[0], eL[1], PLANE_B)),
           (0.68, 0.72, 0.76), "distal_L_planeB"))
-# Same part flipped about its long axis -> TCP bearing pocket faces DOWN, so
-# the two bearings sit in the outer faces of the stacked bosses (max span).
 P.append((dist.rotate((0, 0, 0), (1, 0, 0), 180).rotate((0, 0, 0), (0, 0, 1), dRa)
           .translate((eR[0], eR[1], PLANE_A)), (0.68, 0.72, 0.76), "distal_R_planeA"))
-P.append((zcyl(eL[0], eL[1], 4, 111, 176), (0.5, 0.5, 0.52), "elbow_pin_L_65mm"))
-P.append((zcyl(eR[0], eR[1], 4, 111, 176), (0.5, 0.5, 0.52), "elbow_pin_R_65mm"))
-# --- TCP: hollow spindle + through-axis mini air cylinder -------------------
-P.append((ring(TCP_BRG_OD, SPINDLE_OD, TCP_BRG_W).translate((0, 250, 111)),
+
+# --- elbow pins with retention (bottom head + top clip so no link walks off)- #
+for (ex, ey), tag in ((eL, "L"), (eR, "R")):
+    pin = (zcyl(ex, ey, 4, A0 - 3, B1 + 4)                    # Ø8 pin spanning both planes
+           .union(zcyl(ex, ey, 7, A0 - 6, A0 - 3)))          # Ø14 head at the bottom
+    P.append((pin, (0.5, 0.5, 0.52), f"elbow_pin_{tag}_75mm"))
+    P.append((ring(14, 8.2, 3).translate((ex, ey, B1 + 1)),  # printed top retaining clip
+              (0.75, 0.45, 0.30), f"elbow_pin_clip_{tag}"))
+
+# --- TCP: hollow spindle + through-axis mini air cylinder ------------------- #
+P.append((ring(TCP_BRG_OD, SPINDLE_OD, TCP_BRG_W).translate((0, 250, A0)),
           (0.85, 0.68, 0.2), "brg6804_tcp_lower"))
-P.append((ring(TCP_BRG_OD, SPINDLE_OD, TCP_BRG_W).translate((0, 250, 176 - TCP_BRG_W)),
+P.append((ring(TCP_BRG_OD, SPINDLE_OD, TCP_BRG_W).translate((0, 250, B1 - TCP_BRG_W)),
           (0.85, 0.68, 0.2), "brg6804_tcp_upper"))
-spindle = (zcyl(0, 250, SPINDLE_OD / 2, 107, 182)
-           .union(zcyl(0, 250, 12, 106.5, 111))            # bottom retaining flange
-           .cut(zcyl(0, 250, SPINDLE_ID / 2, 100, 190)))
+spindle = (zcyl(0, 250, SPINDLE_OD / 2, A0 - 4, B1 + 6)
+           .union(zcyl(0, 250, 12, A0 - 4.5, A0))            # bottom retaining flange
+           .cut(zcyl(0, 250, SPINDLE_ID / 2, A0 - 12, B1 + 14)))
 P.append((spindle, (0.55, 0.55, 0.58), "tcp_spindle_O20xO16"))
-P.append((ring(28, SPINDLE_OD + 0.2, 8).translate((0, 250, 176.5)),
+P.append((ring(28, SPINDLE_OD + 0.2, 8).translate((0, 250, B1 + 0.5)),
           (0.5, 0.5, 0.52), "tcp_collar"))
-cyl = (zcyl(0, 250, CYL_BARREL_OD / 2, 128, 190)           # barrel (ports up top)
-       .union(zcyl(0, 250, 4, 122, 128))                   # nose
-       .union(zcyl(0, 250, 2, 70, 122)))                   # rod, extended
+cyl = (zcyl(0, 250, CYL_BARREL_OD / 2, A1, B1 + 14)
+       .union(zcyl(0, 250, 4, A1 - 6, A1))
+       .union(zcyl(0, 250, 2, A0 - 40, A1 - 6)))
 P.append((cyl, (0.42, 0.44, 0.5), "air_cyl_ISO6432_O10"))
-P.append((cq.Workplane("XY").workplane(offset=58).moveTo(0, 250).circle(9)
+P.append((cq.Workplane("XY").workplane(offset=A0 - 52).moveTo(0, 250).circle(9)
           .workplane(offset=10).moveTo(0, 250).circle(3).loft(),
           (0.75, 0.45, 0.30), "vacuum_cup"))
 
@@ -397,19 +519,19 @@ def paint(fname, proj, depth, size, sc, label, notes, Lm, cam, keep=None):
 c26, s26 = math.cos(math.radians(26)), math.sin(math.radians(26))
 iso = lambda p: ((p[0] - p[1]) * c26, (p[0] + p[1]) * s26 - p[2])
 paint("base_iso.png", iso, lambda p: p[0] + p[1] + p[2], (1560, 980), 1.55,
-      "DUAL-SHOULDER BASE - cross level assignment, home pose",
-      ["plane A: proximal L + distal R | plane B: proximal R + distal L -> distals stack at TCP, no lap joint",
-       f"cross-pair clearance >{_clear:.0f}mm everywhere the validator allows; belts 450-5M-15 C={C:.1f}, wall mounts 44/24"],
+      "DUAL-SHOULDER BASE - motors to the rear, jackscrew-slider tensioners",
+      [f"motors splayed behind the shafts at ({MXx:.0f},{MXy:.0f}); deck fits 300x300; 7005s captured by bolted top+bottom caps",
+       f"cross-pair clearance >{_clear:.0f}mm everywhere the validator allows; belts 450-5M-15 C={C:.1f}"],
       np.array([-0.3, -0.5, 0.81]), np.array([0.75, 0.7, 1.2]))
-paint("base_front.png", lambda p: (p[0], -p[2]), lambda p: -p[1], (1560, 760), 1.9,
-      "FRONT ELEVATION - staggered belt planes below, crossed arm planes above",
-      ["left belt z5-20 (44mm walls) / right belt z25-40 (24mm walls) | plane A z111-141, plane B z146-176",
-       "identical arms both sides: right proximal simply clamps higher on the shaft's long D-flat"],
+paint("base_front.png", lambda p: (p[0], -p[2]), lambda p: -p[1], (1560, 820), 1.7,
+      "FRONT ELEVATION - belts staggered below, crossed arm planes above",
+      [f"left belt z{ZL:.0f}-{ZL+PW:.0f} / right belt z{ZR:.0f}-{ZR+PW:.0f} | plane A z{A0:.0f}-{A1:.0f}, plane B z{B0:.0f}-{B1:.0f}",
+       "7005 shoulder bearings trapped by top+bottom caps bolted through each plate on a Ø58 BCD"],
       np.array([-0.25, -0.75, 0.55]), np.array([0.15, -1.0, 0.25]))
 near_tcp = lambda t: sum(np.linalg.norm(t[j][:2] - np.array([0.0, 250.0])) < 240 for j in range(3)) == 3
 paint("tcp_closeup.png", iso, lambda p: p[0] + p[1] + p[2], (1240, 780), 2.4,
       "TCP - through-axis air cylinder in a hollow spindle",
-      ["O20/O16 spindle rides 2x 6804 in the stacked bosses' outer faces; mini cylinder drops through,",
-       "cup on the joint axis (immune to platform spin); barrel + port stay accessible above the collar"],
+      ["O20/O16 spindle rides 2x 6804 in the stacked bosses' outer faces; bottom flange + top collar",
+       "capture both distals; elbow pins get a bottom head + top clip so no link can walk off"],
       np.array([-0.3, -0.5, 0.81]), np.array([0.75, 0.7, 1.2]), keep=near_tcp)
 print("previews written to docs/cad/")

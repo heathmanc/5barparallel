@@ -20,12 +20,14 @@ from typing import Optional
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -147,21 +149,34 @@ class EtherCatTab(QWidget):
         self._poller: Optional[_StatusPoller] = None
         self._jog_worker: Optional[_JogWorker] = None
 
+        # The tab has grown past a laptop screen — put the sections in a scroll
+        # area and pin the status line OUTSIDE it so status is always visible.
         root = QVBoxLayout(self)
+        content = QWidget()
+        c = QVBoxLayout(content)
+        c.setContentsMargins(0, 0, 0, 0)
         top = QHBoxLayout()
         top.addWidget(self._build_connection(), 1)
-        root.addLayout(top)
+        c.addLayout(top)
         drives = QHBoxLayout()
         self._drive_panels = [self._build_drive_panel("Drive 0 — left shoulder"),
                               self._build_drive_panel("Drive 1 — right shoulder")]
         for panel, _ in self._drive_panels:
             drives.addWidget(panel, 1)
-        root.addLayout(drives)
-        root.addWidget(self._build_jog())
-        root.addWidget(self._build_coordinated())
-        root.addWidget(self._build_parameters(), 1)
+        c.addLayout(drives)
+        c.addWidget(self._build_jog())
+        c.addWidget(self._build_coordinated())
+        c.addWidget(self._build_parameters(), 1)
+
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        root.addWidget(scroll, 1)
+
         self.status_label = QLabel("Not connected — connect the EtherCAT master, "
                                    "or use the simulated network for bench-off work.")
+        self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(f"color:{theme.TEXT_DIM};")
         root.addWidget(self.status_label)
         self.refresh()
