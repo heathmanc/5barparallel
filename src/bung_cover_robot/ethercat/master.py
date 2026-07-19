@@ -77,6 +77,7 @@ OD_TARGET_POSITION = 0x607A
 OD_PROFILE_VELOCITY = 0x6081
 OD_PROFILE_ACCEL = 0x6083
 OD_PROFILE_DECEL = 0x6084
+OD_INTERP_TIME_PERIOD = 0x60C2   # :01 value, :02 exponent (10^n s) — must match SYNC0
 OD_POSITION_ACTUAL = 0x6064
 OD_TORQUE_ACTUAL = 0x6077
 OD_HOMING_METHOD = 0x6098
@@ -538,6 +539,14 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         scripts/ec_inspect.py; see docs/ethercat_bringup.md §3/§5c.)"""
         s = self._master.slaves[slave_pos]
         s.sdo_write(OD_MODES_OF_OPERATION, 0, bytes([self.mode & 0xFF]))
+        # Interpolation time period (0x60C2) must match the SYNC0 cycle for DC
+        # synchronous operation, or the drive sync-faults on the mismatch.
+        period_ms = max(1, int(round(self.cycle_dt_s * 1000)))
+        try:
+            s.sdo_write(OD_INTERP_TIME_PERIOD, 1, bytes([period_ms & 0xFF]))
+            s.sdo_write(OD_INTERP_TIME_PERIOD, 2, struct.pack("b", -3))   # 10^-3 s = ms
+        except Exception as exc:  # noqa: BLE001 - object may be read-only on some fw
+            logger.warning("could not set 0x60C2 interpolation period: %s", exc)
         if self.mode == cia402.MODE_PROFILE_POSITION:
             s.sdo_write(OD_PROFILE_VELOCITY, 0, struct.pack("<I", self.pp_velocity))
             s.sdo_write(OD_PROFILE_ACCEL, 0, struct.pack("<I", self.pp_accel))
