@@ -834,6 +834,53 @@ def test_drives_tab_cartesian_jog(qapp, tmp_path):
     tab._stop_poller()
 
 
+def test_drives_tab_simulate_demo_gates_and_runs(qapp, tmp_path):
+    """Simulate pick&place: refuses until enabled + homed, then runs a full pass
+    (fixed nest -> six variably-placed holes) actuating the pick head."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+    from bung_cover_robot.app.cycle_manager import PickSequence
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab._demo_sequence = PickSequence(0, 0, 0)   # zero dwells: instant in the sim
+    tab.drives_spin.setValue(2)
+    tab._on_connect_sim()
+    # gate 1: not enabled
+    tab._on_simulate()
+    assert tab._demo_worker is None
+    assert "Enable" in tab.status_label.text()
+    # gate 2: enabled but not referenced
+    tab._on_enable()
+    tab._on_simulate()
+    assert tab._demo_worker is None
+    assert "Set Home" in tab.status_label.text()
+    # now runnable
+    tab._on_set_home()
+    tab.demo_loop_chk.setChecked(False)
+    start = [d.actual_position for d in ctrl.driver.master.drives]
+    tab._on_simulate()
+    assert tab._demo_worker is not None
+    assert tab._demo_worker.wait(10000)          # one pass completes
+    qapp.processEvents()                         # deliver the done signal
+    end = [d.actual_position for d in ctrl.driver.master.drives]
+    assert end != start                          # the arm moved through the holes
+    assert "finished" in tab.status_label.text().lower()
+    assert tab.sim_demo_btn.text().startswith("Simulate")   # reset for the next run
+    tab._on_disconnect()
+    tab._stop_poller()
+
+
+def test_drives_tab_simulate_done_handler_reports_failure(qapp, tmp_path):
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab._on_demo_done("FAIL:drive faulted")
+    assert "faulted" in tab.status_label.text().lower()
+    assert tab.sim_demo_btn.isEnabled()
+    tab._stop_poller()
+
+
 def test_drives_tab_cartesian_jog_needs_reference(qapp, tmp_path):
     """Without a reference/home, the Cartesian jog refuses (mm has no meaning)."""
     from bung_cover_robot.gui.ethercat_tab import EtherCatTab

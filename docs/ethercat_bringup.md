@@ -142,6 +142,21 @@ starts `False`), so start-up is safe; the difference is only whether a routine
 power cycle forces an operator re-home. If C00.07 is left on **incremental**, the
 drive ignores the absolute datum entirely and homes from wherever it powered up.
 
+### 4a. Sample pick & place (vision bypass)
+
+The Drives tab has a **Simulate pick && place** button (in the jog box) to
+exercise the arm and pick head before vision calibration exists. It needs the
+drives **enabled** and **Set Home** done, then runs a canned cycle: pick from a
+fixed supply *nest*, drop into each of the six holes of a bung cover that is
+placed at a random position/tilt in the reachable envelope each pass (so a
+range of poses gets exercised). Every point is workspace-validated, and the
+vacuum/cylinder actuate at each end just like a real pick. Tick **loop** to keep
+it running (re-placing the cover each pass) until you press **Stop demo**.
+
+This is `run_demo_cycle` + `demo_pick_and_place_targets` (both in
+`app/cycle_manager.py`), the same `DirectJobRunner` the vision cycle uses — it
+just supplies fixed targets instead of camera detections.
+
 ## 5. Safety (hardware, not software)
 
 - **E-stop → hardwired torque removal, independent of the PC.** Two cases:

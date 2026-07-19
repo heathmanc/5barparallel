@@ -3,10 +3,15 @@
 import numpy as np
 import pytest
 
+import random
+
 from bung_cover_robot.app.cycle_manager import (
     CycleManager,
     DirectJobRunner,
+    PickSequence,
+    demo_pick_and_place_targets,
     make_job_runner,
+    run_demo_cycle,
 )
 from bung_cover_robot.app.robot_test_controller import (
     build_dry_run_controller,
@@ -183,3 +188,71 @@ def test_run_single_job():
     # an unreachable target is rejected by the workspace guard, not sent
     bad = mgr.run_single_job(pick_xy=(0.0, 250.0), drop_xy=(0.0, 9999.0))
     assert not bad.ok
+
+
+# --------------------------------------------------------------------------- #
+# sample pick&place demo (vision bypass) — fixed nest + variable cover row
+# --------------------------------------------------------------------------- #
+def test_demo_targets_are_reachable_and_six_wide():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    home_xy = (0.0, 250.0)
+    # A range of seeds must all yield a valid nest + 6 in-workspace holes.
+    for seed in range(20):
+        nest, drops = demo_pick_and_place_targets(
+            val, home_xy, rng=random.Random(seed))
+        assert val.validate(*nest).ok
+        assert len(drops) == 6
+        assert all(val.validate(x, y).ok for x, y in drops)
+
+
+def test_demo_targets_vary_between_runs():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    a = demo_pick_and_place_targets(val, (0.0, 250.0), rng=random.Random(1))[1]
+    b = demo_pick_and_place_targets(val, (0.0, 250.0), rng=random.Random(2))[1]
+    assert a != b                              # the cover row is variably placed
+
+
+def test_run_demo_cycle_places_all_holes_and_actuates_head():
+    ctrl = _ready_controller()
+    nest, drops = demo_pick_and_place_targets(
+        ctrl.validator, ctrl.home_xy, rng=random.Random(0))
+    steps = []
+    res = run_demo_cycle(ctrl, nest, drops,
+                         pick_sequence=PickSequence(0, 0, 0),
+                         on_step=steps.append)
+    assert res.ok
+    assert len(res.placed) == len(drops)       # every hole filled
+    assert len(steps) == len(drops)
+    # the dry-run driver logged one move per pick + per drop (2 per hole)
+    assert len(ctrl.driver.command_log) == 2 * len(drops)
+    # head left safe at the end (last release retracts the plunger, vents vacuum)
+    assert ctrl.driver.plunger_extended is False
+    assert ctrl.driver.vacuum_on is False
+
+
+def test_run_demo_cycle_preflight_guards():
+    ctrl = build_dry_run_controller()          # not enabled/referenced
+    res = run_demo_cycle(ctrl, (0.0, 205.0), [(0.0, 250.0)])
+    assert not res.ok and "disabled" in res.reason
+    ctrl.enable()
+    res = run_demo_cycle(ctrl, (0.0, 205.0), [(0.0, 250.0)])
+    assert not res.ok and "referenced" in res.reason
+
+
+def test_run_demo_cycle_stops_on_request():
+    ctrl = _ready_controller()
+    nest, drops = demo_pick_and_place_targets(
+        ctrl.validator, ctrl.home_xy, rng=random.Random(3))
+    seen = []
+
+    def stop_after_two():
+        return len(seen) >= 2
+
+    res = run_demo_cycle(ctrl, nest, drops,
+                         pick_sequence=PickSequence(0, 0, 0),
+                         should_stop=stop_after_two,
+                         on_step=seen.append)
+    assert "stopped" in res.reason
+    assert len(res.steps) == 2                  # halted early
