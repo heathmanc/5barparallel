@@ -138,18 +138,16 @@ class CustomParameter:
         return f"0x{self.index:04X}:{self.sub}"
 
 
-# Preloaded tuning objects for the AS715N (A6-EC). Addresses come from the ESI
-# (STEPPERONLINE_A6_Servo) object dictionary — the drive's real subindices — NOT
-# the panel's Cxx.NN numbering, which does NOT track the subindex in group 0x2000
-# (e.g. "auto-tune mode" is the 3rd config entry -> 0x2000:03, though the panel
-# labels it C00.04). Group 0x2001 (gains) happens to line up with C01.NN -> NN+1.
-# All are U16 (object 0x2000 = 256 bits / 15 entries) and modifiable during
-# operation, effective immediately.
+# Preloaded tuning objects for the AS715N (A6-EC). Addresses are the EXPLICIT
+# subindices from the ESI DataType definitions (DT2000/DT2001) in
+# STEPPERONLINE_A6_Servo — the subindices are SPARSE (object 0x2000 has entries
+# at :01,:02,:05,:06,:07,:08,:11...; :03 and :04 don't exist, which is why a
+# write to 0x2000:04 aborts). All UINT (16-bit), rw, effective immediately.
 #   (name, CoE address, default value, dtype, description)
 DEFAULT_TUNING: List[Tuple[str, str, float, str, str]] = [
-    ("load_inertia_ratio", "0x2000:05", 100,  "int16", "Load inertia ratio (%, 0-12000) — set this FIRST; gains scale off it"),
-    ("auto_tuning_mode",   "0x2000:03", 1,     "int16", "Gain auto-tuning mode: 0=Manual, 1=Standard (by stiffness), 2=Positioning. Set 0 to hand-tune the gains"),
-    ("stiffness_level",    "0x2000:04", 12,    "int16", "Stiffness level (1-31) — the main 'make it stiffer' dial in Standard mode; too high oscillates"),
+    ("load_inertia_ratio", "0x2000:07", 100,  "int16", "Load inertia ratio (%, 0-12000) — set this FIRST; gains scale off it"),
+    ("auto_tuning_mode",   "0x2000:05", 1,     "int16", "Gain auto-tuning mode: 0=Manual, 1=Standard (by stiffness), 2=Positioning. Set 0 to hand-tune the gains"),
+    ("stiffness_level",    "0x2000:06", 12,    "int16", "Stiffness level (1-31) — the main 'make it stiffer' dial in Standard mode; too high oscillates"),
     ("pos_loop_gain",      "0x2001:01", 400,   "int16", "1st position loop gain (0.1 rad/s, 0-20000) — raise to cut following error (Manual mode)"),
     ("speed_loop_gain",    "0x2001:02", 250,   "int16", "1st speed loop gain (0.1 Hz, 1-20000) — raise this before position gain"),
     ("speed_integ_time",   "0x2001:03", 3184,  "int16", "1st speed loop integral time (0.01 ms, 1-51200) — lower kills steady-state error"),
@@ -157,7 +155,7 @@ DEFAULT_TUNING: List[Tuple[str, str, float, str, str]] = [
 ]
 
 # Bump when DEFAULT_TUNING addresses/values change so a saved config re-seeds.
-TUNING_SEED_VERSION = 3
+TUNING_SEED_VERSION = 4
 # Names used by earlier (wrong-address) seed sets, dropped on migration.
 _LEGACY_TUNING_NAMES = {"inertia_ratio", "machine_stiffness", "realtime_autotune",
                         "pos_loop_gain", "vel_loop_gain", "vel_integ_time", "torque_filter"}
