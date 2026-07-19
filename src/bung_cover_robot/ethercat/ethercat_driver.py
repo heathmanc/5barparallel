@@ -28,7 +28,12 @@ from ..robot.fivebar_kinematics import FiveBarKinematics
 from ..robot.workspace import WorkspaceValidator
 from . import cia402
 from .master import EtherCatMaster, MasterError
-from .trajectory import TrajectoryError, TrajectoryLimits, plan_linear_move
+from .trajectory import (
+    TrajectoryError,
+    TrajectoryLimits,
+    plan_linear_move,
+    ramp_counts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +115,36 @@ class EtherCatRobotDriver(RobotDriver):
     def enable(self) -> None:
         if self.is_faulted:
             raise RobotDriverError("drives are faulted; reset before enabling")
+        self.master.exchange()                        # fresh actual positions
         for d in self.master.drives:
             d.mode_of_operation = cia402.MODE_CSP
+            d.target_position = d.actual_position      # hold on enable — no jump
         if not self._run_state_machine(target_enabled=True):
             raise RobotDriverError("drives did not reach Operation Enabled")
+
+    def jog_counts(self, drive: int, delta_counts: int,
+                   speed_counts_s: float = 20000.0,
+                   accel_counts_s2: float = 100000.0) -> None:
+        """Single-axis bench jog: ramp ``drive`` by ``delta_counts`` (raw drive
+        counts), other drives holding. Requires Operation Enabled; the move is
+        CSP-streamed through a trapezoidal ramp so it's smooth (a step would fault
+        on following error). Motion — only with the E-stop/contactor live."""
+        if self.is_faulted:
+            raise RobotDriverError(f"cannot jog: faulted (code {self.fault_code()})")
+        if not self.is_enabled:
+            raise RobotDriverError("cannot jog: enable the drive first")
+        if not 0 <= drive < len(self.master.drives):
+            raise RobotDriverError(f"no such drive {drive}")
+        self.master.exchange()                        # fresh actuals
+        holds = [d.actual_position for d in self.master.drives]
+        ramp = ramp_counts(holds[drive], int(delta_counts),
+                           speed_counts_s, accel_counts_s2, self.limits.cycle_dt_s)
+        targets = [tuple(c if i == drive else holds[i]
+                         for i in range(len(holds))) for c in ramp]
+        try:
+            self.master.run_csp(targets)
+        except MasterError as exc:
+            raise RobotDriverError(f"jog aborted: {exc}") from exc
 
     def disable(self) -> None:
         for d in self.master.drives:

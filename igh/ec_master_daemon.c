@@ -186,7 +186,11 @@ int main(int argc, char **argv)
         /* outputs: shm -> PDO */
         for (int d = 0; d < num_drives; d++) {
             drive_shm_t *v = &shm->drive[d];
-            int32_t target = streaming ? shm->csp[d][shm->csp_index] : v->target_position;
+            int op_enabled = (v->statusword & 0x0004);   /* CiA402 Operation Enabled */
+            int32_t target;
+            if (streaming)          target = shm->csp[d][shm->csp_index];
+            else if (!op_enabled)   target = v->actual_position;  /* track -> no enable jump */
+            else                    target = v->target_position;  /* hold at commanded */
             v->target_position = target;              /* reflect what was applied */
             EC_WRITE_U16(pd + off[d].ctrl,  v->controlword);
             EC_WRITE_S32(pd + off[d].target, target);

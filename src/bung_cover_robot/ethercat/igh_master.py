@@ -91,6 +91,12 @@ class IgHMaster(EtherCatMaster):
         if not os.path.exists(_SHM_PATH) and self.auto_launch:
             self._launch_daemon()
         self._map_shm()
+        running_n = self._u32(_H_NUM)
+        if running_n != self._num:
+            self.close()
+            raise MasterError(
+                f"a daemon is already running with {running_n} drive(s), not "
+                f"{self._num}. Stop it first: sudo pkill ec_master_daemon")
         # wait for the daemon to reach OP (INIT->PREOP->SAFEOP->OP + DC settle)
         deadline = time.perf_counter() + self.op_timeout_s
         while self._u32(_H_OP) != 1:
@@ -113,6 +119,10 @@ class IgHMaster(EtherCatMaster):
             try:
                 for d, pd in enumerate(self._drives):
                     self._read_inputs(d, pd)
+                    # Never command a stale target: while the drive is disabled,
+                    # hold target = actual so enabling can't jump (drive Er87.1).
+                    if not cia402.is_operation_enabled(pd.statusword):
+                        pd.target_position = pd.actual_position
             except Exception:  # noqa: BLE001 - display refresh must not die
                 pass
             self._reader_stop.wait(0.01)     # ~100 Hz

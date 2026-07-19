@@ -294,9 +294,10 @@ class SimulatedEtherCatMaster(EtherCatMaster):
             sim.step(pd)
 
     def run_csp(self, targets: CspTargets) -> None:
-        for t0, t1 in targets:
-            self._drives[0].target_position = int(t0)
-            self._drives[1].target_position = int(t1)
+        for row in targets:
+            for d, val in enumerate(row):
+                if d < len(self._drives):
+                    self._drives[d].target_position = int(val)
             self.exchange()
             if self._faulted():
                 raise MasterError("drive faulted during CSP stream")

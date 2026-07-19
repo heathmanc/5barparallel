@@ -1,10 +1,20 @@
-# EtherCAT bring-up — StepperOnline A6-EC + PC master (Stage 4)
+# EtherCAT bring-up — StepperOnline A6-EC + PC master
 
-The PC is the motion controller. It runs a `pysoem` EtherCAT master that streams
-Cyclic-Synchronous-Position (CSP) setpoints to two A6-EC servo drives over a
-single EtherCAT segment. This document is the hardware checklist for
-`PysoemMaster` (`src/bung_cover_robot/ethercat/master.py`), which is written but
-**bench-untested** — it needs the real drives and a real-time kernel to validate.
+> **The real-hardware master is IgH EtherLab, not pysoem.** The AS715N is
+> **DC-SYNC0-only**, and pysoem cannot generate a SYNC0 the drive detects (it
+> faults `Er74.1` "No sync signal"). The IgH master does — **verified on the
+> bench**: the drive holds OP with DC, `err=0x0000`, encoder live. Production runs
+> on a small C RT daemon (`igh/ec_master_daemon`, using IgH's `libethercat`) that
+> owns the DC loop and exposes the process data over shared memory, with
+> `IgHMaster` (`src/bung_cover_robot/ethercat/igh_master.py`) as the Python side
+> behind the same `EtherCatMaster` interface. **See [`../igh/README.md`](../igh/README.md)**
+> for install/build/run. `PysoemMaster` is kept for reference / non-DC drives but
+> is not used for this hardware.
+
+The PC is the motion controller. It streams Cyclic-Synchronous-Position (CSP)
+setpoints to the A6-EC servo drives over a single EtherCAT segment. The sections
+below (PDO map, homing, safety, first-motion) apply regardless of master; the
+pysoem-specific mechanics are historical.
 
 > Everything above this layer (CiA 402 sequencing, the Cartesian CSP trajectory
 > planner, the `EtherCatRobotDriver`, the whole pick/place cycle) is already

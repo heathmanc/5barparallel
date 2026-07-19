@@ -38,7 +38,7 @@ from ..ethercat.ethercat_driver import EtherCatRobotDriver
 from ..ethercat.igh_master import IgHMaster
 from ..ethercat.master import MasterError, SimulatedEtherCatMaster
 from ..ethercat.parameters import PARAMETERS, ParameterStore
-from ..robot.driver import HomingConfig
+from ..robot.driver import HomingConfig, RobotDriverError
 from . import theme
 
 _SW_BITS = [  # (label, mask, kind-when-active)
@@ -138,6 +138,7 @@ class EtherCatTab(QWidget):
         for panel, _ in self._drive_panels:
             drives.addWidget(panel, 1)
         root.addLayout(drives)
+        root.addWidget(self._build_jog())
         root.addWidget(self._build_parameters(), 1)
         self.status_label = QLabel("Not connected — connect the EtherCAT master, "
                                    "or use the simulated network for bench-off work.")
@@ -216,6 +217,72 @@ class EtherCatTab(QWidget):
         v.addLayout(io)
         widgets = dict(state=state, counts=counts, detail=detail, bits=bits)
         return box, widgets
+
+    def _build_jog(self) -> QGroupBox:
+        box = QGroupBox("Bench jog — axis 0  (motion)")
+        g = QGridLayout(box)
+        self.enable_btn = QPushButton("Enable")
+        self.enable_btn.clicked.connect(self._on_enable)
+        self.disable_btn = QPushButton("Disable")
+        self.disable_btn.clicked.connect(self._on_disable)
+        g.addWidget(self.enable_btn, 0, 0)
+        g.addWidget(self.disable_btn, 0, 1)
+        g.addWidget(QLabel("step (counts)"), 0, 2)
+        self.jog_step = QSpinBox()
+        self.jog_step.setRange(1, 200000)
+        self.jog_step.setValue(2000)
+        g.addWidget(self.jog_step, 0, 3)
+        g.addWidget(QLabel("speed (counts/s)"), 0, 4)
+        self.jog_speed = QSpinBox()
+        self.jog_speed.setRange(100, 500000)
+        self.jog_speed.setValue(20000)
+        g.addWidget(self.jog_speed, 0, 5)
+        self.jog_minus = QPushButton("– Jog")
+        self.jog_minus.clicked.connect(lambda: self._on_jog(-1))
+        self.jog_plus = QPushButton("Jog +")
+        self.jog_plus.clicked.connect(lambda: self._on_jog(+1))
+        g.addWidget(self.jog_minus, 0, 6)
+        g.addWidget(self.jog_plus, 0, 7)
+        warn = QLabel("Motion — only with the E-stop / contactor live and the motor "
+                      "secured. Enable first, then jog. Keep steps small at first.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet(f"color:{theme.WARN}; font-weight:600;")
+        g.addWidget(warn, 1, 0, 1, 8)
+        return box
+
+    def _ec_driver(self):
+        drv = self.controller.driver
+        return drv if isinstance(drv, EtherCatRobotDriver) else None
+
+    def _on_enable(self) -> None:
+        drv = self._ec_driver()
+        if drv is None:
+            self._status("Connect the drives first.", theme.WARN)
+            return
+        try:
+            drv.enable()
+            self._status("Enabled — Operation Enabled. Jog with care.", theme.TEXT)
+        except RobotDriverError as exc:
+            self._status(f"Enable failed: {exc}", theme.DANGER)
+
+    def _on_disable(self) -> None:
+        drv = self._ec_driver()
+        if drv is None:
+            return
+        drv.disable()
+        self._status("Disabled — torque off (drive tracks position).", theme.TEXT)
+
+    def _on_jog(self, sign: int) -> None:
+        drv = self._ec_driver()
+        if drv is None:
+            self._status("Connect + enable the drive first.", theme.WARN)
+            return
+        delta = sign * int(self.jog_step.value())
+        try:
+            drv.jog_counts(0, delta, speed_counts_s=float(self.jog_speed.value()))
+            self._status(f"Jogged axis 0 by {delta:+d} counts.", theme.TEXT)
+        except RobotDriverError as exc:
+            self._status(f"Jog failed: {exc}", theme.DANGER)
 
     def _build_parameters(self) -> QGroupBox:
         box = QGroupBox("Parameters (motion + drive SDO)")

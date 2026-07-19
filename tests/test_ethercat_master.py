@@ -92,3 +92,23 @@ def test_pysoem_master_requires_pysoem_or_reports_clearly():
     assert not m.is_open
     with pytest.raises(MasterError):
         m.open()
+
+
+# --- single-axis jog ramp --------------------------------------------------- #
+def test_ramp_counts_endpoints_and_smoothness():
+    from bung_cover_robot.ethercat.trajectory import ramp_counts
+
+    dt = 0.002
+    ramp = ramp_counts(1000, 5000, speed=20000, accel=100000, dt=dt)
+    assert ramp[0] == 1000 and ramp[-1] == 6000
+    assert all(b >= a for a, b in zip(ramp, ramp[1:]))        # monotonic up
+    assert max(b - a for a, b in zip(ramp, ramp[1:])) <= 20000 * dt + 2
+
+
+def test_ramp_counts_negative_and_zero():
+    from bung_cover_robot.ethercat.trajectory import ramp_counts
+
+    assert ramp_counts(500, 0, 1000, 1000, 0.002) == [500]
+    down = ramp_counts(0, -3000, 20000, 100000, 0.002)
+    assert down[0] == 0 and down[-1] == -3000
+    assert all(b <= a for a, b in zip(down, down[1:]))        # monotonic down
