@@ -32,6 +32,49 @@ from ..robot.workspace import WorkspaceValidator
 Point = Tuple[float, float]
 
 
+def ramp_counts(start: int, delta: int, speed: float, accel: float,
+                dt: float) -> List[int]:
+    """Trapezoidal 1-D position ramp in raw drive counts, for a single-axis jog.
+
+    Returns per-cycle absolute count targets from ``start`` to ``start+delta``
+    following a trapezoidal velocity profile (accel to ``speed`` counts/s at
+    ``accel`` counts/s^2, cruise, decel), sampled at ``dt``. The last sample is
+    exactly ``start+delta``. A step (no ramp) would fault a CSP drive on
+    following error, so even a bench jog must ramp.
+    """
+    if speed <= 0 or accel <= 0 or dt <= 0:
+        raise ValueError("speed, accel and dt must be positive")
+    D = abs(int(delta))
+    if D == 0:
+        return [int(start)]
+    sign = 1 if delta > 0 else -1
+    v, a = float(speed), float(accel)
+    t_acc = v / a
+    d_acc = 0.5 * a * t_acc * t_acc
+    if 2.0 * d_acc >= D:                     # triangular (never reaches cruise)
+        t_acc = math.sqrt(D / a)
+        v = a * t_acc
+        d_acc = 0.5 * a * t_acc * t_acc
+        t_flat = 0.0
+    else:
+        t_flat = (D - 2.0 * d_acc) / v
+    total = 2.0 * t_acc + t_flat
+    out: List[int] = []
+    t = 0.0
+    while t < total:
+        if t < t_acc:
+            d = 0.5 * a * t * t
+        elif t < t_acc + t_flat:
+            d = d_acc + v * (t - t_acc)
+        else:
+            td = t - t_acc - t_flat
+            d = d_acc + v * t_flat + v * td - 0.5 * a * td * td
+        out.append(int(start) + sign * int(round(d)))
+        t += dt
+    out.append(int(start) + int(delta))      # exact endpoint
+    return out
+
+
 class TrajectoryError(Exception):
     """A path could not be planned (unreachable/near-singular sample, or bad
     limits). Raised at plan time so nothing partial is ever streamed."""

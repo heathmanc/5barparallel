@@ -24,6 +24,26 @@ def _driver(home=(140.5406, 39.4594)):
     return drv, master, kin
 
 
+def test_jog_counts_single_axis_ramps_to_target():
+    # Single-drive bench: enable, then jog axis 0 by a raw count delta. The
+    # simulated CSP axis follows the streamed ramp exactly.
+    master = SimulatedEtherCatMaster(num_drives=1).open()
+    drv = EtherCatRobotDriver(master).connect()
+    drv.enable()
+    assert drv.is_enabled
+    drv.jog_counts(0, 3000, speed_counts_s=50000, accel_counts_s2=200000)
+    assert master.drives[0].actual_position == 3000
+    drv.jog_counts(0, -1000)
+    assert master.drives[0].actual_position == 2000
+
+
+def test_jog_requires_enable():
+    master = SimulatedEtherCatMaster(num_drives=1).open()
+    drv = EtherCatRobotDriver(master).connect()
+    with pytest.raises(RobotDriverError, match="enable"):
+        drv.jog_counts(0, 1000)
+
+
 def _mock_camera():
     return MockCamera(
         CameraConfig(mock_width=760, mock_height=520), frames=[demo_frame(760, 520)]

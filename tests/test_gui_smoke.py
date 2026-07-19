@@ -876,3 +876,22 @@ def test_drives_tab_single_axis_bench_mode(qapp, tmp_path):
     assert "not on bus" in tab._drive_panels[1][1]["state"].text()
     tab._on_disconnect()
     tab._stop_poller()
+
+
+def test_drives_tab_bench_jog(qapp, tmp_path):
+    """Single-axis bench jog: connect (sim, 1 drive), enable, jog +, position moves."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab.drives_spin.setValue(1)
+    tab._on_connect_sim()
+    tab._on_enable()
+    assert ctrl.driver.is_enabled
+    tab.jog_step.setValue(1500)
+    tab._on_jog(+1)
+    assert ctrl.driver.master.drives[0].actual_position == 1500
+    tab._on_jog(-1)
+    assert ctrl.driver.master.drives[0].actual_position == 0
+    tab._on_disconnect()
+    tab._stop_poller()
