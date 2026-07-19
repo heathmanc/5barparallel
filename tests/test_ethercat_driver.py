@@ -415,3 +415,74 @@ def test_transient_fault_bit_does_not_block_enable():
     master.drives[1].statusword |= cia402.SW_FAULT   # glitch before enable
     drv.enable()                                     # debounced -> enables fine
     assert drv.is_enabled
+
+
+# --- unexpected disable (no fault) ------------------------------------------- #
+def test_disabled_refusal_names_the_drive_and_state():
+    drv, master, kin = _driver()
+    drv.enable()
+    drv.home()
+    master._sim[0].state = cia402.Cia402State.SWITCH_ON_DISABLED
+    master.exchange()                                  # statusword updates
+    jt = kin.inverse(60.0, 250.0)
+    with pytest.raises(RobotDriverError,
+                       match=r"drive 0: SWITCH ON DISABLED sw=0x"):
+        drv.move_to_angles(jt.left_deg, jt.right_deg)
+
+
+def test_demo_auto_reenables_after_unexpected_disable():
+    # Drive 0 silently drops out of Operation Enabled (no fault) mid-demo —
+    # STO/E-stop blip. The demo re-arms once and finishes; the reason says so.
+    from bung_cover_robot.app.cycle_manager import (
+        PickSequence, demo_pick_and_place_targets, run_demo_cycle)
+    import random
+
+    kin = FiveBarKinematics()
+    master = SimulatedEtherCatMaster().open()
+    val = WorkspaceValidator(kin)
+    home = kin.inverse(0.0, 250.0)
+    drv = EtherCatRobotDriver(master, kin, val,
+                              home_angles=(home.left_deg, home.right_deg))
+    ctrl = RobotTestController(drv, kin, val)
+    ctrl.enable()
+    ctrl.home_reference()
+    nest, drops = demo_pick_and_place_targets(val, ctrl.home_xy,
+                                              rng=random.Random(1))
+
+    dropped = {"done": False}
+    def knock_out_once(step):
+        if not dropped["done"] and step.hole_index == 1:
+            master._sim[0].state = cia402.Cia402State.SWITCH_ON_DISABLED
+            master.exchange()
+            dropped["done"] = True
+
+    res = run_demo_cycle(ctrl, nest, drops,
+                         pick_sequence=PickSequence(0, 0, 0),
+                         on_step=knock_out_once)
+    assert res.ok
+    assert len(res.placed) == len(drops)           # every hole still filled
+    assert "auto re-enabled 1x" in res.reason
+    assert "STO/E-stop" in res.reason
+
+
+def test_demo_does_not_reenable_a_faulted_drive():
+    from bung_cover_robot.app.cycle_manager import (
+        PickSequence, demo_pick_and_place_targets, run_demo_cycle)
+    import random
+
+    kin = FiveBarKinematics()
+    master = SimulatedEtherCatMaster().open()
+    val = WorkspaceValidator(kin)
+    home = kin.inverse(0.0, 250.0)
+    drv = EtherCatRobotDriver(master, kin, val,
+                              home_angles=(home.left_deg, home.right_deg))
+    ctrl = RobotTestController(drv, kin, val)
+    ctrl.enable()
+    ctrl.home_reference()
+    nest, drops = demo_pick_and_place_targets(val, ctrl.home_xy,
+                                              rng=random.Random(1))
+    master.inject_fault(0)
+    master.exchange()
+    res = run_demo_cycle(ctrl, nest, drops, pick_sequence=PickSequence(0, 0, 0))
+    assert not res.ok
+    assert "re-enabled" not in res.reason          # faults are never auto-cleared
