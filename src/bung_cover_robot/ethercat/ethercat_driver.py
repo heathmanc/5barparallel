@@ -50,7 +50,8 @@ class EtherCatRobotDriver(RobotDriver):
         home_angles: Angles = (140.5406, 39.4594),
         limits: Optional[TrajectoryLimits] = None,
         max_transition_cycles: int = 200,
-        position_tol_counts: int = 5,
+        position_tol_counts: int = 500,
+        settle_timeout_s: float = 2.0,
         vacuum_do_bit: int = 0,
         plunger_do_bit: int = 1,
         tooling_drive: int = 0,
@@ -61,7 +62,11 @@ class EtherCatRobotDriver(RobotDriver):
         self._home_angles: Angles = (float(home_angles[0]), float(home_angles[1]))
         self.limits = limits or TrajectoryLimits(cycle_dt_s=master.cycle_dt_s)
         self.max_transition_cycles = max_transition_cycles
+        # End-of-move window: 500 counts ~ 0.46 deg at the joint (17-bit
+        # encoder x 3:1). A real servo needs a real tolerance AND time for its
+        # integrator to pull in — both are Drives-tab motion parameters.
         self.position_tol_counts = position_tol_counts
+        self.settle_timeout_s = settle_timeout_s
         # Pick-head I/O: which drive carries the tooling digital outputs and which
         # bit of its 0x60FE:1 word drives the vacuum solenoid / the air cylinder.
         # Repointable to a dedicated EtherCAT I/O slice later; on the bus today the
@@ -352,18 +357,27 @@ class EtherCatRobotDriver(RobotDriver):
         want = targets[-1]
         got = self._settle(want)
         if got is None:
-            final = (self.master.drives[0].actual_position,
-                     self.master.drives[1].actual_position)
+            final = tuple(d.actual_position for d in self.master.drives)
+            short = ", ".join(
+                f"drive {i}: {abs(want[i] - final[i])} counts "
+                f"({abs(want[i] - final[i]) / self._ppd:.3f} deg) short"
+                for i in range(min(len(want), len(final)))
+                if abs(want[i] - final[i]) > self.position_tol_counts)
             raise RobotDriverError(
-                f"move did not reach target (following error: want {want}, got {final})")
+                f"move did not settle within {self.settle_timeout_s:g}s "
+                f"(tol {self.position_tol_counts} counts): {short}. Raise "
+                f"settle_timeout_s / position_tol_counts in Parameters, or "
+                f"tune the drives (stiffness / position loop gain).")
 
-    def _settle(self, want, timeout_s: float = 0.5):
+    def _settle(self, want, timeout_s: Optional[float] = None):
         """Wait for the servos to catch up to the final CSP target after the
-        stream ends. A real drive lags its target (following error) and needs a
-        few ms to settle; the check used to read the actual position immediately,
-        which tripped 'did not reach target' at random. The simulator is
-        instantaneous, so it passes on the first read. Returns the settled
-        position tuple, or None on timeout."""
+        stream ends. A real drive lags its target (following error) and its
+        integrator needs real time to pull in the last fraction of a degree;
+        the window defaults to ``settle_timeout_s`` (a Drives-tab parameter).
+        The simulator is instantaneous, so it passes on the first read.
+        Returns the settled position tuple, or None on timeout."""
+        if timeout_s is None:
+            timeout_s = self.settle_timeout_s
         deadline = time.perf_counter() + timeout_s
         while True:
             got = tuple(d.actual_position for d in self.master.drives)
