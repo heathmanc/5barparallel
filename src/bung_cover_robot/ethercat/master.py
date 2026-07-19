@@ -445,6 +445,16 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         m.state_check(pysoem.SAFEOP_STATE, 50_000)
         for pd, s in zip(self._drives, self._slaves):
             s.output = pack_outputs(pd.controlword, pd.target_position, pd.digital_outputs)
+        # DC must CONVERGE before OP. With SYNC0 enabled, the drive validates the
+        # sync signal the instant it enters OP — if the distributed clocks haven't
+        # settled yet it faults immediately (A6 Er741). So pump process data in
+        # SAFE_OP for a settling period first, letting the clocks lock and SYNC0
+        # stabilise, *then* request OP.
+        if self.use_dc:
+            for _ in range(max(200, int(0.3 / self.cycle_dt_s))):   # ~0.3 s
+                m.send_processdata()
+                m.receive_processdata(self.recv_timeout_us)
+                time.sleep(self.cycle_dt_s)
         m.state = pysoem.OP_STATE
         m.write_state()
         reached = False
