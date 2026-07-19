@@ -44,14 +44,14 @@ def test_jog_requires_enable():
         drv.jog_counts(0, 1000)
 
 
-def test_reference_here_then_cartesian_jog():
-    # Bench: reference at the current pose, then a small Cartesian jog moves the
+def test_set_home_then_cartesian_jog():
+    # Bench: set home at the current pose, then a small Cartesian jog moves the
     # TCP in a straight line (both drives move through the kinematics).
     master = SimulatedEtherCatMaster(num_drives=2).open()
     drv = EtherCatRobotDriver(master).connect()
     drv.enable()
     assert not drv.is_referenced
-    drv.reference_here()
+    drv.set_home()
     assert drv.is_referenced
     start = [d.actual_position for d in master.drives]
     drv.jog_cartesian(5.0, 0.0, speed_mm_s=50.0)   # +5 mm in X

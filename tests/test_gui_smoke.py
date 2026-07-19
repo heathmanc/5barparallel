@@ -888,7 +888,7 @@ def test_drives_tab_cartesian_jog(qapp, tmp_path):
     tab.drives_spin.setValue(2)
     tab._on_connect_sim()
     tab._on_enable()
-    tab._on_reference_here()                 # bench: current pose becomes home
+    tab._on_set_home()                 # bench: current pose becomes home
     assert ctrl.driver.is_referenced
     start = [d.actual_position for d in ctrl.driver.master.drives]
     tab.jog_incr.setValue(5.0)
