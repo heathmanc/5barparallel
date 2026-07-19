@@ -32,7 +32,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, NamedTuple, Sequence, Tuple
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 from . import cia402
 
@@ -356,6 +356,7 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         mode: int = cia402.MODE_CSP,
         pp_velocity: int = 50_000,
         pp_accel: int = 200_000,
+        sync0_shift_ns: Optional[int] = None,
     ) -> None:
         self.ifname = ifname
         self.cycle_dt_s = cycle_dt_s
@@ -375,6 +376,10 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         # and programs SYNC0 at the cycle time; the drive's ESC generates the pulse
         # from its own synchronized clock, so the RT loop just keeps frames flowing.
         self.use_dc = use_dc
+        # SYNC0 shift: fire the drive's SYNC0 pulse this many ns AFTER the DC cycle
+        # boundary, so our frame (aligned to the boundary by the phase-lock) has
+        # landed with margin before the drive latches. None -> a quarter cycle.
+        self.sync0_shift_ns = sync0_shift_ns
         self._num = num_drives
         self._drives = [DriveProcessData(mode_of_operation=mode)
                         for _ in range(num_drives)]
@@ -432,9 +437,12 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         if self.use_dc:                                # distributed clocks (SYNC0)
             m.config_dc()
             cyc_ns = int(round(self.cycle_dt_s * 1e9))
+            shift_ns = (cyc_ns // 4 if self.sync0_shift_ns is None
+                        else int(self.sync0_shift_ns))
             for s in self._slaves:
-                s.dc_sync(True, cyc_ns)                # program SYNC0 at the cycle time
-            logger.info("EtherCAT DC/SYNC0 programmed at %d ns", cyc_ns)
+                s.dc_sync(True, cyc_ns, shift_ns)      # SYNC0 at cycle time, shifted
+            logger.info("EtherCAT DC/SYNC0 programmed: cycle=%d ns shift=%d ns",
+                        cyc_ns, shift_ns)
         else:
             logger.info("EtherCAT DC disabled — free-run (SM-synchronous)")
         # SAFE_OP -> OP. The drive's sync-manager watchdog needs *continuous*
@@ -451,10 +459,20 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
         # SAFE_OP for a settling period first, letting the clocks lock and SYNC0
         # stabilise, *then* request OP.
         if self.use_dc:
-            for _ in range(max(200, int(0.3 / self.cycle_dt_s))):   # ~0.3 s
+            dc0 = dc1 = 0
+            n_settle = max(200, int(0.3 / self.cycle_dt_s))         # ~0.3 s
+            for i in range(n_settle):
                 m.send_processdata()
                 m.receive_processdata(self.recv_timeout_us)
+                if i == 0:
+                    dc0 = int(getattr(m, "dc_time", 0) or 0)
+                dc1 = int(getattr(m, "dc_time", 0) or 0)
                 time.sleep(self.cycle_dt_s)
+            # If dc_time doesn't advance ~= n_settle * cycle, the phase-lock is
+            # blind and sync will fail — surface it plainly.
+            logger.info("DC settle: dc_time %d -> %d (advanced %d ns over %d cycles, "
+                        "expected ~%d)", dc0, dc1, dc1 - dc0, n_settle,
+                        n_settle * int(round(self.cycle_dt_s * 1e9)))
         m.state = pysoem.OP_STATE
         m.write_state()
         reached = False
