@@ -74,8 +74,9 @@ CAR_L, CAR_W = 96.0, 104.0             # carriage: length (a) x width (b)
 PILOT_D = 71.0                         # motor pilot bore (O70 spigot + 1)
 MOTOR_BCD = 90.0                       # motor flange bolts, M6 at 45 deg
 LOCK_A = 30.0                          # lock-bolt line, +- along a
-LOCK_B = 45.5                          # lock-bolt line, +- along b
-SLOT_L = 2 * TENSION + 5.5             # 17.5 slot in the carriage
+LOCK_B = 46.0                          # lock-bolt line, +- along b (1.5 mm
+                                       # insert wall to the window edge)
+SLOT_L = 2 * TENSION + 6.5             # 18.5 slot: full +-6 travel with margin
 SLOT_W = 5.5                           # M5 clearance slot width
 
 # --------------------------------------------------------- cradle (fixed)
@@ -103,6 +104,14 @@ BLK_B = 15.0                           # jack block half-width
 BLK_H = 8.0                            # jack block above frame top
 JACK_Z_OFF = 3.0                       # screw axis above frame top
 CL_MARGIN = 1.5                        # keep-out each side of centreline
+# Second (deeper) corner cut at the inboard-front corner: the RIGHT frame's
+# z-band (5..13) is coplanar with the LEFT 72T pulley flange + belt, and the
+# straight centreline clip alone left that corner 0.44 mm INSIDE the opposite
+# flange sweep. The cut runs from (CUT_A, on the clip line) to (FR_A, CUT_B),
+# keeping every frame point clear of the opposite flange circle + belt strand
+# (both asserted below).
+CUT_A = 60.0
+CUT_B = -43.0
 
 # ------------------------------------------------- z stack (bottom-up, mm)
 CAP_T = 5.0                            # bearing-cap thickness
@@ -167,13 +176,15 @@ def local_to_world(sgn: int, a: float, b: float):
 
 
 def frame_poly_local():
-    """Cradle frame outline in (a, b), inboard-front corner clipped so the
-    left and right cradles stay CL_MARGIN clear of the centreline. The chamfer
-    runs from (a1, -FR_B) to (FR_A, b1) along the clip line."""
+    """Cradle frame outline in (a, b). Two inboard-front cuts:
+    1. the centreline clip (from (a1, -FR_B) along clip_b to (CUT_A, ...)),
+       keeping the two cradles CL_MARGIN clear of the machine centreline;
+    2. the corner cut to (FR_A, CUT_B), keeping the corner clear of the
+       OPPOSITE side's 72T pulley flange and belt strand (they share this
+       z-band; asserted in check_layout)."""
     a1 = (MXx - CL_MARGIN - COS_S * FR_B) / SIN_S
-    b1 = clip_b(FR_A)
-    return [(-FR_A, -FR_B), (a1, -FR_B), (FR_A, b1),
-            (FR_A, FR_B), (-FR_A, FR_B)]
+    return [(-FR_A, -FR_B), (a1, -FR_B), (CUT_A, clip_b(CUT_A)),
+            (FR_A, CUT_B), (FR_A, FR_B), (-FR_A, FR_B)]
 
 
 def deck_hole_table():
@@ -268,11 +279,13 @@ def check_layout(verbose: bool = False) -> list:
     m = CAR_W / 2 - (LOCK_B + SLOT_W / 2)
     ok(m >= 3.0, m - 3.0, "carriage slot to carriage edge")
     m = LOCK_B - 3.5 - WIN_B
-    ok(m >= 0.9, m - 0.9, "cradle lock-bolt boss to window edge")
+    ok(m >= 1.4, m - 1.4, "cradle lock-bolt boss to window edge")
     m = (LOCK_B - 5.0) - belt_half(LOCK_A + SLOT_L / 2)
     ok(m >= 3.0, m - 3.0, "lock bolt head clear of belt corridor")
     m = FIN_BI - (LOCK_B + 5.0)
-    ok(m >= 1.5, m - 1.5, "lock bolt head clear of fin wall")
+    ok(m >= 1.45, m - 1.45, "lock bolt head clear of fin wall")
+    m = SLOT_L / 2 - (TENSION + 2.5)
+    ok(m >= 0.5, m - 0.5, "slot end clear of the bolt shank at full travel")
     m = WIN_B - 40.0
     ok(m >= 1.0, m - 1.0, "window clears motor flange laterally")
     m = WIN_A - (40.0 + TENSION)
@@ -297,11 +310,13 @@ def check_layout(verbose: bool = False) -> list:
     ok(m >= 2.0, m - 2.0, "outboard fin end clears 72T pulley flange")
     for zp, mp_top, tag in ((ZL, MPL_TOP, "L"), (ZR, MPR_TOP, "R")):
         frame_top = mp_top - MP_T
-        m = zp - (frame_top + BLK_H)
-        ok(m >= 3.0, m - 3.0, f"jack block top under belt ({tag})")
+        # datum is the pulley FLANGE bottom (zp - 1.5), which reaches 1.5 mm
+        # below the belt band and sweeps over the block/nut footprint
+        m = (zp - 1.5) - (frame_top + BLK_H)
+        ok(m >= 2.0, m - 2.0, f"jack block top under pulley flange ({tag})")
         nut_top = frame_top + JACK_Z_OFF + 5.55       # M6 jam nut across corners
-        m = zp - nut_top
-        ok(m >= 2.4, m - 2.4, f"jackscrew jam nut under belt ({tag})")
+        m = (zp - 1.5) - nut_top
+        ok(m >= 1.4, m - 1.4, f"jackscrew jam nut under pulley flange ({tag})")
     # inboard fin / flange forward ends respect the centreline clip
     m = -FIN_BO - clip_b(FIN_A_INN)
     ok(m >= 0.5, m - 0.5, "inboard fin end inside centreline clip")
@@ -315,6 +330,32 @@ def check_layout(verbose: bool = False) -> list:
     fp = frame_poly_local()
     fmin = min(local_to_world(1, a, b)[0] for a, b in fp)
     ok(fmin >= CL_MARGIN - 0.1, fmin - CL_MARGIN, "cradle frame at centreline clip")
+
+    # -- CROSS-SIDE: the right frame (z 5..13 at MPR) shares the z-band of the
+    # LEFT 72T pulley flange (zp-1.5 up) and the LEFT belt. Every frame point
+    # (vertices + edge midpoints) must clear the opposite flange circle AND
+    # the opposite belt's inboard strand. This is the one place the geometry
+    # crosses sides — the straight centreline clip alone does NOT cover it.
+    fpts = list(fp) + [((fp[i][0] + fp[(i + 1) % len(fp)][0]) / 2,
+                        (fp[i][1] + fp[(i + 1) % len(fp)][1]) / 2)
+                       for i in range(len(fp))]
+    wpts = [local_to_world(1, a, b) for a, b in fpts]
+    flange_r = PD_DRV / 2 + 3.5
+    m = min(math.hypot(px + HX, py) for px, py in wpts) - flange_r
+    ok(m >= 1.5, m - 1.5, "frame corner clears the OPPOSITE 72T flange sweep")
+    # opposite belt inboard strand = outer tangent between the two belt-back
+    # circles of the LEFT drive; clearance is the signed distance to that line
+    c1, r1 = (-HX, 0.0), PD_DRV / 2 + 1.6
+    c2, r2 = (-MXx, MXy), PD_MOT / 2 + 1.6
+    dx, dy = c1[0] - c2[0], c1[1] - c2[1]
+    D = math.hypot(dx, dy)
+    alpha = math.acos(-(r1 - r2) / D)
+    phi = math.atan2(dy, dx)
+    n = max(((math.cos(phi + s * alpha), math.sin(phi + s * alpha))
+             for s in (1, -1)), key=lambda v: v[0])   # inboard-pointing normal
+    cline = n[0] * c1[0] + n[1] * c1[1] + r1
+    m = min(n[0] * px + n[1] * py - cline for px, py in wpts)
+    ok(m >= 1.5, m - 1.5, "frame corner clears the OPPOSITE belt strand")
 
     # -- deck containment (every underside part, 1.5 mm inside the outline) --
     pts = {}

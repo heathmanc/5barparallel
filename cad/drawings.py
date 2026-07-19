@@ -328,9 +328,10 @@ def sheet_cradle(pdf):
     v.leader(0, FIN_BOLT_B, -34, 8, f"3x M5 HEAT-SET ON {FIN_BOLT_B:g} LINE",
              ha="right")
     v.leader(-16, -FIN_BOLT_B, -30, -9, "3x M5 HEAT-SET", ha="right")
-    ch0, ch1 = poly[1], poly[2]
-    v.leader((ch0[0] + ch1[0]) / 2, (ch0[1] + ch1[1]) / 2, 16, -18,
-             f"CHAMFER ({ch0[0]:.1f},{ch0[1]:g}) TO ({ch1[0]:g},{ch1[1]:.1f})")
+    p1, p2, p3 = poly[1], poly[2], poly[3]
+    v.leader((p2[0] + p3[0]) / 2, (p2[1] + p3[1]) / 2, 14, -20,
+             f"CORNER CUTS ({p1[0]:.1f},{p1[1]:g}) -> ({p2[0]:g},{p2[1]:.1f}) -> "
+             f"({p3[0]:g},{p3[1]:g})  [clears the opposite 72T pulley - do not square up]")
     v.text(0, FLG_B + 16, "PLAN — LH PART (frame top; fins rise toward viewer)",
            size=7)
     v.text(0, -FR_B - 26, "DATUM: origin at frame centre. +a = toward the shoulder "
