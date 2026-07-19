@@ -70,9 +70,10 @@ def test_apply_writes_both_drives_and_reads_back(tmp_path):
     assert rb["machine_stiffness"] == [17, 17]
 
 
-def test_apply_only_writes_changed_parameters(tmp_path):
-    """Apply reads each object first and writes only what differs. A second
-    Apply with no edits must write nothing."""
+def test_apply_only_writes_edited_parameters(tmp_path):
+    """Apply pushes ONLY user-edited params — not the whole preloaded set. A
+    fresh load writes nothing; editing one value writes just that one; a second
+    Apply with no new edits writes nothing (dirty cleared on verified success)."""
     from bung_cover_robot.ethercat import EtherCatRobotDriver, SimulatedEtherCatMaster
 
     class CountingSim(SimulatedEtherCatMaster):
@@ -83,14 +84,17 @@ def test_apply_only_writes_changed_parameters(tmp_path):
             super().sdo_write(index, sub, value, size=size, drive=drive)
 
     drv = EtherCatRobotDriver(CountingSim(num_drives=2).open())
-    s = ParameterStore.load(tmp_path / "p.yaml")
-    notes1 = s.apply(drv)
-    first = CountingSim.writes
-    assert first > 0 and notes1[-1].endswith("unchanged")
-    assert "0 written" not in notes1[-1]              # first pass wrote things
-    notes2 = s.apply(drv)                              # nothing changed
-    assert CountingSim.writes == first                # no new writes
-    assert notes2[-1].startswith("0 written")
+    s = ParameterStore.load(tmp_path / "p.yaml")      # 7 preloaded tuning params, none dirty
+    n0 = s.apply(drv)
+    assert CountingSim.writes == 0                     # nothing edited -> nothing written
+    assert "no edited drive parameters" in n0[-1]
+    s.set_custom_value("machine_stiffness", 21)        # edit exactly one
+    n1 = s.apply(drv)
+    assert CountingSim.writes == 2                     # one object x two drives only
+    assert n1[-1].startswith("2 written")
+    n2 = s.apply(drv)                                  # no new edits
+    assert CountingSim.writes == 2
+    assert "no edited drive parameters" in n2[-1]
 
 
 def test_parse_drive_address_forms():
@@ -118,9 +122,10 @@ def test_custom_parameters_roundtrip_and_apply(tmp_path):
     names = [c.name for c in s2.custom_parameters()]
     assert "rigidity" in names
     assert next(c for c in s2.custom_parameters() if c.name == "rigidity").value == 15
-    # Applies alongside the built-ins; the sim master now round-trips SDO.
+    # Applies alongside the built-ins; the sim master now round-trips SDO. A
+    # freshly loaded store has nothing dirty, so force-push to exercise the write.
     drv = EtherCatRobotDriver(SimulatedEtherCatMaster(num_drives=2).open())
-    notes = s2.apply(drv)
+    notes = s2.apply(drv, only_dirty=False)
     assert any("rigidity" in n for n in notes)
     assert drv.master.sdo_read(0x2009, 0x01, drive=0) == 15
     s2.remove_custom("rigidity")

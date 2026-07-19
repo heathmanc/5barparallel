@@ -174,6 +174,9 @@ class ParameterStore:
         self._values = merged
         self._custom: List[CustomParameter] = list(custom or [])
         self._seeded = seeded
+        # Names edited since the last successful write. Apply pushes ONLY these
+        # to the drive — never the whole (partly-guessed) preloaded set.
+        self._dirty: set = set()
 
     def _seed_default_tuning(self) -> None:
         """Preload the tuning objects (stiffness, inertia ratio, loop gains) so
@@ -184,6 +187,10 @@ class ParameterStore:
                 continue
             self.add_custom(name, addr, val, dtype, desc)
         self._seeded = True
+        self._dirty.clear()          # preloaded defaults are not "edited by the user"
+
+    def dirty(self) -> List[str]:
+        return sorted(self._dirty)
 
     @classmethod
     def load(cls, path: str | Path) -> "ParameterStore":
@@ -204,6 +211,7 @@ class ParameterStore:
         s = cls(data.get("values", data), path=p, custom=custom, seeded=seeded)
         if not s._seeded:                     # legacy file / empty tuning -> seed once
             s._seed_default_tuning()
+        s._dirty.clear()                      # a freshly loaded store has no pending edits
         return s
 
     def as_dict(self) -> Dict[str, float]:
@@ -215,7 +223,10 @@ class ParameterStore:
     def set(self, name: str, value) -> None:
         if name not in _BY_NAME:
             raise KeyError(f"unknown parameter {name!r}")
-        self._values[name] = _BY_NAME[name].coerce(value)
+        new = _BY_NAME[name].coerce(value)
+        if new != self._values.get(name):
+            self._dirty.add(name)
+        self._values[name] = new
 
     # --- custom (user-added) drive parameters ------------------------------- #
     def custom_parameters(self) -> List[CustomParameter]:
@@ -231,13 +242,17 @@ class ParameterStore:
         if not cp.name:
             raise ValueError("parameter name is required")
         self._custom = [c for c in self._custom if c.name != cp.name] + [cp]
+        self._dirty.add(cp.name)          # a user-added object is meant to be written
         return cp
 
     def set_custom_value(self, name: str, value) -> None:
         for i, c in enumerate(self._custom):
             if c.name == name:
+                new = c.coerce(value)
+                if new != c.value:
+                    self._dirty.add(name)
                 self._custom[i] = CustomParameter(c.name, c.index, c.sub,
-                                                  c.coerce(value), c.dtype, c.desc)
+                                                  new, c.dtype, c.desc)
                 return
         raise KeyError(f"unknown custom parameter {name!r}")
 
@@ -282,12 +297,13 @@ class ParameterStore:
                   for c in self._custom]
         return items
 
-    def apply(self, driver) -> List[str]:
+    def apply(self, driver, only_dirty: bool = True) -> List[str]:
         """Apply to a live EtherCatRobotDriver: motion limits rebuild in place;
-        each drive-scope SDO (curated + custom/tuning) is read from every drive
-        and written ONLY where it differs — no needless mailbox traffic. Writes
-        are size-adaptive (a wrong assumed width retries the others). Returns
-        per-item messages plus a written/unchanged summary."""
+        each EDITED drive-scope SDO is written to every drive (never the whole
+        preloaded set — editing stiffness writes only stiffness). Writes are
+        size-adaptive and verified; a verified write clears its dirty flag.
+        Pass ``only_dirty=False`` to force-push every drive-scope object.
+        Returns per-item messages plus a written/unchanged summary."""
         notes: List[str] = []
         driver.limits = self.trajectory_limits()
         driver.position_tol_counts = int(self.get("position_tol_counts"))
@@ -298,9 +314,15 @@ class ParameterStore:
         if not callable(sdo_write) or not drives:
             notes.append("drive params: master has no SDO channel")
             return notes
+        items = [it for it in self._drive_items()
+                 if not only_dirty or it[0] in self._dirty]
+        if not items:
+            notes.append("no edited drive parameters to write")
+            return notes
         written = unchanged = ignored = failed = 0
-        for name, idx, sub, val, sz in self._drive_items():
+        for name, idx, sub, val, sz in items:
             ok = []
+            landed = True
             for d in drives:
                 current = None
                 if callable(sdo_read):
@@ -315,6 +337,7 @@ class ParameterStore:
                     _sdo_write_adaptive(sdo_write, idx, sub, val, sz, d)
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
+                    landed = False
                     notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: WRITE ABORTED - {exc}")
                     continue
                 # Verify: the write returned OK, but did the value actually change?
@@ -328,6 +351,7 @@ class ParameterStore:
                         after = None
                 if after is not None and after != val:
                     ignored += 1
+                    landed = False
                     notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: wrote {val} but "
                                  f"drive kept {after} (read-only or state-gated?)")
                 else:
@@ -335,6 +359,8 @@ class ParameterStore:
                     written += 1
             if ok:
                 notes.append(f"{name} -> 0x{idx:04X}:{sub} = {val} (drives {', '.join(ok)})")
+            if landed:
+                self._dirty.discard(name)     # verified everywhere -> no longer pending
         summary = f"{written} written, {unchanged} unchanged"
         if ignored:
             summary += f", {ignored} ignored by drive"
