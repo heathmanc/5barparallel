@@ -866,6 +866,8 @@ def test_drives_tab_simulate_demo_gates_and_runs(qapp, tmp_path):
     assert end != start                          # the arm moved through the holes
     assert "finished" in tab.status_label.text().lower()
     assert tab.sim_demo_btn.text().startswith("Simulate")   # reset for the next run
+    # rolling throughput readout updated as covers were placed (all 6 here)
+    assert "placed 6" in tab.demo_rate_label.text()
     tab._on_disconnect()
     tab._stop_poller()
 

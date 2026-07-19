@@ -14,6 +14,7 @@ Four areas:
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -127,8 +128,9 @@ class _DemoWorker(QThread):
     the vacuum/cylinder along the way. Loops until stopped when ``loop`` is set;
     re-randomises the cover row each pass."""
 
-    step = Signal(str)   # per-hole progress line
-    done = Signal(str)   # final message (prefixed 'FAIL:' on failure)
+    step = Signal(str)          # per-hole progress line
+    stats = Signal(float, int)  # (rolling cycles/min, total placed)
+    done = Signal(str)          # final message (prefixed 'FAIL:' on failure)
 
     def __init__(self, controller, make_targets, loop: bool,
                  pick_sequence=None, move_speed_mm_s=None, parent=None) -> None:
@@ -144,14 +146,19 @@ class _DemoWorker(QThread):
         self._stop = True
 
     def run(self) -> None:  # pragma: no cover - GUI/hardware thread
-        from ..app.cycle_manager import run_demo_cycle
+        from ..app.cycle_manager import CycleRateTracker, run_demo_cycle
 
+        rate = CycleRateTracker()
         try:
             passes = 0
             while not self._stop:
                 pick, drops = self._make_targets()
 
                 def _on_step(s):
+                    if s.ok:                       # one placed cover = one cycle
+                        now = time.perf_counter()
+                        rate.record(now)
+                        self.stats.emit(rate.per_minute(now), rate.total)
                     tag = "placed" if s.ok else "skipped"
                     self.step.emit(
                         f"pass {passes + 1}: hole {s.hole_index + 1}/{len(drops)} "
@@ -365,6 +372,12 @@ class EtherCatTab(QWidget):
                                       "cover each pass) until stopped.")
         g.addWidget(self.sim_demo_btn, 5, 0, 1, 3)
         g.addWidget(self.demo_loop_chk, 5, 3, 1, 2, Qt.AlignmentFlag.AlignLeft)
+        # Rolling throughput readout (cycles/min over a trailing minute).
+        self.demo_rate_label = QLabel("cycles/min: —")
+        self.demo_rate_label.setToolTip("Rolling pick&place throughput — completed "
+                                        "cover placements per minute over the last "
+                                        "60 s.")
+        g.addWidget(self.demo_rate_label, 6, 0, 1, 5)
         return box
 
     def _ec_driver(self):
@@ -461,13 +474,18 @@ class EtherCatTab(QWidget):
         speed = float(self.jog_speed_mm.value())
         self._set_motion_enabled(False)          # no jog/enable while it runs
         self.sim_demo_btn.setText("Stop demo")
+        self.demo_rate_label.setText("cycles/min: …")
         self._status(f"Running sample pick & place at {speed:.0f} mm/s…", theme.TEXT)
         self._demo_worker = _DemoWorker(ctrl, make_targets, loop,
                                         pick_sequence=self._demo_sequence,
                                         move_speed_mm_s=speed)
         self._demo_worker.step.connect(lambda m: self._status(m, theme.TEXT))
+        self._demo_worker.stats.connect(self._on_demo_stats)
         self._demo_worker.done.connect(self._on_demo_done)
         self._demo_worker.start()
+
+    def _on_demo_stats(self, cpm: float, total: int) -> None:
+        self.demo_rate_label.setText(f"cycles/min: {cpm:.1f}   (placed {total})")
 
     def _on_demo_done(self, msg: str) -> None:
         self._set_motion_enabled(True)

@@ -288,3 +288,53 @@ def test_run_demo_cycle_caps_travel_speed():
     run_demo_cycle(ctrl, nest, drops, pick_sequence=PickSequence(0, 0, 0),
                    move_speed_mm_s=25.0)
     assert all(s == 25.0 for s in drv.speeds)
+
+
+# --------------------------------------------------------------------------- #
+# battery layout (35 mm pitch) + rolling throughput
+# --------------------------------------------------------------------------- #
+def _dist(a, b):
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def test_demo_row_is_six_holes_35mm_apart_in_a_line():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    for seed in range(20):
+        _nest, drops = demo_pick_and_place_targets(
+            val, (0.0, 250.0), rng=random.Random(seed))
+        assert len(drops) == 6
+        gaps = [_dist(drops[i], drops[i + 1]) for i in range(5)]
+        assert all(abs(g - 35.0) < 0.3 for g in gaps)     # fixed 35 mm pitch
+        # collinear: every gap along the same straight line (equal end-to-end sum)
+        assert abs(_dist(drops[0], drops[-1]) - sum(gaps)) < 0.3
+
+
+def test_demo_pick_nest_is_fixed_across_runs():
+    kin = FiveBarKinematics()
+    val = WorkspaceValidator(kin)
+    nests = {demo_pick_and_place_targets(val, (0.0, 250.0), rng=random.Random(s))[0]
+             for s in range(10)}
+    assert len(nests) == 1                                # same pick every time
+
+
+def test_cycle_rate_tracker_per_minute():
+    from bung_cover_robot.app.cycle_manager import CycleRateTracker
+
+    tr = CycleRateTracker(window_s=60.0)
+    assert tr.per_minute(0.0) == 0.0                      # nothing yet
+    for t in (0.0, 2.0, 4.0, 6.0):
+        tr.record(t)
+    assert tr.total == 4
+    assert tr.per_minute(6.0) == pytest.approx(40.0)      # 4 cycles over 6 s -> 40/min
+
+
+def test_cycle_rate_tracker_uses_trailing_window():
+    from bung_cover_robot.app.cycle_manager import CycleRateTracker
+
+    tr = CycleRateTracker(window_s=3.0)
+    for t in (0.0, 1.0, 2.0, 3.0, 4.0):                   # 5 cycles, 1 s apart
+        tr.record(t)
+    # at t=4 the window is [1,2,3,4] (t=0 is older than 3 s): 4 cycles / 3 s
+    assert tr.total == 5
+    assert tr.per_minute(4.0) == pytest.approx(80.0)

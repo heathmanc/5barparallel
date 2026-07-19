@@ -28,8 +28,9 @@ import math
 import random
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Deque, List, Optional, Tuple
 
 from ..robot.driver import RobotDriver, RobotDriverError
 from ..robot.planner import PickPlaceJob, PlanningError, make_job, sort_holes_along_conveyor
@@ -288,17 +289,18 @@ def demo_pick_and_place_targets(
     validator,
     home_xy: Point,
     holes: int = 6,
-    spacing_mm: float = 26.0,
+    spacing_mm: float = 35.0,
     rng: Optional[random.Random] = None,
 ) -> Tuple[Point, List[Point]]:
-    """A fixed supply nest + a variably-placed row of ``holes`` bung-cover holes,
-    every point workspace-validated. Stands in for vision while calibration is
-    pending: the robot picks from the same nest each time and drops into the six
-    holes of a cover that sits somewhere (and at some tilt) different each call.
+    """A fixed supply nest + a variably-placed straight-line battery of ``holes``
+    bung-cover holes, ``spacing_mm`` apart, every point workspace-validated.
 
-    The row's centre and angle are randomised (via ``rng``); if a random pose
-    can't fit all holes inside the reachable envelope we fall back to a centred,
-    axis-aligned row (shrinking the spacing until it fits), so the demo always
+    Stands in for vision while calibration is pending: the robot always picks
+    from the *same* nest and drops into a row of covers laid out exactly like a
+    real battery — six holes, 35 mm pitch, in a line — that sits at a different
+    position and tilt each call. The pitch is held fixed (that's the battery);
+    only the row's placement is randomised. If a random pose can't fit the whole
+    row in reach we fall back to a centred, axis-aligned row so the demo always
     returns something drivable."""
     rng = rng or random.Random()
     hx, hy = float(home_xy[0]), float(home_xy[1])
@@ -309,10 +311,10 @@ def demo_pick_and_place_targets(
         (hx - 90.0, hy - 20.0), (hx, hy - 60.0), (hx, hy),
     ]) or (hx, hy)
 
-    def row_at(cx: float, cy: float, theta: float, s: float) -> List[Point]:
+    def row_at(cx: float, cy: float, theta: float) -> List[Point]:
         pts = []
         for i in range(holes):
-            off = (i - (holes - 1) / 2.0) * s
+            off = (i - (holes - 1) / 2.0) * spacing_mm
             pts.append((round(cx + off * math.cos(theta), 1),
                         round(cy + off * math.sin(theta), 1)))
         return pts
@@ -321,22 +323,20 @@ def demo_pick_and_place_targets(
         return all(validator.validate(x, y).ok for x, y in pts)
 
     # Random placements first — a spread of centres and tilts to exercise motion.
-    for _ in range(60):
-        cx = hx + rng.uniform(-40.0, 40.0)
-        cy = hy + rng.uniform(-30.0, 30.0)
-        theta = rng.uniform(-0.35, 0.35)          # +/- ~20 deg tilt
-        pts = row_at(cx, cy, theta, spacing_mm)
+    for _ in range(80):
+        cx = hx + rng.uniform(-35.0, 35.0)
+        cy = hy + rng.uniform(-25.0, 25.0)
+        theta = rng.uniform(-0.30, 0.30)          # +/- ~17 deg tilt
+        pts = row_at(cx, cy, theta)
         if all_valid(pts):
             return nest, pts
 
-    # Deterministic fallback: a centred horizontal row, shrinking to fit.
-    for s in (spacing_mm, spacing_mm * 0.75, spacing_mm * 0.5):
-        pts = row_at(hx, hy, 0.0, s)
-        if all_valid(pts):
-            return nest, pts
+    # Fallback: a centred, axis-aligned row at the same (fixed) pitch.
+    centred = row_at(hx, hy, 0.0)
+    if all_valid(centred):
+        return nest, centred
     # Last resort: whatever holes of the centred row validate.
-    return nest, [p for p in row_at(hx, hy, 0.0, spacing_mm)
-                  if validator.validate(*p).ok]
+    return nest, [p for p in centred if validator.validate(*p).ok]
 
 
 def _first_valid(validator, candidates: List[Point]) -> Optional[Point]:
@@ -403,6 +403,44 @@ def run_demo_cycle(
         result.reason = f"placed {placed}/{len(drops)} covers"
     result.ok = placed > 0
     return result
+
+
+class CycleRateTracker:
+    """Rolling pick&place throughput, in completed cycles per minute.
+
+    One placed cover = one cycle. Feed monotonically-increasing timestamps (in
+    seconds, e.g. ``time.perf_counter()``); ``per_minute`` reports the rate over
+    a trailing window (default 60 s), or over the elapsed time until the window
+    first fills, so the reading is meaningful from the second cycle on."""
+
+    def __init__(self, window_s: float = 60.0) -> None:
+        self.window_s = float(window_s)
+        self._stamps: Deque[float] = deque()
+        self._start: Optional[float] = None
+        self.total = 0
+
+    def record(self, t: float) -> None:
+        if self._start is None:
+            self._start = t
+        self._stamps.append(t)
+        self.total += 1
+        self._prune(t)
+
+    def _prune(self, t: float) -> None:
+        while self._stamps and t - self._stamps[0] > self.window_s:
+            self._stamps.popleft()
+
+    def per_minute(self, t: Optional[float] = None) -> float:
+        """Cycles/min as of time ``t`` (defaults to the last recorded time)."""
+        if self._start is None:
+            return 0.0
+        if t is None:
+            t = self._stamps[-1] if self._stamps else self._start
+        self._prune(t)
+        elapsed = min(t - self._start, self.window_s)
+        if elapsed <= 0.0:
+            return 0.0
+        return len(self._stamps) * 60.0 / elapsed
 
 
 # --------------------------------------------------------------------------- #
