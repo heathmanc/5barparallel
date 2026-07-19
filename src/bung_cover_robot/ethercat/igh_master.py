@@ -29,7 +29,7 @@ from .master import CspTargets, DriveProcessData, EtherCatMaster, MasterError
 
 _SHM_PATH = "/dev/shm/bcr_ethercat"
 _SHM_MAGIC = 0x42435231
-_SHM_ABI = 2
+_SHM_ABI = 3
 _MAX_DRIVES = 2
 _CSP_MAX = 65536
 
@@ -44,7 +44,8 @@ _SDO_BASE = _CSP_BASE + _MAX_DRIVES * _CSP_MAX * 4
 _SDO_REQ, _SDO_DONE, _SDO_RESULT = _SDO_BASE, _SDO_BASE + 4, _SDO_BASE + 8
 _SDO_INDEX, _SDO_SUB, _SDO_SIZE, _SDO_VALUE = (
     _SDO_BASE + 12, _SDO_BASE + 16, _SDO_BASE + 20, _SDO_BASE + 24)
-_SHM_SIZE = _SDO_BASE + 28
+_SDO_DRIVE, _SDO_OP = _SDO_BASE + 28, _SDO_BASE + 32
+_SHM_SIZE = _SDO_BASE + 36
 
 # drive_shm_t sub-offsets
 _O_CTRL, _O_MODE, _O_TARGET, _O_DOUT = 0, 2, 4, 8
@@ -204,30 +205,48 @@ class IgHMaster(EtherCatMaster):
             self._drives[d].target_position = int(last[d])
         self.exchange()
 
-    def sdo_write(self, index: int, sub: int, value: int, size: int = 4,
-                  timeout_s: float = 2.0) -> None:
-        """Download an SDO to drive 0 via the daemon's SDO worker (blocking mailbox
-        op, off the RT loop). Raises MasterError on abort/timeout. This is what
-        makes the Drives-tab 'Apply' write parameters/gains to the live drive."""
+    def _sdo_request(self, op: int, index: int, sub: int, drive: int,
+                     value: int, size: int, timeout_s: float) -> int:
+        """Run one SDO mailbox op via the daemon's worker (off the RT loop) and
+        return the result value (meaningful for reads). Raises on abort/timeout."""
         if self._mm is None:
             raise MasterError("master is not open")
         self._u32_set(_SDO_INDEX, index & 0xFFFF)
         self._u32_set(_SDO_SUB, sub & 0xFF)
         self._u32_set(_SDO_SIZE, size)
+        self._u32_set(_SDO_DRIVE, drive & 0xFFFF)
+        self._u32_set(_SDO_OP, op & 0x1)
         struct.pack_into("<i", self._mm, _SDO_VALUE, int(value))
         self._u32_set(_SDO_DONE, 0)
         self._u32_set(_SDO_REQ, 1)
+        verb = "read" if op == 1 else "write"
         deadline = time.perf_counter() + timeout_s
         while self._u32(_SDO_DONE) != 1:
             if time.perf_counter() > deadline:
                 self._u32_set(_SDO_REQ, 0)
-                raise MasterError(f"SDO 0x{index:04X}:{sub} timed out")
+                raise MasterError(f"SDO {verb} 0x{index:04X}:{sub} (drive {drive}) timed out")
             time.sleep(0.002)
         result = struct.unpack_from("<i", self._mm, _SDO_RESULT)[0]
+        readback = struct.unpack_from("<i", self._mm, _SDO_VALUE)[0]
         self._u32_set(_SDO_REQ, 0)
         if result != 0:
             raise MasterError(
-                f"SDO 0x{index:04X}:{sub} failed (code 0x{result & 0xFFFFFFFF:08X})")
+                f"SDO {verb} 0x{index:04X}:{sub} (drive {drive}) failed "
+                f"(code 0x{result & 0xFFFFFFFF:08X})")
+        return readback
+
+    def sdo_write(self, index: int, sub: int, value: int, size: int = 4,
+                  drive: int = 0, timeout_s: float = 2.0) -> None:
+        """Download an SDO to ``drive`` via the daemon's SDO worker. Raises
+        MasterError on abort/timeout. This is what makes the Drives-tab 'Apply'
+        write parameters/gains to the live drive."""
+        self._sdo_request(0, index, sub, drive, int(value), size, timeout_s)
+
+    def sdo_read(self, index: int, sub: int, size: int = 4,
+                 drive: int = 0, timeout_s: float = 2.0) -> int:
+        """Upload (read) an SDO from ``drive`` and return its value. Used by the
+        Drives-tab Refresh to show each drive's actual parameter values."""
+        return self._sdo_request(1, index, sub, drive, 0, size, timeout_s)
 
     # --- shared memory helpers --------------------------------------------- #
     def _launch_daemon(self) -> None:

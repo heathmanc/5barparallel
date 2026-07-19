@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -416,8 +417,11 @@ class EtherCatTab(QWidget):
         self.apply_btn = QPushButton("Apply to drives")
         self.apply_btn.setProperty("accent", "primary")
         self.apply_btn.clicked.connect(self._on_apply_params)
+        self.refresh_btn = QPushButton("Refresh from drives")
+        self.refresh_btn.clicked.connect(self._on_refresh_drives)
         row.addWidget(self.save_btn)
         row.addWidget(self.apply_btn)
+        row.addWidget(self.refresh_btn)
         row.addStretch(1)
         v.addLayout(row)
         return box
@@ -438,8 +442,11 @@ class EtherCatTab(QWidget):
             self.table.setItem(r, 1, QTableWidgetItem(self._fmt(self.store.get(p.name))))
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setMaximumHeight(118)     # scroll internally instead of growing the page
-        v.addWidget(self.table)
+        self.table.verticalHeader().setVisible(False)
+        # Fill the container (which the parameters box sizes via stretch) and
+        # scroll internally when the rows exceed it — no empty space, no page grow.
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        v.addWidget(self.table, 1)
         return box
 
     def _build_custom_params(self) -> QGroupBox:
@@ -449,19 +456,20 @@ class EtherCatTab(QWidget):
         box = QGroupBox("Tuning parameters (drive SDO)")
         v = QVBoxLayout(box)
         v.setContentsMargins(6, 6, 6, 6)
-        hint = QLabel(
-            "Preloaded A6-EC tuning objects — edit Value, then Apply. Set inertia "
-            "ratio first, then raise stiffness. VERIFY each Cxx.NN address against "
-            "your manual. Add more with Cxx.NN or 0xINDEX:SUB.")
+        v.setSpacing(4)
+        hint = QLabel("Edit Value → Apply writes both drives; Refresh reads each "
+                      "back. Verify Cxx.NN vs the manual. Hover a name for detail.")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        hint.setStyleSheet(f"color:{theme.TEXT_DIM}; font-size:11px;")
         v.addWidget(hint)
         self.custom_table = QTableWidget(0, 5)
         self.custom_table.setHorizontalHeaderLabels(
-            ["Name", "Address", "Value", "Type", "Description"])
+            ["Parameter", "Address", "Value", "Drive 1", "Drive 2"])
         self.custom_table.horizontalHeader().setStretchLastSection(True)
-        self.custom_table.setMaximumHeight(118)   # scroll internally
-        v.addWidget(self.custom_table)
+        self.custom_table.verticalHeader().setVisible(False)
+        self.custom_table.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Expanding)
+        v.addWidget(self.custom_table, 1)
         add = QHBoxLayout()
         self.cp_name = QLineEdit()
         self.cp_name.setPlaceholderText("name (e.g. rigidity)")
@@ -485,17 +493,44 @@ class EtherCatTab(QWidget):
 
     def _refresh_custom_table(self) -> None:
         cps = self.store.custom_parameters()
+        rb = getattr(self, "_drive_readback", {})
         self.custom_table.setRowCount(len(cps))
         for r, c in enumerate(cps):
-            for col, text, editable in ((0, c.name, False), (1, c.address, False),
-                                        (2, self._fmt(c.value), True),
-                                        (3, c.dtype, False), (4, c.desc, False)):
-                item = QTableWidgetItem(text)
-                if not editable:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.custom_table.setItem(r, col, item)
+            name_item = QTableWidgetItem(c.name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if c.desc:
+                name_item.setToolTip(c.desc)
+            self.custom_table.setItem(r, 0, name_item)
+            addr_item = QTableWidgetItem(c.address)
+            addr_item.setFlags(addr_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.custom_table.setItem(r, 1, addr_item)
+            self.custom_table.setItem(r, 2, QTableWidgetItem(self._fmt(c.value)))  # editable
+            drive_vals = rb.get(c.name, [])
+            for di in range(2):
+                v = drive_vals[di] if di < len(drive_vals) else None
+                it = QTableWidgetItem("—" if v is None else self._fmt(v))
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                # Flag a drive whose actual doesn't match the setpoint (helps
+                # confirm whether Apply actually landed).
+                if v is not None and int(v) != int(c.value):
+                    it.setForeground(QColor(theme.WARN))
+                self.custom_table.setItem(r, 3 + di, it)
         self.custom_table.resizeColumnsToContents()
         self.custom_table.horizontalHeader().setStretchLastSection(True)
+
+    def _on_refresh_drives(self) -> None:
+        drv = self.controller.driver
+        if not isinstance(drv, EtherCatRobotDriver):
+            self._status("Connect the drives first to read their values.", theme.WARN)
+            return
+        try:
+            self._drive_readback = self.store.read_custom_from_drives(drv)
+        except Exception as exc:  # noqa: BLE001
+            self._status(f"Read failed: {exc}", theme.DANGER)
+            return
+        self._refresh_custom_table()
+        self._status("Read tuning values back from the drives — mismatches shown amber.",
+                     theme.TEXT)
 
     def _on_add_custom(self) -> None:
         name = self.cp_name.text().strip()
@@ -656,7 +691,14 @@ class EtherCatTab(QWidget):
             return
         notes = self.store.apply(drv)
         self.store.save()
-        self._status("Applied: " + "; ".join(notes[:3]) + (" …" if len(notes) > 3 else ""),
+        # Read straight back so the Drive columns confirm what actually landed.
+        try:
+            self._drive_readback = self.store.read_custom_from_drives(drv)
+            self._refresh_custom_table()
+        except Exception:  # noqa: BLE001 - readback is best-effort
+            pass
+        self._status("Applied to drives + read back: "
+                     + "; ".join(notes[:2]) + (" …" if len(notes) > 2 else ""),
                      theme.TEXT)
 
     # --- live status ----------------------------------------------------------

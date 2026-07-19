@@ -925,23 +925,46 @@ def test_drives_tab_jog_targets_selected_axis(qapp, tmp_path):
 
 
 def test_drives_tab_is_compact_no_page_scroll(qapp, tmp_path):
-    """It's an HMI: the whole page must NOT scroll. The tall tables are height-
-    capped (they scroll internally) and the tuning table is preloaded."""
+    """It's an HMI: the whole page must NOT scroll. The tall tables EXPAND to
+    fill their container and scroll internally; the tuning table is preloaded
+    with the per-drive columns."""
+    from PySide6.QtWidgets import QSizePolicy
     from bung_cover_robot.gui.ethercat_tab import EtherCatTab
 
     ctrl = build_dry_run_controller()
     tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
-    # the parameter tables are constrained so the page doesn't grow to fit them
-    assert tab.table.maximumHeight() < 400
-    assert tab.custom_table.maximumHeight() < 400
-    # tuning parameters are preloaded into the bottom section
+    # tables grow with their container instead of leaving empty space
+    assert tab.table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    assert tab.custom_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    # tuning parameters preloaded; per-drive read-back columns present
     assert tab.custom_table.rowCount() >= 5
-    assert tab.custom_table.columnCount() == 5      # incl. Description
-    # whole tab fits an HMI without page scrolling: its MINIMUM height (tables
-    # capped, scrolling internally) sits inside the default window, and it isn't
-    # wider than that window either
+    assert tab.custom_table.columnCount() == 5      # Parameter/Address/Value/Drive 1/Drive 2
+    assert [tab.custom_table.horizontalHeaderItem(c).text() for c in (3, 4)] == ["Drive 1", "Drive 2"]
+    # whole tab fits inside the default window without page scrolling
     assert tab.minimumSizeHint().height() <= 900
     assert tab.sizeHint().width() <= 1200
+
+
+def test_drives_tab_tuning_apply_and_refresh_per_drive(qapp, tmp_path):
+    """Edit a preloaded tuning value, Apply (writes both drives), and the Drive 1
+    / Drive 2 columns read the value back so you can confirm it landed."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab.drives_spin.setValue(2)
+    tab._on_connect_sim()
+    # find the machine_stiffness row and set its Value cell
+    names = [tab.custom_table.item(r, 0).text() for r in range(tab.custom_table.rowCount())]
+    r = names.index("machine_stiffness")
+    tab.custom_table.item(r, 2).setText("19")
+    tab._on_apply_params()                     # writes both drives + reads back
+    qapp.processEvents()
+    # Drive 1 and Drive 2 columns now show the applied value
+    assert tab.custom_table.item(r, 3).text() == "19"
+    assert tab.custom_table.item(r, 4).text() == "19"
+    tab._on_disconnect()
+    tab._stop_poller()
 
 
 def test_drives_tab_coordinated_move(qapp, tmp_path):

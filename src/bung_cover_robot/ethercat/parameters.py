@@ -68,6 +68,10 @@ PARAMETERS: List[DriveParameter] = [
 _BY_NAME: Dict[str, DriveParameter] = {p.name: p for p in PARAMETERS}
 
 
+def _dtype_size(dtype: str) -> int:
+    return 1 if dtype == "int8" else 2 if dtype == "int16" else 4
+
+
 def _hexint(t: str) -> int:
     t = t.strip()
     return int(t, 0) if t.lower().startswith("0x") else int(t, 16)
@@ -243,34 +247,57 @@ class ParameterStore:
             max_joint_step_deg=None if cap <= 0 else cap,
         )
 
+    def _drive_items(self):
+        """(name, index, sub, value, size) for every drive-scope object — the
+        curated drive params and the custom/tuning ones."""
+        items = [(p.name, p.sdo[0], p.sdo[1], int(self.get(p.name)), 4)
+                 for p in PARAMETERS if p.scope == "drive"]
+        items += [(c.name, c.index, c.sub, int(c.value), _dtype_size(c.dtype))
+                  for c in self._custom]
+        return items
+
     def apply(self, driver) -> List[str]:
         """Apply to a live EtherCatRobotDriver: motion limits rebuild in place;
-        drive-scope SDOs are written when the master supports it (the simulator
-        doesn't - those report as 'stored (sim)'). Returns per-item messages."""
+        every drive-scope SDO (curated + custom/tuning) is written to ALL drives
+        on the bus. Returns per-item messages."""
         notes: List[str] = []
         driver.limits = self.trajectory_limits()
         driver.position_tol_counts = int(self.get("position_tol_counts"))
-        notes.append("motion limits applied to driver")
+        notes.append("motion limits applied")
         sdo_write = getattr(driver.master, "sdo_write", None)
-        for p in PARAMETERS:
-            if p.scope != "drive":
-                continue
-            if callable(sdo_write):  # pragma: no cover - real master (Stage 4)
+        drives = list(range(len(getattr(driver.master, "drives", []) or [])))
+        if not callable(sdo_write) or not drives:
+            notes.append("drive params: master has no SDO channel")
+            return notes
+        for name, idx, sub, val, sz in self._drive_items():
+            ok = []
+            for d in drives:
                 try:
-                    sdo_write(p.sdo[0], p.sdo[1], int(self.get(p.name)))
-                    notes.append(f"{p.name}: written 0x{p.sdo[0]:04X}:{p.sdo[1]}")
+                    sdo_write(idx, sub, val, size=sz, drive=d)
+                    ok.append(str(d + 1))
                 except Exception as exc:  # noqa: BLE001
-                    notes.append(f"{p.name}: WRITE FAILED - {exc}")
-            else:
-                notes.append(f"{p.name}: stored (sim master has no SDO channel)")
-        for c in self._custom:
-            if callable(sdo_write):  # pragma: no cover - real master
-                try:
-                    sdo_write(c.index, c.sub, int(c.value), size=(1 if c.dtype == "int8"
-                              else 2 if c.dtype == "int16" else 4))
-                    notes.append(f"{c.name}: written {c.address}")
-                except Exception as exc:  # noqa: BLE001
-                    notes.append(f"{c.name}: WRITE FAILED - {exc}")
-            else:
-                notes.append(f"{c.name}: stored (sim master has no SDO channel)")
+                    notes.append(f"{name} drive {d + 1}: WRITE FAILED - {exc}")
+            if ok:
+                notes.append(f"{name} -> 0x{idx:04X}:{sub} = {val} (drives {', '.join(ok)})")
         return notes
+
+    def read_custom_from_drives(self, driver) -> Dict[str, List[Optional[int]]]:
+        """Read each custom/tuning object back from every drive over SDO. Returns
+        {name: [drive0_value, drive1_value, ...]} with None where a read failed or
+        the master can't read (e.g. the simulator before anything was written)."""
+        sdo_read = getattr(driver.master, "sdo_read", None)
+        n = len(getattr(driver.master, "drives", []) or [])
+        out: Dict[str, List[Optional[int]]] = {}
+        for c in self._custom:
+            vals: List[Optional[int]] = []
+            for d in range(n):
+                if callable(sdo_read):
+                    try:
+                        vals.append(int(sdo_read(c.index, c.sub,
+                                                 size=_dtype_size(c.dtype), drive=d)))
+                    except Exception:  # noqa: BLE001
+                        vals.append(None)
+                else:
+                    vals.append(None)
+            out[c.name] = vals
+        return out

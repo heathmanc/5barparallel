@@ -33,7 +33,7 @@
 #define CSP_MAX      65536
 #define SHM_NAME     "/bcr_ethercat"
 #define SHM_MAGIC    0x42435231u   /* 'BCR1' */
-#define SHM_ABI      2u            /* bumped: added the SDO channel */
+#define SHM_ABI      3u            /* bumped: SDO channel gained per-drive + read */
 
 #define NSEC_PER_SEC 1000000000L
 #define TS2NS(T) ((uint64_t)(T).tv_sec * NSEC_PER_SEC + (T).tv_nsec)
@@ -65,11 +65,14 @@ typedef struct {
     drive_shm_t drive[MAX_DRIVES];
     int32_t  csp[MAX_DRIVES][CSP_MAX];
     /* SDO channel (appended so existing offsets don't move): Python fills a
-     * request and sets sdo_req; the SDO thread downloads it and sets sdo_done. */
+     * request and sets sdo_req; the SDO thread services it and sets sdo_done.
+     * sdo_op 0 = download (write), 1 = upload (read into sdo_value). sdo_drive
+     * selects the slave position. */
     uint32_t sdo_req, sdo_done;
     int32_t  sdo_result;                 /* 0 = ok, else abort/return code */
     uint32_t sdo_index, sdo_sub, sdo_size;
-    int32_t  sdo_value;
+    int32_t  sdo_value;                  /* write: value in; read: value out */
+    uint32_t sdo_drive, sdo_op;
 } shm_layout_t;
 #pragma pack(pop)
 
@@ -99,8 +102,9 @@ static void on_sig(int s){ (void)s; running = 0; }
 static ec_master_t *master;      /* file-scope so the SDO thread can use them */
 static shm_layout_t *shm;
 
-/* SDO download worker: runs OFF the RT loop (SDO is a blocking mailbox op).
- * Services one request at a time; Python sets sdo_req and waits for sdo_done. */
+/* SDO worker: runs OFF the RT loop (SDO is a blocking mailbox op). Services one
+ * request at a time; Python sets sdo_req and waits for sdo_done. Handles both
+ * download (write, sdo_op=0) and upload (read, sdo_op=1), on the selected drive. */
 static void *sdo_thread(void *arg)
 {
     (void)arg;
@@ -108,12 +112,29 @@ static void *sdo_thread(void *arg)
         if (shm->sdo_req && !shm->sdo_done) {
             size_t sz = shm->sdo_size ? shm->sdo_size : 4;
             if (sz > 4) sz = 4;
-            uint8_t buf[4] = {0};
-            int32_t v = shm->sdo_value;
-            memcpy(buf, &v, sz);                       /* little-endian */
+            uint16_t drive = (uint16_t)shm->sdo_drive;
+            uint16_t idx = (uint16_t)shm->sdo_index;
+            uint8_t sub = (uint8_t)shm->sdo_sub;
             uint32_t abort = 0;
-            int ret = ecrt_master_sdo_download(master, 0, (uint16_t)shm->sdo_index,
-                                               (uint8_t)shm->sdo_sub, buf, sz, &abort);
+            int ret;
+            if (shm->sdo_op == 1) {                    /* upload (read) */
+                uint8_t buf[4] = {0};
+                size_t result_size = 0;
+                ret = ecrt_master_sdo_upload(master, drive, idx, sub,
+                                             buf, sizeof(buf), &result_size, &abort);
+                if (!ret) {
+                    int32_t v = 0;
+                    memcpy(&v, buf, result_size > 4 ? 4 : result_size);
+                    if (result_size == 1) v = (int8_t)v;       /* sign-extend */
+                    else if (result_size == 2) v = (int16_t)v;
+                    shm->sdo_value = v;
+                }
+            } else {                                   /* download (write) */
+                uint8_t buf[4] = {0};
+                int32_t v = shm->sdo_value;
+                memcpy(buf, &v, sz);                   /* little-endian */
+                ret = ecrt_master_sdo_download(master, drive, idx, sub, buf, sz, &abort);
+            }
             shm->sdo_result = ret ? (int)(abort ? abort : (uint32_t)(-ret)) : 0;
             shm->sdo_done = 1;
         }
