@@ -59,7 +59,9 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("5-Bar Bung-Cover Robot — HMI")
-        self.resize(1160, 780)
+        # Open tall enough that the compact (non-scrolling) Drives page shows in
+        # full on a 1080p HMI panel; the user can still resize.
+        self.resize(1200, 940)
 
         cfg_dir = Path(config_dir) if config_dir else _CONFIG_DIR
         # Derive the settings save target from the config dir if not given.
