@@ -115,6 +115,23 @@ class _StatusPoller(QThread):
             self.msleep(self._interval_ms)
 
 
+class _JogWorker(QThread):
+    """Runs a blocking jog off the GUI thread so the poller keeps updating."""
+
+    done = Signal(str)   # error message, or "" on success
+
+    def __init__(self, fn, parent=None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:  # pragma: no cover - exercised via the GUI/hardware
+        try:
+            self._fn()
+            self.done.emit("")
+        except Exception as exc:  # noqa: BLE001
+            self.done.emit(str(exc))
+
+
 class EtherCatTab(QWidget):
     connectionChanged = Signal()
 
@@ -127,6 +144,7 @@ class EtherCatTab(QWidget):
         cfg_dir = Path(config_dir) if config_dir else Path("config")
         self.store = ParameterStore.load(cfg_dir / "drive_parameters.yaml")
         self._poller: Optional[_StatusPoller] = None
+        self._jog_worker: Optional[_JogWorker] = None
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -272,17 +290,33 @@ class EtherCatTab(QWidget):
         drv.disable()
         self._status("Disabled — torque off (drive tracks position).", theme.TEXT)
 
+    def _set_motion_enabled(self, on: bool) -> None:
+        for b in (self.enable_btn, self.disable_btn, self.jog_minus, self.jog_plus):
+            b.setEnabled(on)
+
     def _on_jog(self, sign: int) -> None:
         drv = self._ec_driver()
         if drv is None:
             self._status("Connect + enable the drive first.", theme.WARN)
             return
+        if self._jog_worker is not None and self._jog_worker.isRunning():
+            return
         delta = sign * int(self.jog_step.value())
-        try:
-            drv.jog_counts(0, delta, speed_counts_s=float(self.jog_speed.value()))
-            self._status(f"Jogged axis 0 by {delta:+d} counts.", theme.TEXT)
-        except RobotDriverError as exc:
-            self._status(f"Jog failed: {exc}", theme.DANGER)
+        speed = float(self.jog_speed.value())
+        # Run off the GUI thread so the poller keeps updating (see following error).
+        self._set_motion_enabled(False)
+        self._status(f"Jogging axis 0 by {delta:+d} counts…", theme.TEXT)
+        self._jog_worker = _JogWorker(
+            lambda: drv.jog_counts(0, delta, speed_counts_s=speed))
+        self._jog_worker.done.connect(self._on_jog_done)
+        self._jog_worker.start()
+
+    def _on_jog_done(self, err: str) -> None:
+        self._set_motion_enabled(True)
+        if err:
+            self._status(f"Jog failed: {err}", theme.DANGER)
+        else:
+            self._status("Jog complete.", theme.TEXT)
 
     def _build_parameters(self) -> QGroupBox:
         box = QGroupBox("Parameters (motion + drive SDO)")
@@ -411,7 +445,7 @@ class EtherCatTab(QWidget):
     # --- live status ----------------------------------------------------------
     def _start_poller(self) -> None:
         self._stop_poller()
-        self._poller = _StatusPoller(self._master)
+        self._poller = _StatusPoller(self._master, interval_ms=100)
         self._poller.updated.connect(self._on_snapshot)
         self._poller.start()
 
@@ -475,5 +509,8 @@ class EtherCatTab(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._jog_worker is not None:
+            self._jog_worker.wait(3000)
+            self._jog_worker = None
         self._stop_poller()
         super().closeEvent(event)
