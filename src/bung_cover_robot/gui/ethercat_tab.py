@@ -21,6 +21,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -257,7 +258,10 @@ class EtherCatTab(QWidget):
         return box, widgets
 
     def _build_jog(self) -> QGroupBox:
-        box = QGroupBox("Bench jog — single axis  (motion)")
+        """Cartesian TCP jog: X/Y +/- pad, increment in mm, speed in mm/s. Moves
+        the tool in a validated straight line via the 5-bar kinematics; needs the
+        robot referenced (home, or 'Reference here' on the bench)."""
+        box = QGroupBox("Jog — Cartesian TCP  (motion)")
         g = QGridLayout(box)
         g.setContentsMargins(8, 6, 8, 6)
         g.setSpacing(4)
@@ -265,59 +269,61 @@ class EtherCatTab(QWidget):
         self.enable_btn.clicked.connect(self._on_enable)
         self.disable_btn = QPushButton("Disable")
         self.disable_btn.clicked.connect(self._on_disable)
+        self.ref_btn = QPushButton("Reference here")
+        self.ref_btn.setToolTip("Bench: treat the current pose as home so the "
+                                "Cartesian jog works without homing fixtures.")
+        self.ref_btn.clicked.connect(self._on_reference_here)
         g.addWidget(self.enable_btn, 0, 0)
         g.addWidget(self.disable_btn, 0, 1)
-        g.addWidget(QLabel("axis"), 0, 2)
-        self.jog_axis = QSpinBox()
-        self.jog_axis.setRange(0, 1)     # bench max is 2 drives; index validated on jog
-        self.jog_axis.setMaximumWidth(48)
-        self.jog_axis.setToolTip(
-            "Which drive on the bus to jog (0 = first slave, 1 = second). "
-            "Jog each after wiring to confirm it maps to the axis you expect.")
-        g.addWidget(self.jog_axis, 0, 3)
-        # step + speed on the second row so the box stays narrow enough to sit
-        # beside the coordinated-move box without overflowing the page width.
-        g.addWidget(QLabel("step"), 1, 0)
-        self.jog_step = QSpinBox()
-        self.jog_step.setRange(1, 200000)
-        self.jog_step.setValue(2000)
-        self.jog_step.setMaximumWidth(88)
-        self.jog_step.setToolTip("Jog distance in raw drive counts.")
-        g.addWidget(self.jog_step, 1, 1)
-        g.addWidget(QLabel("speed"), 1, 2)
-        self.jog_speed = QSpinBox()
-        self.jog_speed.setRange(100, 500000)
-        self.jog_speed.setValue(20000)
-        self.jog_speed.setMaximumWidth(88)
-        self.jog_speed.setToolTip("Jog / coordinated-move speed in counts/s.")
-        g.addWidget(self.jog_speed, 1, 3)
-        self.jog_minus = QPushButton("– Jog")
-        self.jog_minus.clicked.connect(lambda: self._on_jog(-1))
-        self.jog_plus = QPushButton("Jog +")
-        self.jog_plus.clicked.connect(lambda: self._on_jog(+1))
-        g.addWidget(self.jog_minus, 0, 4)
-        g.addWidget(self.jog_plus, 0, 5)
-        warn = QLabel("Motion — E-stop/contactor live, motor secured. Small steps first.")
+        g.addWidget(self.ref_btn, 0, 2, 1, 2)
+        # X/Y pad — Y+ up, Y- down, X- left, X+ right
+        self.yplus_btn = QPushButton("Y +  ▲")
+        self.yplus_btn.clicked.connect(lambda: self._on_cart_jog(0.0, +1.0))
+        self.yminus_btn = QPushButton("Y −  ▼")
+        self.yminus_btn.clicked.connect(lambda: self._on_cart_jog(0.0, -1.0))
+        self.xminus_btn = QPushButton("◀  X −")
+        self.xminus_btn.clicked.connect(lambda: self._on_cart_jog(-1.0, 0.0))
+        self.xplus_btn = QPushButton("X +  ▶")
+        self.xplus_btn.clicked.connect(lambda: self._on_cart_jog(+1.0, 0.0))
+        g.addWidget(self.yplus_btn, 1, 1)
+        g.addWidget(self.xminus_btn, 2, 0)
+        g.addWidget(self.xplus_btn, 2, 2)
+        g.addWidget(self.yminus_btn, 3, 1)
+        g.addWidget(QLabel("increment (mm)"), 1, 3)
+        self.jog_incr = QDoubleSpinBox()
+        self.jog_incr.setRange(0.1, 100.0)
+        self.jog_incr.setValue(5.0)
+        self.jog_incr.setDecimals(1)
+        self.jog_incr.setMaximumWidth(90)
+        g.addWidget(self.jog_incr, 1, 4)
+        g.addWidget(QLabel("speed (mm/s)"), 2, 3)
+        self.jog_speed_mm = QDoubleSpinBox()
+        self.jog_speed_mm.setRange(1.0, 500.0)
+        self.jog_speed_mm.setValue(50.0)
+        self.jog_speed_mm.setMaximumWidth(90)
+        g.addWidget(self.jog_speed_mm, 2, 4)
+        warn = QLabel("Motion — E-stop/contactor live, robot referenced. Small increments first.")
         warn.setWordWrap(True)
         warn.setStyleSheet(f"color:{theme.WARN}; font-weight:600;")
-        g.addWidget(warn, 2, 0, 1, 6)
+        g.addWidget(warn, 4, 0, 1, 5)
         return box
 
     def _build_coordinated(self) -> QGroupBox:
-        """Coordinated two-axis move: both drives ramp through one shared time
-        profile (start + finish together). Joint-space, so it's safe before the
-        arm is in the linkage — this is the first lockstep-streaming test."""
-        box = QGroupBox("Coordinated move — both axes  (motion)")
+        """Coordinated joint move: both drives ramp through one shared time
+        profile (start + finish together). Joint-space (raw counts), so it works
+        before the arm is in the linkage / referenced — the lockstep-streaming
+        and per-axis-mapping bench test."""
+        box = QGroupBox("Coordinated joint move — raw counts  (motion)")
         g = QGridLayout(box)
         g.setContentsMargins(8, 6, 8, 6)
         g.setSpacing(4)
-        g.addWidget(QLabel("axis 0 Δ"), 0, 0)
+        g.addWidget(QLabel("drive 0 Δ"), 0, 0)
         self.coord_d0 = QSpinBox()
         self.coord_d0.setRange(-200000, 200000)
         self.coord_d0.setValue(2000)
         self.coord_d0.setMaximumWidth(88)
         g.addWidget(self.coord_d0, 0, 1)
-        g.addWidget(QLabel("axis 1 Δ"), 0, 2)
+        g.addWidget(QLabel("drive 1 Δ"), 0, 2)
         self.coord_d1 = QSpinBox()
         self.coord_d1.setRange(-200000, 200000)
         self.coord_d1.setValue(-2000)
@@ -326,11 +332,17 @@ class EtherCatTab(QWidget):
         self.coord_btn = QPushButton("Move both")
         self.coord_btn.clicked.connect(self._on_coord_move)
         g.addWidget(self.coord_btn, 1, 0, 1, 2)
-        hint = QLabel("Both axes reach target together (shared trapezoid, speed "
-                      "above). Opposite signs check direction; small deltas first.")
+        g.addWidget(QLabel("speed (cts/s)"), 1, 2)
+        self.coord_speed = QSpinBox()
+        self.coord_speed.setRange(100, 500000)
+        self.coord_speed.setValue(20000)
+        self.coord_speed.setMaximumWidth(88)
+        g.addWidget(self.coord_speed, 1, 3)
+        hint = QLabel("Both drives reach their count target together. Opposite "
+                      "signs check direction; small deltas first.")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{theme.TEXT_DIM};")
-        g.addWidget(hint, 1, 2, 1, 2)
+        g.addWidget(hint, 2, 0, 1, 4)
         return box
 
     def _ec_driver(self):
@@ -356,25 +368,37 @@ class EtherCatTab(QWidget):
         self._status("Disabled — torque off (drive tracks position).", theme.TEXT)
 
     def _set_motion_enabled(self, on: bool) -> None:
-        for b in (self.enable_btn, self.disable_btn, self.jog_minus, self.jog_plus,
+        for b in (self.enable_btn, self.disable_btn, self.ref_btn,
+                  self.xplus_btn, self.xminus_btn, self.yplus_btn, self.yminus_btn,
                   self.coord_btn):
             b.setEnabled(on)
 
-    def _on_jog(self, sign: int) -> None:
+    def _on_reference_here(self) -> None:
         drv = self._ec_driver()
         if drv is None:
-            self._status("Connect + enable the drive first.", theme.WARN)
+            self._status("Connect the drives first.", theme.WARN)
+            return
+        try:
+            drv.reference_here()
+            self._status("Referenced at current pose — Cartesian jog enabled.", theme.TEXT)
+        except Exception as exc:  # noqa: BLE001
+            self._status(f"Reference failed: {exc}", theme.DANGER)
+
+    def _on_cart_jog(self, sx: float, sy: float) -> None:
+        drv = self._ec_driver()
+        if drv is None:
+            self._status("Connect + enable the drives first.", theme.WARN)
             return
         if self._jog_worker is not None and self._jog_worker.isRunning():
             return
-        axis = int(self.jog_axis.value())
-        delta = sign * int(self.jog_step.value())
-        speed = float(self.jog_speed.value())
-        # Run off the GUI thread so the poller keeps updating (see following error).
+        incr = float(self.jog_incr.value())
+        dx, dy = sx * incr, sy * incr
+        speed = float(self.jog_speed_mm.value())
+        # Run off the GUI thread so the poller keeps updating (following error).
         self._set_motion_enabled(False)
-        self._status(f"Jogging axis {axis} by {delta:+d} counts…", theme.TEXT)
+        self._status(f"Jogging TCP by ({dx:+.1f}, {dy:+.1f}) mm…", theme.TEXT)
         self._jog_worker = _JogWorker(
-            lambda: drv.jog_counts(axis, delta, speed_counts_s=speed))
+            lambda: drv.jog_cartesian(dx, dy, speed_mm_s=speed))
         self._jog_worker.done.connect(self._on_jog_done)
         self._jog_worker.start()
 
@@ -394,7 +418,7 @@ class EtherCatTab(QWidget):
             return
         n = len(drv.master.drives)
         deltas = [int(self.coord_d0.value()), int(self.coord_d1.value())][:n]
-        speed = float(self.jog_speed.value())
+        speed = float(self.coord_speed.value())
         self._set_motion_enabled(False)
         self._status(f"Coordinated move {deltas} counts…", theme.TEXT)
         self._jog_worker = _JogWorker(
@@ -464,7 +488,7 @@ class EtherCatTab(QWidget):
         v.addWidget(hint)
         self.custom_table = QTableWidget(0, 5)
         self.custom_table.setHorizontalHeaderLabels(
-            ["Parameter", "Address", "Value", "Drive 1", "Drive 2"])
+            ["Parameter", "Address", "Value", "Drive 0", "Drive 1"])
         self.custom_table.horizontalHeader().setStretchLastSection(True)
         self.custom_table.verticalHeader().setVisible(False)
         self.custom_table.setSizePolicy(QSizePolicy.Policy.Expanding,

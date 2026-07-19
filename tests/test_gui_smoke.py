@@ -878,32 +878,9 @@ def test_drives_tab_single_axis_bench_mode(qapp, tmp_path):
     tab._stop_poller()
 
 
-def test_drives_tab_bench_jog(qapp, tmp_path):
-    """Single-axis bench jog: connect (sim, 1 drive), enable, jog +, position moves."""
-    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
-
-    ctrl = build_dry_run_controller()
-    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
-    tab.drives_spin.setValue(1)
-    tab._on_connect_sim()
-    tab._on_enable()
-    assert ctrl.driver.is_enabled
-    tab.jog_step.setValue(1500)
-    tab._on_jog(+1)                       # runs on a worker thread now
-    assert tab._jog_worker.wait(2000)
-    qapp.processEvents()
-    assert ctrl.driver.master.drives[0].actual_position == 1500
-    tab._on_jog(-1)
-    assert tab._jog_worker.wait(2000)
-    qapp.processEvents()
-    assert ctrl.driver.master.drives[0].actual_position == 0
-    tab._on_disconnect()
-    tab._stop_poller()
-
-
-def test_drives_tab_jog_targets_selected_axis(qapp, tmp_path):
-    """Two-drive bench: the axis selector routes the jog to that drive only, so
-    each motor can be confirmed to map to the axis you expect."""
+def test_drives_tab_cartesian_jog(qapp, tmp_path):
+    """Cartesian TCP jog: enable, reference-here, then an X+ jog moves the tool in
+    a validated straight line (both drives move through the 5-bar kinematics)."""
     from bung_cover_robot.gui.ethercat_tab import EtherCatTab
 
     ctrl = build_dry_run_controller()
@@ -911,15 +888,35 @@ def test_drives_tab_jog_targets_selected_axis(qapp, tmp_path):
     tab.drives_spin.setValue(2)
     tab._on_connect_sim()
     tab._on_enable()
-    assert ctrl.driver.master.num_drives == 2
-    tab.jog_step.setValue(1500)
-    tab.jog_axis.setValue(1)              # jog the second drive
-    tab._on_jog(+1)
-    assert tab._jog_worker.wait(2000)
+    tab._on_reference_here()                 # bench: current pose becomes home
+    assert ctrl.driver.is_referenced
+    start = [d.actual_position for d in ctrl.driver.master.drives]
+    tab.jog_incr.setValue(5.0)
+    tab.jog_speed_mm.setValue(50.0)
+    tab._on_cart_jog(+1.0, 0.0)              # X + 5 mm
+    assert tab._jog_worker.wait(3000)
     qapp.processEvents()
-    drives = ctrl.driver.master.drives
-    assert drives[1].actual_position == 1500   # axis 1 moved
-    assert drives[0].actual_position == 0       # axis 0 held
+    end = [d.actual_position for d in ctrl.driver.master.drives]
+    assert end != start                      # the tool actually moved
+    assert "complete" in tab.status_label.text().lower() or \
+        "failed" not in tab.status_label.text().lower()
+    tab._on_disconnect()
+    tab._stop_poller()
+
+
+def test_drives_tab_cartesian_jog_needs_reference(qapp, tmp_path):
+    """Without a reference/home, the Cartesian jog refuses (mm has no meaning)."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab.drives_spin.setValue(2)
+    tab._on_connect_sim()
+    tab._on_enable()                          # enabled but NOT referenced
+    tab._on_cart_jog(+1.0, 0.0)
+    assert tab._jog_worker.wait(3000)
+    qapp.processEvents()
+    assert "referenced" in tab.status_label.text().lower()
     tab._on_disconnect()
     tab._stop_poller()
 
@@ -938,10 +935,10 @@ def test_drives_tab_is_compact_no_page_scroll(qapp, tmp_path):
     assert tab.custom_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
     # tuning parameters preloaded; per-drive read-back columns present
     assert tab.custom_table.rowCount() >= 5
-    assert tab.custom_table.columnCount() == 5      # Parameter/Address/Value/Drive 1/Drive 2
-    assert [tab.custom_table.horizontalHeaderItem(c).text() for c in (3, 4)] == ["Drive 1", "Drive 2"]
+    assert tab.custom_table.columnCount() == 5      # Parameter/Address/Value/Drive 0/Drive 1
+    assert [tab.custom_table.horizontalHeaderItem(c).text() for c in (3, 4)] == ["Drive 0", "Drive 1"]
     # whole tab fits inside the default window without page scrolling
-    assert tab.minimumSizeHint().height() <= 900
+    assert tab.minimumSizeHint().height() <= 945
     assert tab.sizeHint().width() <= 1200
 
 

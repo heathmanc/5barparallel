@@ -362,7 +362,7 @@ class ParameterStore:
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     landed = False
-                    notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: WRITE ABORTED - {exc}")
+                    notes.append(f"{name} drive {d} 0x{idx:04X}:{sub}: WRITE ABORTED - {exc}")
                     continue
                 # Verify: the write returned OK, but did the value actually change?
                 # A read-only monitor object or a state-gated / auto-tune-overridden
@@ -376,10 +376,10 @@ class ParameterStore:
                 if after is not None and after != val:
                     ignored += 1
                     landed = False
-                    notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: wrote {val} but "
+                    notes.append(f"{name} drive {d} 0x{idx:04X}:{sub}: wrote {val} but "
                                  f"drive kept {after} (read-only or state-gated?)")
                 else:
-                    ok.append(str(d + 1))
+                    ok.append(str(d))
                     written += 1
             if ok:
                 notes.append(f"{name} -> 0x{idx:04X}:{sub} = {val} (drives {', '.join(ok)})")
