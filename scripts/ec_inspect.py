@@ -86,6 +86,35 @@ def _dump_state(slave) -> None:
         print(f"    0x{index:04X}:{sub}  {label:<32}  {val}  (0x{val & 0xFFFFFFFF:X}){extra}")
 
 
+_SYNC_TYPE = {0: "FREE-RUN", 1: "SM-SYNC", 2: "DC SYNC0", 3: "DC SYNC1"}
+
+
+def _dump_sync(slave) -> None:
+    """SM sync-type config (0x1C32 out / 0x1C33 in): what sync mode the drive is
+    in and which modes it supports. A drive in DC-SYNC0 with no SYNC0 pulse faults
+    on a sync error (A6 Er741); free-run/SM-sync need no pulse."""
+    print("  Sync config (why Er741 happens):")
+    for idx, label in ((0x1C32, "RxPDO/output SM"), (0x1C33, "TxPDO/input SM")):
+        cur, _ = _read_int(slave, idx, 1)      # :01 active sync type
+        sup, _ = _read_int(slave, idx, 4)      # :04 supported sync types (bitmask)
+        cyc, _ = _read_int(slave, idx, 2)      # :02 cycle time (ns)
+        if cur is None:
+            print(f"    0x{idx:04X} {label}: unreadable")
+            continue
+        name = _SYNC_TYPE.get(cur, f"0x{cur:X}")
+        supset = []
+        if sup is not None:
+            if sup & 0x01: supset.append("free-run")
+            if sup & 0x02: supset.append("SM-sync")
+            if sup & 0x04 or sup & 0x8000: supset.append("DC-SYNC0")
+        print(f"    0x{idx:04X} {label}: active={name} ({cur})  cycle={cyc} ns  "
+              f"supported=[{', '.join(supset) or f'0x{sup:04X}' if sup is not None else '?'}]")
+    err, _ = _read_int(slave, 0x603F, 0)
+    if err is not None:
+        print(f"    0x603F Error code: {err} (0x{err & 0xFFFF:04X})"
+              f"{'  <-- ACTIVE FAULT' if err else ''}")
+
+
 def _dump_pdo(slave, assign_index: int, direction: str, expect_bytes: int) -> None:
     """Dump one PDO-assign object (0x1C12 Rx / 0x1C13 Tx) and its mapped entries."""
     count, err = _read_int(slave, assign_index, 0)
@@ -138,6 +167,7 @@ def main() -> int:
         for i, s in enumerate(master.slaves):
             print(f"[{i}] {s.name}   man=0x{s.man:08X}  id=0x{s.id:08X}  rev=0x{s.rev:08X}")
             _dump_state(s)
+            _dump_sync(s)
             _dump_pdo(s, 0x1C12, "RxPDO (PC->drive)", RX_SIZE)
             _dump_pdo(s, 0x1C13, "TxPDO (drive->PC)", TX_SIZE)
             print()
