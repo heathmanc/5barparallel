@@ -703,7 +703,12 @@ class EtherCatTab(QWidget):
         # The last note is the "N written, M unchanged[, ignored/aborted]" summary.
         summary = notes[-1] if notes else "nothing to apply"
         bad = ("ignored" in summary) or ("aborted" in summary)
-        self._status(f"Applied: {summary}", theme.WARN if bad else theme.TEXT)
+        if bad:
+            # Surface the first failing detail (carries the CoE abort code).
+            detail = next((n for n in notes if "ABORTED" in n or "ignored by drive" in n), "")
+            self._status(f"Applied: {summary} — {detail}", theme.DANGER)
+        else:
+            self._status(f"Applied: {summary}", theme.TEXT)
 
     # --- live status ----------------------------------------------------------
     def _start_poller(self) -> None:

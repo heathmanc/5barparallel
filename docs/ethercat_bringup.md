@@ -66,9 +66,9 @@ the address from the ESI. The Drives-tab tuning table is preloaded from it:
 
 | Tuning object | CoE | Default | Range | Notes |
 |---|---|---|---|---|
-| Load inertia ratio | `0x2000:05` | 100 | 0–12000 % | set first |
-| Auto-tuning mode | `0x2000:03` | 1 | 0=Manual/1=Standard/2=Positioning | 0 to hand-tune gains |
-| Stiffness level | `0x2000:04` | 12 | 1–31 | main dial in Standard mode |
+| Load inertia ratio | `0x2000:07` | 100 | 0–12000 % | set first |
+| Auto-tuning mode | `0x2000:05` | 1 | 0=Manual/1=Standard/2=Positioning | 0 to hand-tune gains |
+| Stiffness level | `0x2000:06` | 12 | 1–31 | main dial in Standard mode |
 | 1st position loop gain | `0x2001:01` | 400 | 0–20000 (0.1 rad/s) | |
 | 1st speed loop gain | `0x2001:02` | 250 | 1–20000 (0.1 Hz) | raise before position gain |
 | 1st speed loop integral time | `0x2001:03` | 3184 | 1–51200 (0.01 ms) | lower = stronger integral |

@@ -62,7 +62,7 @@ def test_apply_writes_both_drives_and_reads_back(tmp_path):
     s.set_custom_value("stiffness_level", 17)
     s.apply(drv)
     # both drives got the value over SDO
-    idx, sub = 0x2000, 0x04                          # stiffness_level per ESI
+    idx, sub = 0x2000, 0x06                          # stiffness_level (ESI DT2000 SubIdx 6)
     assert drv.master.sdo_read(idx, sub, drive=0) == 17
     assert drv.master.sdo_read(idx, sub, drive=1) == 17
     # read-back surfaces per-drive actuals for the table
@@ -168,7 +168,7 @@ def test_outdated_tuning_seed_is_migrated(tmp_path):
     assert "machine_stiffness" not in names            # legacy name dropped
     assert "stiffness_level" in names                  # corrected object seeded
     sl = next(c for c in s.custom_parameters() if c.name == "stiffness_level")
-    assert (sl.index, sl.sub) == (0x2000, 0x04)        # stiffness per ESI
+    assert (sl.index, sl.sub) == (0x2000, 0x06)        # stiffness (ESI DT2000 SubIdx 6)
     assert "my_gain" in names                          # user-added preserved
 
 
