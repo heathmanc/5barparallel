@@ -162,6 +162,15 @@ re-enables ONCE per job after an unexpected disable (never after a fault) and
 tags the run result with how many times it had to — repeated auto re-enables
 mean fix the chain, not the software.
 
+**Prove or rule out the cable/EMI (the #1 cause).** Run
+`python scripts/ec_crc.py --reset --watch 1` (needs the IgH `ethercat` CLI +
+the daemon running), then do a speed trial: it reads each slave's ESC
+error counters live. RX-error / invalid-frame climbing on a port = the cable
+segment feeding that port; lost-link = an intermittent connector; forwarded
+errors = the fault is upstream (nearer the PC). A real drive fault never moves
+these — anything that climbs under load is physical-layer, so fix the cabling
+(shielded S/FTP, away from the motor power leads) before anything else.
+
 ### 4c. "Move did not settle" — tolerance and settle window
 
 The end-of-move check is governed by two **Motion parameters** (Drives tab,
