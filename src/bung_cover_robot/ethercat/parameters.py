@@ -298,7 +298,7 @@ class ParameterStore:
         if not callable(sdo_write) or not drives:
             notes.append("drive params: master has no SDO channel")
             return notes
-        written = unchanged = 0
+        written = unchanged = ignored = failed = 0
         for name, idx, sub, val, sz in self._drive_items():
             ok = []
             for d in drives:
@@ -313,13 +313,34 @@ class ParameterStore:
                     continue
                 try:
                     _sdo_write_adaptive(sdo_write, idx, sub, val, sz, d)
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: WRITE ABORTED - {exc}")
+                    continue
+                # Verify: the write returned OK, but did the value actually change?
+                # A read-only monitor object or a state-gated / auto-tune-overridden
+                # gain accepts the write and keeps its old value.
+                after = None
+                if callable(sdo_read):
+                    try:
+                        after = int(sdo_read(idx, sub, size=sz, drive=d))
+                    except Exception:  # noqa: BLE001
+                        after = None
+                if after is not None and after != val:
+                    ignored += 1
+                    notes.append(f"{name} d{d + 1} 0x{idx:04X}:{sub}: wrote {val} but "
+                                 f"drive kept {after} (read-only or state-gated?)")
+                else:
                     ok.append(str(d + 1))
                     written += 1
-                except Exception as exc:  # noqa: BLE001
-                    notes.append(f"{name} drive {d + 1}: WRITE FAILED - {exc}")
             if ok:
                 notes.append(f"{name} -> 0x{idx:04X}:{sub} = {val} (drives {', '.join(ok)})")
-        notes.append(f"{written} written, {unchanged} unchanged")
+        summary = f"{written} written, {unchanged} unchanged"
+        if ignored:
+            summary += f", {ignored} ignored by drive"
+        if failed:
+            summary += f", {failed} aborted"
+        notes.append(summary)
         return notes
 
     def read_custom_from_drives(self, driver) -> Dict[str, List[Optional[int]]]:

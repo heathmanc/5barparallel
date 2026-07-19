@@ -142,6 +142,33 @@ def test_tuning_parameters_are_preloaded_and_seed_is_sticky(tmp_path):
     assert "machine_stiffness" not in {c.name for c in s2.custom_parameters()}
 
 
+def test_apply_flags_writes_the_drive_ignores():
+    """If a write returns OK but the drive keeps its old value (read-only monitor
+    / state-gated object), apply must report it as ignored, not written."""
+    class IgnoreWrites:
+        def __init__(self):
+            self.drives = [1]
+
+        def sdo_write(self, index, sub, value, size=4, drive=0):
+            pass                                        # accepts, changes nothing
+
+        def sdo_read(self, index, sub, size=4, drive=0):
+            return 99                                   # always the "old" value
+
+    class Drv:
+        def __init__(self, m):
+            self.master = m
+            self.limits = None
+            self.position_tol_counts = 0
+
+    s = ParameterStore()
+    s.add_custom("gain", "C09.00", 7, "int")            # want 7, drive stays 99
+    notes = s.apply(Drv(IgnoreWrites()))
+    assert any("ignored by drive" in n for n in notes)
+    assert any("kept 99" in n for n in notes)
+    assert "0 written" in notes[-1]
+
+
 def test_apply_retries_on_length_abort():
     """A drive that rejects the assumed width with CoE abort 0x06070012 must be
     retried at another width instead of failing (0x6098 is 1 byte; a vendor gain
