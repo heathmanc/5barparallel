@@ -138,21 +138,27 @@ class CustomParameter:
         return f"0x{self.index:04X}:{self.sub}"
 
 
-# Preloaded tuning objects for the AS715N (A6-EC / Panasonic-A6 family). Addresses
-# use the drive's friendly Cxx.NN form (mapped to CoE 0x20xx:(NN+1)); values are
-# typical A6-family starting points. VERIFY both the address and the value against
-# your AS715N parameter table before writing to a live drive — the exact Cxx.NN
-# can shift between firmware revisions.
+# Preloaded tuning objects for the AS715N (A6-EC), addresses + defaults taken
+# straight from the drive manual's Gain Tuning chapter. The manual states
+# "C00.01 (2000.02h)" and "F31.10 (2031.11h)", confirming the map
+#   Cxx.NN -> CoE index 0x20xx (group), subindex NN+1 (offset, both hex).
+# Objects are U16 and "modifiable during operation, effective immediately".
 #   (name, Cxx.NN address, default value, dtype, description)
 DEFAULT_TUNING: List[Tuple[str, str, float, str, str]] = [
-    ("inertia_ratio",     "C00.04", 250, "int", "Load/motor inertia ratio (%) — set this FIRST; gains scale off it"),
-    ("machine_stiffness", "C00.03", 13,  "int", "Auto-tune stiffness/rigidity (0-31) — the main 'make it stiffer' dial"),
-    ("realtime_autotune", "C00.02", 1,   "int", "Real-time auto-gain tuning (0=off, 1=positioning)"),
-    ("pos_loop_gain",     "C01.00", 480, "int", "1st position loop gain (0.1/s) — raise to cut following error"),
-    ("vel_loop_gain",     "C01.01", 270, "int", "1st velocity loop gain (0.1 Hz) — raise first, before position gain"),
-    ("vel_integ_time",    "C01.02", 210, "int", "1st velocity loop integration time (0.1 ms) — lower kills steady-state error"),
-    ("torque_filter",     "C01.04", 84,  "int", "1st torque command filter (0.01 ms) — raise to damp high-freq buzz"),
+    ("load_inertia_ratio", "C00.06", 100,  "int16", "Load inertia ratio (%, 0-12000) — set this FIRST; gains scale off it (F30.10 auto-tunes it)"),
+    ("auto_tuning_mode",   "C00.04", 1,     "int16", "Auto-tune mode: 0=Manual, 1=Standard (by stiffness), 2=Positioning. Set 0 to hand-tune the C01 gains"),
+    ("stiffness_level",    "C00.05", 12,    "int16", "Stiffness level (1-31) — the main 'make it stiffer' dial in Standard mode; too high oscillates"),
+    ("pos_loop_gain",      "C01.00", 400,   "int16", "1st position loop gain (0.1 rad/s, 0-20000) — raise to cut following error (Manual mode)"),
+    ("speed_loop_gain",    "C01.01", 250,   "int16", "1st speed loop gain (0.1 Hz, 1-20000) — raise this before position gain"),
+    ("speed_integ_time",   "C01.02", 3184,  "int16", "1st speed loop integral time (0.01 ms, 1-51200) — lower kills steady-state error"),
+    ("torque_filter",      "C01.03", 200,   "int16", "1st torque ref filter cutoff (Hz, 5-16000) — LOWER to damp high-freq buzz (more delay)"),
 ]
+
+# Bump when DEFAULT_TUNING addresses/values change so a saved config re-seeds.
+TUNING_SEED_VERSION = 2
+# Names used by earlier (wrong-address) seed sets, dropped on migration.
+_LEGACY_TUNING_NAMES = {"inertia_ratio", "machine_stiffness", "realtime_autotune",
+                        "pos_loop_gain", "vel_loop_gain", "vel_integ_time", "torque_filter"}
 
 
 def default_values() -> Dict[str, float]:
@@ -174,6 +180,7 @@ class ParameterStore:
         self._values = merged
         self._custom: List[CustomParameter] = list(custom or [])
         self._seeded = seeded
+        self._seed_version = 0
         # Names edited since the last successful write. Apply pushes ONLY these
         # to the drive — never the whole (partly-guessed) preloaded set.
         self._dirty: set = set()
@@ -187,7 +194,19 @@ class ParameterStore:
                 continue
             self.add_custom(name, addr, val, dtype, desc)
         self._seeded = True
+        self._seed_version = TUNING_SEED_VERSION
         self._dirty.clear()          # preloaded defaults are not "edited by the user"
+
+    def _migrate_tuning(self) -> None:
+        """Replace an outdated preloaded tuning set (wrong addresses/values from
+        an earlier version) with the current one, preserving user-added params."""
+        managed = _LEGACY_TUNING_NAMES | {n for n, *_ in DEFAULT_TUNING}
+        self._custom = [c for c in self._custom if c.name not in managed]
+        for name, addr, val, dtype, desc in DEFAULT_TUNING:
+            self.add_custom(name, addr, val, dtype, desc)
+        self._seeded = True
+        self._seed_version = TUNING_SEED_VERSION
+        self._dirty.clear()
 
     def dirty(self) -> List[str]:
         return sorted(self._dirty)
@@ -208,9 +227,13 @@ class ParameterStore:
                                   desc=str(c.get("desc", "")))
                   for c in data.get("custom", []) if "name" in c]
         seeded = bool(data.get("tuning_seeded", False)) if isinstance(data, dict) else False
+        seed_ver = int(data.get("tuning_seed_version", 1 if seeded else 0)) if isinstance(data, dict) else 0
         s = cls(data.get("values", data), path=p, custom=custom, seeded=seeded)
+        s._seed_version = seed_ver
         if not s._seeded:                     # legacy file / empty tuning -> seed once
             s._seed_default_tuning()
+        elif seed_ver < TUNING_SEED_VERSION:  # outdated preloaded set -> correct it
+            s._migrate_tuning()
         s._dirty.clear()                      # a freshly loaded store has no pending edits
         return s
 
@@ -267,6 +290,7 @@ class ParameterStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "tuning_seeded": self._seeded,
+            "tuning_seed_version": self._seed_version,
             "values": self._values,
             "custom": [{"name": c.name, "index": c.index, "sub": c.sub,
                         "dtype": c.dtype, "value": c.value, "desc": c.desc}

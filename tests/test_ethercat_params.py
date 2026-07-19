@@ -59,15 +59,15 @@ def test_apply_writes_both_drives_and_reads_back(tmp_path):
 
     drv = EtherCatRobotDriver(SimulatedEtherCatMaster(num_drives=2).open())
     s = ParameterStore.load(tmp_path / "p.yaml")   # preloaded tuning params
-    s.set_custom_value("machine_stiffness", 17)
+    s.set_custom_value("stiffness_level", 17)
     s.apply(drv)
     # both drives got the value over SDO
-    idx, sub = 0x2000, 0x04                          # C00.03 -> 0x2000:(3+1)
+    idx, sub = 0x2000, 0x06                          # C00.05 -> 0x2000:(5+1)
     assert drv.master.sdo_read(idx, sub, drive=0) == 17
     assert drv.master.sdo_read(idx, sub, drive=1) == 17
     # read-back surfaces per-drive actuals for the table
     rb = s.read_custom_from_drives(drv)
-    assert rb["machine_stiffness"] == [17, 17]
+    assert rb["stiffness_level"] == [17, 17]
 
 
 def test_apply_only_writes_edited_parameters(tmp_path):
@@ -88,7 +88,7 @@ def test_apply_only_writes_edited_parameters(tmp_path):
     n0 = s.apply(drv)
     assert CountingSim.writes == 0                     # nothing edited -> nothing written
     assert "no edited drive parameters" in n0[-1]
-    s.set_custom_value("machine_stiffness", 21)        # edit exactly one
+    s.set_custom_value("stiffness_level", 21)        # edit exactly one
     n1 = s.apply(drv)
     assert CountingSim.writes == 2                     # one object x two drives only
     assert n1[-1].startswith("2 written")
@@ -139,12 +139,37 @@ def test_tuning_parameters_are_preloaded_and_seed_is_sticky(tmp_path):
     s = ParameterStore.load(p)                     # fresh -> preloaded
     names = {c.name for c in s.custom_parameters()}
     assert {n for n, *_ in DEFAULT_TUNING} <= names
-    assert any(c.name == "machine_stiffness" and c.desc for c in s.custom_parameters())
+    assert any(c.name == "stiffness_level" and c.desc for c in s.custom_parameters())
     # Removing a preloaded param and saving must NOT bring it back on reload.
-    s.remove_custom("machine_stiffness")
+    s.remove_custom("stiffness_level")
     s.save()
     s2 = ParameterStore.load(p)
-    assert "machine_stiffness" not in {c.name for c in s2.custom_parameters()}
+    assert "stiffness_level" not in {c.name for c in s2.custom_parameters()}
+
+
+def test_outdated_tuning_seed_is_migrated(tmp_path):
+    """A config saved with the old (wrong-address) tuning set migrates to the
+    corrected addresses on load, while user-added params are preserved."""
+    import yaml
+    p = tmp_path / "drive_parameters.yaml"
+    p.write_text(yaml.safe_dump({
+        "tuning_seeded": True,
+        "tuning_seed_version": 1,
+        "values": {},
+        "custom": [
+            {"name": "machine_stiffness", "index": 0x2000, "sub": 0x04,
+             "dtype": "int", "value": 13, "desc": "old wrong address"},
+            {"name": "my_gain", "index": 0x2009, "sub": 0x01,
+             "dtype": "int", "value": 5, "desc": "user"},
+        ],
+    }))
+    s = ParameterStore.load(p)
+    names = {c.name for c in s.custom_parameters()}
+    assert "machine_stiffness" not in names            # legacy name dropped
+    assert "stiffness_level" in names                  # corrected object seeded
+    sl = next(c for c in s.custom_parameters() if c.name == "stiffness_level")
+    assert (sl.index, sl.sub) == (0x2000, 0x06)        # C00.05 -> 0x2000:06
+    assert "my_gain" in names                          # user-added preserved
 
 
 def test_apply_flags_writes_the_drive_ignores():
