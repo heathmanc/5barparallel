@@ -954,9 +954,9 @@ def test_drives_tab_tuning_apply_and_refresh_per_drive(qapp, tmp_path):
     tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
     tab.drives_spin.setValue(2)
     tab._on_connect_sim()
-    # find the machine_stiffness row and set its Value cell
+    # find the stiffness_level row and set its Value cell
     names = [tab.custom_table.item(r, 0).text() for r in range(tab.custom_table.rowCount())]
-    r = names.index("machine_stiffness")
+    r = names.index("stiffness_level")
     tab.custom_table.item(r, 2).setText("19")
     tab._on_apply_params()                     # writes both drives + reads back
     qapp.processEvents()
