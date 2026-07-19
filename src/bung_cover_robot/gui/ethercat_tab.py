@@ -230,7 +230,7 @@ class EtherCatTab(QWidget):
         state.setStyleSheet("font-family:monospace; font-weight:600;")
         counts = QLabel("encoder: — counts   |   — °")
         counts.setStyleSheet("font-family:monospace;")
-        detail = QLabel("statusword — · mode — · target —")
+        detail = QLabel("err — · foll.err —")
         detail.setStyleSheet(f"font-family:monospace; color:{theme.TEXT_DIM};")
         # These carry live numbers. Fixed-width formatting (in _on_snapshot) keeps
         # the text a constant length; Ignored horizontal policy stops any label
@@ -728,9 +728,7 @@ class EtherCatTab(QWidget):
             deg = (d["act"] + home) / ppd
             w["counts"].setText(f"encoder: {d['act']:>+10d} counts   |   {deg:>+9.3f} °")
             w["detail"].setText(
-                f"statusword 0x{d['sw']:04X} · err 0x{d.get('err', 0):04X} · "
-                f"foll.err {d.get('fe', 0):>+7d} · mode {d['mode']:>2d} · "
-                f"target {d['tgt']:>+10d}")
+                f"err 0x{d.get('err', 0):04X} · foll.err {d.get('fe', 0):>+7d}")
             for src, mask, bit in w["bits"]:
                 bit.set_active(bool((d["sw"] if src == "sw" else d["di"]) & mask))
 
