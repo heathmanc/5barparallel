@@ -116,6 +116,14 @@ class RobotDriver(ABC):
         degrees. Used when the home pose is re-taught/recomputed. The dry-run
         driver adopts it; a servo driver homes to its switch reference."""
 
+    def set_home(self) -> None:
+        """Capture the CURRENT physical pose as the home datum. On an
+        absolute-encoder servo driver this latches the live encoder counts, so
+        the commanded-position frame lines up with feedback no matter what the
+        encoder reads at home. Where home is purely angle-based (the dry-run
+        driver), the datum is fully described by ``set_home_angles`` and this is
+        a no-op. Call ``set_home_angles`` first to set the angle datum."""
+
     # --- end-effector I/O (pick tooling) ------------------------------------
     # The pick head is an air cylinder (plunger) carrying a vacuum cup. The
     # cycle actuates both through these seams; a driver with no end-effector
