@@ -109,3 +109,70 @@ def test_max_joint_step_guard_can_reject(kv):
     limits = TrajectoryLimits(max_joint_step_deg=1e-4)
     with pytest.raises(TrajectoryError):
         plan_linear_move(kin, val, (0.0, 250.0), (80.0, 250.0), limits)
+
+
+# --- S-curve (jerk-limited) profile ---------------------------------------- #
+def _accels(dists, dt):
+    return [(dists[i + 1] - 2 * dists[i] + dists[i - 1]) / (dt * dt)
+            for i in range(1, len(dists) - 1)]
+
+
+def test_scurve_distances_endpoints_and_monotonic():
+    from bung_cover_robot.ethercat.trajectory import _scurve_distances
+    s = _scurve_distances(180.0, 1000.0, 2000.0, 80000.0, 0.002)
+    assert s[0] == 0.0
+    assert s[-1] == pytest.approx(180.0)
+    assert all(s[i + 1] >= s[i] - 1e-9 for i in range(len(s) - 1))   # monotone
+
+
+def test_scurve_softens_start_and_bounds_jerk():
+    from bung_cover_robot.ethercat.trajectory import _scurve_distances
+    dt, a, jerk = 0.002, 2000.0, 80000.0
+    s = _scurve_distances(180.0, 1000.0, a, jerk, dt)
+    acc = _accels(s, dt)
+    peak = max(abs(x) for x in acc)
+    # ease-in: acceleration at the first interior cycle is a small fraction of
+    # peak (a hard trapezoid would already be at full accel there).
+    assert abs(acc[0]) < 0.3 * peak
+    # realized jerk is near the limit and FAR below the trapezoid's a/dt step.
+    jerks = [abs(acc[i + 1] - acc[i]) / dt for i in range(len(acc) - 1)]
+    assert max(jerks) < 4.0 * jerk
+    assert max(jerks) < (a / dt) / 3.0        # much softer than a hard step
+
+
+def test_scurve_reaches_goal_and_stays_straight(kv):
+    kin, val = kv
+    start, goal = (-80.0, 240.0), (80.0, 260.0)
+    lim = TrajectoryLimits(speed_mm_s=1000.0, accel_mm_s2=2000.0,
+                           cycle_dt_s=0.002, jerk_mm_s3=80000.0)
+    traj = plan_linear_move(kin, val, start, goal, lim)
+    assert traj.final.left_deg == pytest.approx(kin.inverse(*goal).left_deg)
+    assert traj.final.right_deg == pytest.approx(kin.inverse(*goal).right_deg)
+    dx, dy = goal[0] - start[0], goal[1] - start[1]
+    L = math.hypot(dx, dy)
+    for sp in traj.setpoints:
+        x, y = kin.forward(sp.left_deg, sp.right_deg)
+        cross = abs((x - start[0]) * dy - (y - start[1]) * dx) / L
+        assert cross < 0.05
+
+
+def test_scurve_no_longer_than_reasonable_and_off_matches_trapezoid(kv):
+    kin, val = kv
+    start, goal = (0.0, 250.0), (120.0, 250.0)
+    base = TrajectoryLimits(speed_mm_s=1000.0, accel_mm_s2=2000.0, cycle_dt_s=0.002)
+    trap = plan_linear_move(kin, val, start, goal, base)
+    scrv = plan_linear_move(kin, val, start, goal,
+                            TrajectoryLimits(speed_mm_s=1000.0, accel_mm_s2=2000.0,
+                                             cycle_dt_s=0.002, jerk_mm_s3=80000.0))
+    # jerk=None keeps the trapezoid path (default behaviour unchanged)
+    off = plan_linear_move(kin, val, start, goal,
+                           TrajectoryLimits(speed_mm_s=1000.0, accel_mm_s2=2000.0,
+                                            cycle_dt_s=0.002, jerk_mm_s3=None))
+    assert len(off) == len(trap)
+    # S-curve adds smoothing time, but not excessively (< 60 % longer here)
+    assert len(trap) <= len(scrv) < 1.6 * len(trap)
+
+
+def test_negative_jerk_rejected():
+    with pytest.raises(ValueError):
+        TrajectoryLimits(jerk_mm_s3=-1.0)

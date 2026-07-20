@@ -47,6 +47,11 @@ PARAMETERS: List[DriveParameter] = [
                    "Cartesian cruise speed for planned moves."),
     DriveParameter("accel_mm_s2", "motion", "float", 2000.0, "mm/s^2",
                    "Cartesian accel/decel for the trapezoid profile."),
+    DriveParameter("jerk_mm_s3", "motion", "float", 80000.0, "mm/s^3",
+                   "S-curve jerk limit: eases acceleration in over ~accel/jerk s "
+                   "to kill the start-of-move chirp + following-error spike. "
+                   "0 = off (hard trapezoid). Lower = gentler/quieter but adds a "
+                   "little move time."),
     DriveParameter("cycle_dt_s", "motion", "float", 0.002, "s",
                    "EtherCAT DC cycle time; must match the master."),
     DriveParameter("max_joint_step_deg", "motion", "float", 0.0, "deg",
@@ -324,10 +329,12 @@ class ParameterStore:
         from .trajectory import TrajectoryLimits
 
         cap = self.get("max_joint_step_deg")
+        jerk = self.get("jerk_mm_s3")
         return TrajectoryLimits(
             speed_mm_s=self.get("speed_mm_s"),
             accel_mm_s2=self.get("accel_mm_s2"),
             cycle_dt_s=self.get("cycle_dt_s"),
+            jerk_mm_s3=None if jerk <= 0 else jerk,
             max_joint_step_deg=None if cap <= 0 else cap,
         )
 

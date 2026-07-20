@@ -143,6 +143,12 @@ class TrajectoryLimits:
     speed_mm_s: float = 200.0
     accel_mm_s2: float = 2000.0
     cycle_dt_s: float = 0.002        # 2 ms = 500 Hz DC cycle
+    # Optional jerk limit (mm/s^3). None/0 = trapezoidal (acceleration steps on
+    # instantly = infinite jerk, which pings mechanical resonances: the audible
+    # chirp + following-error spike at move start). A finite jerk eases the
+    # acceleration in over ~accel/jerk seconds (an S-curve), killing that impulse
+    # with almost no loss of cruise speed.
+    jerk_mm_s3: float | None = None
     # Optional guard: reject a plan whose per-cycle shoulder step exceeds this
     # (a proxy for joint-velocity blow-up near a singularity). None = no cap
     # (the workspace validator already excludes the near-singular band).
@@ -153,6 +159,8 @@ class TrajectoryLimits:
             raise ValueError("speed and accel must be positive")
         if self.cycle_dt_s <= 0:
             raise ValueError("cycle_dt_s must be positive")
+        if self.jerk_mm_s3 is not None and self.jerk_mm_s3 < 0:
+            raise ValueError("jerk_mm_s3 must be positive (or None to disable)")
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,50 @@ def _distance_at(t: float, t_acc: float, t_cruise: float, v_peak: float, a: floa
     return d_acc + d_cruise + v_peak * td - 0.5 * a * td * td
 
 
+def _trap_velocity(t: float, t_acc: float, t_cruise: float, v_peak: float,
+                   a: float) -> float:
+    """Speed along the path at time ``t`` for the trapezoidal profile."""
+    if t < t_acc:
+        return a * t
+    if t < t_acc + t_cruise:
+        return v_peak
+    td = t - t_acc - t_cruise
+    return max(0.0, v_peak - a * td)
+
+
+def _scurve_distances(length: float, v: float, a: float, jerk: float,
+                      dt: float) -> List[float]:
+    """Per-cycle cumulative distances for a JERK-LIMITED (S-curve) move.
+
+    Built by box-filtering the trapezoidal velocity profile with a window of
+    width ``Tj = a / jerk``: convolving a trapezoid (piecewise-constant
+    acceleration) with a rectangle yields piecewise-linear acceleration, i.e.
+    bounded jerk. The filtered velocity is integrated to distance and scaled so
+    the last sample lands exactly on ``length``. Returns ``[0.0, ..., length]``.
+    """
+    total_t, t_acc, t_cruise, v_peak = _trapezoid(length, v, a)
+    k = max(1, int(round((a / jerk) / dt))) if jerk and jerk > 0 else 1
+    n = max(1, int(math.ceil(total_t / dt)))
+    # trapezoidal velocity samples + (k-1) zero-flush so the trailing average
+    # eases back to rest (and total area — distance — is preserved).
+    vel = [_trap_velocity(i * dt, t_acc, t_cruise, v_peak, a) for i in range(n)]
+    vel += [0.0] * (k - 1)
+    dists: List[float] = [0.0]
+    window = 0.0
+    s = 0.0
+    for i, vv in enumerate(vel):
+        window += vv
+        if i >= k:
+            window -= vel[i - k]
+        s += (window / k) * dt          # box-filtered (jerk-limited) velocity
+        dists.append(s)
+    if dists[-1] > 0:                    # correct tiny discretisation drift
+        scale = length / dists[-1]
+        dists = [d * scale for d in dists]
+    dists[-1] = length
+    return dists
+
+
 def plan_linear_move(
     kin: FiveBarKinematics,
     validator: WorkspaceValidator,
@@ -253,22 +305,34 @@ def plan_linear_move(
         sp = setpoint_at(sx, sy)
         return Trajectory([sp], limits.cycle_dt_s, (sx, sy), (gx, gy), 0.0)
 
-    total_t, t_acc, t_cruise, v_peak = _trapezoid(
-        length, limits.speed_mm_s, limits.accel_mm_s2
-    )
     ux, uy = (gx - sx) / length, (gy - sy) / length   # unit direction
-    n_steps = max(1, math.ceil(total_t / limits.cycle_dt_s))
-
     setpoints: List[JointSetpoint] = []
-    for i in range(n_steps + 1):
-        if i == n_steps:
-            x, y = gx, gy                              # land exactly on goal
-        else:
-            t = i * limits.cycle_dt_s
-            s = _distance_at(t, t_acc, t_cruise, v_peak, limits.accel_mm_s2)
-            s = min(s, length)
-            x, y = sx + ux * s, sy + uy * s
-        setpoints.append(setpoint_at(x, y))
+    if limits.jerk_mm_s3:
+        # Jerk-limited (S-curve): pre-computed per-cycle distances.
+        dists = _scurve_distances(length, limits.speed_mm_s, limits.accel_mm_s2,
+                                  limits.jerk_mm_s3, limits.cycle_dt_s)
+        last = len(dists) - 1
+        for i, s in enumerate(dists):
+            if i == last:
+                x, y = gx, gy                          # land exactly on goal
+            else:
+                s = min(s, length)
+                x, y = sx + ux * s, sy + uy * s
+            setpoints.append(setpoint_at(x, y))
+    else:
+        total_t, t_acc, t_cruise, v_peak = _trapezoid(
+            length, limits.speed_mm_s, limits.accel_mm_s2
+        )
+        n_steps = max(1, math.ceil(total_t / limits.cycle_dt_s))
+        for i in range(n_steps + 1):
+            if i == n_steps:
+                x, y = gx, gy                          # land exactly on goal
+            else:
+                t = i * limits.cycle_dt_s
+                s = _distance_at(t, t_acc, t_cruise, v_peak, limits.accel_mm_s2)
+                s = min(s, length)
+                x, y = sx + ux * s, sy + uy * s
+            setpoints.append(setpoint_at(x, y))
 
     # Largest per-cycle shoulder step — a proxy for joint-velocity spikes.
     max_step = 0.0
