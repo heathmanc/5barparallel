@@ -826,8 +826,13 @@ class VisionTab(QWidget):
 
     def _on_stop(self) -> None:
         if self._running and self._worker is not None:
+            # GRACEFUL by design: only set the cooperative flag, which run_cycle
+            # checks between holes, so the in-flight pick/place FINISHES before
+            # the cycle halts (never drop a cover mid-transfer). Do NOT call
+            # controller.stop() here — that now aborts the in-flight move
+            # (abort_csp), which is the bench demo's hard-stop behavior, not the
+            # production cycle's.
             self._worker.request_stop()
-            self.controller.stop()
             self._set_status("Stopping after the current pick…", theme.WARN)
         else:
             self._set_status("Stopped.", theme.TEXT_DIM)
