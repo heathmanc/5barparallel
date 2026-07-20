@@ -350,6 +350,46 @@ def _first_valid(validator, candidates: List[Point]) -> Optional[Point]:
 
 
 DEMO_MOVE_SPEED_MM_S = 60.0   # gentle default so the demo can't outrun the servo
+REENABLE_ATTEMPTS = 4         # retries for a transient enable-chain blip
+REENABLE_DELAY_S = 0.05       # first backoff wait; doubles each try (capped 0.5 s)
+
+
+def _run_with_reenable(driver, run_job, *, should_stop=None,
+                       attempts=REENABLE_ATTEMPTS, base_delay=REENABLE_DELAY_S):
+    """Run ``run_job`` and, if it fails because the drive dropped out of Operation
+    Enabled WITHOUT a fault, re-enable and retry with exponential backoff.
+
+    The AS715N has no STO — its power stage is fed through the E-stop contactor,
+    so a marginal connection can momentarily drop bus power: the drive falls to
+    SWITCH ON DISABLED with no fault, then recovers. Retrying with a short,
+    growing wait lets a later attempt land after the blip has passed, so a
+    transient can't stop the line. A real fault, a non-enable failure, a stop
+    request, or exhausting the attempts returns the failure untouched.
+
+    Returns ``(JobResult, reenables)``."""
+    res = run_job()
+    reenables = 0
+    delay = base_delay
+    for _ in range(attempts):
+        if res.ok:
+            break
+        if getattr(driver, "is_faulted", False):
+            break                                  # a real fault — don't paper over it
+        if "disabled" not in res.reason.lower():
+            break                                  # some other failure — not our case
+        if should_stop is not None and should_stop():
+            break
+        time.sleep(delay)                          # let the transient dip pass
+        try:
+            driver.enable()
+        except Exception as exc:                   # noqa: BLE001 - keep retrying
+            res = JobResult(False, f"{res.reason}; re-enable failed: {exc}")
+            delay = min(delay * 2, 0.5)
+            continue
+        reenables += 1
+        res = run_job()
+        delay = min(delay * 2, 0.5)
+    return res, reenables
 
 
 def run_demo_cycle(
@@ -363,6 +403,8 @@ def run_demo_cycle(
     should_stop: Optional[Callable[[], bool]] = None,
     on_step: Optional[Callable[[CycleStep], None]] = None,
     auto_reenable: bool = True,
+    reenable_attempts: int = REENABLE_ATTEMPTS,
+    reenable_delay_s: float = REENABLE_DELAY_S,
 ) -> CycleResult:
     """Drive a fixed-pick -> each-drop pick&place with full head actuation.
 
@@ -395,21 +437,23 @@ def run_demo_cycle(
             if on_step is not None:
                 on_step(step)
             continue
-        res = runner.run(job)
-        if (not res.ok and auto_reenable and "disabled" in res.reason
-                and not driver.is_faulted):
-            # A drive fell back out of Operation Enabled WITHOUT a fault —
-            # power-stage enable-chain blip (STO/E-stop chatter, 24 V dip).
-            # Re-arm once and retry this job so a trial run survives it; a
-            # drive that won't re-arm (or a real fault) still aborts below.
-            logger.warning("demo: drive dropped out mid-run (%s) — re-enabling",
-                           res.reason)
-            try:
-                driver.enable()
-                reenables += 1
-                res = runner.run(job)
-            except Exception as exc:  # noqa: BLE001 - report the original too
-                res = JobResult(False, f"{res.reason}; re-enable failed: {exc}")
+        if auto_reenable:
+            # A drive can fall back out of Operation Enabled WITHOUT a fault —
+            # a power-stage enable-chain blip (E-stop contactor chatter, a bus-
+            # power dip; the AS715N has no STO, so its stage feeds through the
+            # contactor). Re-arm and retry with growing backoff so a later
+            # attempt lands after the dip passes; a real fault, a stop request,
+            # or exhausting the retries still aborts below.
+            res, n = _run_with_reenable(
+                driver, lambda: runner.run(job), should_stop=should_stop,
+                attempts=reenable_attempts, base_delay=reenable_delay_s)
+            if n:
+                reenables += n
+                logger.warning(
+                    "demo: drive dropped out mid-run — re-enabled %dx (%s)",
+                    n, "recovered" if res.ok else "still failing")
+        else:
+            res = runner.run(job)
         step = CycleStep(i, drop_xy, i, pick_xy, res.ok, res.reason)
         result.steps.append(step)
         if on_step is not None:

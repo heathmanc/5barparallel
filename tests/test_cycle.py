@@ -8,7 +8,9 @@ import random
 from bung_cover_robot.app.cycle_manager import (
     CycleManager,
     DirectJobRunner,
+    JobResult,
     PickSequence,
+    _run_with_reenable,
     demo_pick_and_place_targets,
     make_job_runner,
     run_demo_cycle,
@@ -288,6 +290,104 @@ def test_run_demo_cycle_caps_travel_speed():
     run_demo_cycle(ctrl, nest, drops, pick_sequence=PickSequence(0, 0, 0),
                    move_speed_mm_s=25.0)
     assert all(s == 25.0 for s in drv.speeds)
+
+
+# --------------------------------------------------------------------------- #
+# retry-with-backoff re-enable (transient SWITCH ON DISABLED, no fault)
+# --------------------------------------------------------------------------- #
+class _FakeDriver:
+    """Minimal stand-in for the re-enable path: counts enable() calls and can be
+    faulted. ``is_faulted`` gates whether a drop is transient or a real fault."""
+
+    def __init__(self, is_faulted=False, enable_raises=False):
+        self.is_faulted = is_faulted
+        self.enable_raises = enable_raises
+        self.enables = 0
+
+    def enable(self):
+        self.enables += 1
+        if self.enable_raises:
+            raise RuntimeError("contactor open")
+
+
+def _flaky_runner(fail_count, reason="cannot move: drives are disabled"):
+    """A job that fails with ``reason`` its first ``fail_count`` calls, then oks."""
+    state = {"n": 0}
+
+    def run():
+        state["n"] += 1
+        if state["n"] <= fail_count:
+            return JobResult(False, reason)
+        return JobResult(True, "ok")
+
+    return run
+
+
+def test_reenable_recovers_after_a_few_transient_drops():
+    drv = _FakeDriver()
+    res, n = _run_with_reenable(drv, _flaky_runner(2), base_delay=0.0)
+    assert res.ok                                 # a later attempt landed clean
+    assert n == 2 and drv.enables == 2            # re-armed exactly twice
+
+
+def test_reenable_leaves_a_real_fault_untouched():
+    drv = _FakeDriver(is_faulted=True)
+    res, n = _run_with_reenable(drv, _flaky_runner(2), base_delay=0.0)
+    assert not res.ok and n == 0                  # a fault must not be papered over
+    assert drv.enables == 0
+
+
+def test_reenable_gives_up_after_exhausting_attempts():
+    drv = _FakeDriver()
+    res, n = _run_with_reenable(drv, _flaky_runner(99), attempts=3, base_delay=0.0)
+    assert not res.ok and "disabled" in res.reason
+    assert n == 3 and drv.enables == 3            # tried the cap, then aborted
+
+
+def test_reenable_ignores_non_disable_failures():
+    drv = _FakeDriver()
+    res, n = _run_with_reenable(
+        drv, _flaky_runner(2, reason="drive 0: FAULT Er.87.1"), base_delay=0.0)
+    assert not res.ok and n == 0                  # not our transient — no retry
+    assert drv.enables == 0
+
+
+def test_reenable_honours_a_stop_request():
+    drv = _FakeDriver()
+    res, n = _run_with_reenable(
+        drv, _flaky_runner(99), should_stop=lambda: True, base_delay=0.0)
+    assert not res.ok and n == 0                  # operator stop wins over retry
+
+
+def test_reenable_reports_a_failed_re_arm():
+    drv = _FakeDriver(enable_raises=True)
+    res, n = _run_with_reenable(drv, _flaky_runner(99), attempts=2, base_delay=0.0)
+    assert not res.ok and "re-enable failed" in res.reason
+    assert n == 0 and drv.enables == 2            # attempted, but never re-armed
+
+
+def test_run_demo_cycle_survives_a_transient_disable():
+    """A drop to SWITCH ON DISABLED mid-run (no fault) is retried, and the run
+    completes with a note in the reason so the operator knows it happened."""
+    ctrl = _ready_controller()
+    nest, drops = demo_pick_and_place_targets(
+        ctrl.validator, ctrl.home_xy, rng=random.Random(0))
+
+    class _BlipRunner:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, job):
+            self.calls += 1
+            if self.calls == 2:                   # blip on the second job only
+                return JobResult(False, "cannot move: drives are disabled")
+            return JobResult(True, "ok")
+
+    res = run_demo_cycle(ctrl, nest, drops, runner=_BlipRunner(),
+                         reenable_delay_s=0.0)
+    assert res.ok
+    assert len(res.placed) == len(drops)          # the blip didn't cost a cover
+    assert "auto re-enabled" in res.reason
 
 
 # --------------------------------------------------------------------------- #
