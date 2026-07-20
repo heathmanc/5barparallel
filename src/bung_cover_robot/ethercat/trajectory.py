@@ -223,6 +223,26 @@ def _distance_at(t: float, t_acc: float, t_cruise: float, v_peak: float, a: floa
     return d_acc + d_cruise + v_peak * td - 0.5 * a * td * td
 
 
+def setpoint_velocities(setpoints: List[JointSetpoint], dt: float,
+                        scale: float = 1.0) -> List[Tuple[int, int]]:
+    """Per-cycle joint velocity (drive counts/s) for each setpoint — the central
+    difference of the count path, ``scale``-trimmed. Streamed as the 0x60B1
+    velocity offset so the drive feedforwards OUR trajectory velocity instead of
+    differentiating the position steps (which chirps). ``scale`` lets the bench
+    trim for the drive's velocity-offset units (1.0 = counts/s)."""
+    n = len(setpoints)
+    if n == 0 or dt <= 0:
+        return []
+    out: List[Tuple[int, int]] = []
+    for i in range(n):
+        lo, hi = max(0, i - 1), min(n - 1, i + 1)
+        span = (hi - lo) * dt or dt
+        vl = (setpoints[hi].left_counts - setpoints[lo].left_counts) / span
+        vr = (setpoints[hi].right_counts - setpoints[lo].right_counts) / span
+        out.append((int(round(vl * scale)), int(round(vr * scale))))
+    return out
+
+
 def _trap_velocity(t: float, t_acc: float, t_cruise: float, v_peak: float,
                    a: float) -> float:
     """Speed along the path at time ``t`` for the trapezoidal profile."""

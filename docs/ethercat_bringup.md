@@ -268,6 +268,26 @@ the impulse with almost no loss of cruise speed. Set it to 0 for the old hard
 trapezoid; lower it for a gentler/quieter start at the cost of a little move
 time. Torque feedforward (`C01.16`/`C01.17`) complements it for the accel phase.
 
+**Velocity feedforward streaming (0x60B1) — the chirp-free FF.** With speed-FF
+source = internal reference (`C01.13 = 1`), the drive derives its feedforward by
+*differentiating the position command we stream*. In CSP that command is a
+per-cycle staircase, so the derivative is spiky — it turns into an audible chirp
+and a following-error ripple (worst as speed rises; jerk limiting doesn't help
+because it's the command granularity, not the ramp). The fix is to feed the
+drive OUR trajectory's velocity directly: the daemon maps `0x60B1` (velocity
+offset) into the flexible RxPDO `0x1600` and streams the per-cycle velocity
+(counts/s) alongside the position, and the drive is set to speed-FF source =
+Communication (`C01.13 = 5`) so it uses it. Clean feedforward, no differentiation
+→ tight tracking *and* no chirp, independent of load inertia.
+
+To enable it:
+1. Rebuild the daemon (ABI bumped to 5): `make -C igh ETHERLAB=/opt/etherlab`,
+   then `sudo pkill ec_master_daemon` and reconnect.
+2. Set `C01.13 = 5` (`speed_ff_source`) on both drives.
+3. `velocity_ff_scale` (motion parameter, default 1.0) trims the streamed value
+   for the drive's velocity-offset units — if FF over/under-compensates, adjust
+   it until the characterize FE minimises. 0 disables streaming.
+
 ## 5. Safety (hardware, not software)
 
 - **E-stop → hardwired torque removal, independent of the PC.** Two cases:

@@ -88,3 +88,27 @@ def test_csp_fe_peak_resets_each_run():
     # a tiny move must not inherit the previous big peak (reset per run_csp)
     drv.characterize(2.0, 0.0, 100)
     assert max(m.csp_fe_peak()) < big
+
+
+def test_streamed_velocity_ff_cuts_following_error():
+    """Driver streams 0x60B1 velocity FF from the trajectory; the drive uses it
+    only with speed-FF source = Communication (5), and it cuts the peak FE."""
+    drv, m = _connected_driver()
+    for d in range(len(m.drives)):
+        m.sdo_write(0x2001, 20, 0, drive=d)            # no FF
+    off = max(drv.characterize(0.0, 60.0, 1500))
+    for d in range(len(m.drives)):
+        m.sdo_write(0x2001, 20, 5, drive=d)            # comms = use streamed vel FF
+    on = max(drv.characterize(0.0, 60.0, 1500))
+    assert on < off
+
+
+def test_velocity_ff_scale_zero_streams_nothing():
+    drv, m = _connected_driver()
+    for d in range(len(m.drives)):
+        m.sdo_write(0x2001, 20, 5, drive=d)            # source 5...
+    drv.velocity_ff_scale = 0.0                          # ...but nothing streamed
+    none = max(drv.characterize(0.0, 60.0, 1500))
+    drv.velocity_ff_scale = 1.0
+    streamed = max(drv.characterize(0.0, 60.0, 1500))
+    assert streamed < none

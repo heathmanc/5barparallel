@@ -64,6 +64,14 @@ PARAMETERS: List[DriveParameter] = [
                    "How long a move may take to settle into the tolerance "
                    "after the CSP stream ends (integral action needs time - "
                    "a longer wait often allows a TIGHTER tolerance)."),
+    DriveParameter("velocity_ff_scale", "motion", "float", 1.0, "-",
+                   "Scales the streamed 0x60B1 velocity feedforward. The drive "
+                   "uses it only with speed-FF source = Communication "
+                   "(C01.13 / speed_ff_source = 5); this gives feedforward "
+                   "without the drive differentiating the position steps (no "
+                   "chirp). 1.0 = counts/s; trim on the bench if the drive's "
+                   "velocity units differ (FE minimises at the right scale). "
+                   "0 = don't stream velocity FF."),
     # --- CiA 402 drive objects (written to both drives) ----------------------
     DriveParameter("homing_method", "drive", "int", 24, "-",
                    "0x6098 homing method (switch + index pulse).", sdo=(0x6098, 0), size=1),
@@ -358,6 +366,7 @@ class ParameterStore:
         driver.limits = self.trajectory_limits()
         driver.position_tol_counts = int(self.get("position_tol_counts"))
         driver.settle_timeout_s = float(self.get("settle_timeout_s"))
+        driver.velocity_ff_scale = float(self.get("velocity_ff_scale"))
         notes.append("motion limits applied")
         sdo_write = getattr(driver.master, "sdo_write", None)
         sdo_read = getattr(driver.master, "sdo_read", None)

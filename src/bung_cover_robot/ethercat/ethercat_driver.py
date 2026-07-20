@@ -36,6 +36,7 @@ from .trajectory import (
     plan_linear_move,
     ramp_counts,
     ramp_counts_multi,
+    setpoint_velocities,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class EtherCatRobotDriver(RobotDriver):
         max_transition_cycles: int = 200,
         position_tol_counts: int = 500,
         settle_timeout_s: float = 2.0,
+        velocity_ff_scale: float = 1.0,
         vacuum_do_bit: int = 0,
         plunger_do_bit: int = 1,
         tooling_drive: int = 0,
@@ -67,6 +69,10 @@ class EtherCatRobotDriver(RobotDriver):
         # integrator to pull in — both are Drives-tab motion parameters.
         self.position_tol_counts = position_tol_counts
         self.settle_timeout_s = settle_timeout_s
+        # Per-cycle velocity feedforward streamed as 0x60B1 (counts/s); the drive
+        # uses it only with speed-FF source = Communication (C01.13=5). 0 = don't
+        # stream it. A bench-trim scale for the drive's velocity-offset units.
+        self.velocity_ff_scale = velocity_ff_scale
         # Pick-head I/O: which drive carries the tooling digital outputs and which
         # bit of its 0x60FE:1 word drives the vacuum solenoid / the air cylinder.
         # Repointable to a dedicated EtherCAT I/O slice later; on the bus today the
@@ -391,8 +397,14 @@ class EtherCatRobotDriver(RobotDriver):
         kinematics and zero allocation."""
         h0, h1 = self._home_counts
         targets = [(sp.left_counts - h0, sp.right_counts - h1) for sp in traj.setpoints]
+        # Velocity feedforward from the (smooth) trajectory velocity, streamed as
+        # 0x60B1 so the drive doesn't have to differentiate the position steps.
+        velocities = None
+        if self.velocity_ff_scale:
+            velocities = setpoint_velocities(traj.setpoints, traj.cycle_dt_s,
+                                             self.velocity_ff_scale)
         try:
-            self.master.run_csp(targets)
+            self.master.run_csp(targets, velocities)
         except MasterError as exc:
             raise RobotDriverError(f"move aborted: {exc}") from exc
         want = targets[-1]
