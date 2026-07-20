@@ -186,6 +186,20 @@ class EtherCatMaster(ABC):
     def _faulted(self) -> bool:
         return any(cia402.is_fault(d.statusword) for d in self.drives)
 
+    def csp_fe_peak(self) -> List[int]:
+        """Peak |following error| per drive over the most recent ``run_csp``, in
+        counts. This is what the tuning assistant reads to grade a move. Masters
+        that don't track it report zeros."""
+        return [0] * self.num_drives
+
+
+# A simulated position loop lags in proportion to commanded velocity (the
+# per-cycle step); speed feedforward cancels it. ~16 counts of lag per count of
+# per-cycle step mirrors a real ~30/s position-loop gain at a 2 ms cycle — enough
+# for the tuning assistant to show following error rising with speed and falling
+# with feedforward on the bench-off (simulated) network.
+_SIM_FE_LAG_COUNTS = 16.0
+
 
 # --------------------------------------------------------------------------- #
 # Simulator
@@ -204,6 +218,7 @@ class _SimDrive:
         self._home_offset = 0
         self._faulted = False
         self._prev_cw = 0
+        self.speed_ff_frac = 0.0        # 0..1, set by the master from the FF SDOs
 
     def inject_fault(self) -> None:
         self._faulted = True
@@ -220,8 +235,10 @@ class _SimDrive:
         else:
             self.state = self._advance(self.state, cw)
 
+        moved = 0
         if (self.state is cia402.Cia402State.OPERATION_ENABLED
                 and pd.mode_of_operation == cia402.MODE_CSP):
+            moved = pd.target_position - self.actual_position
             self.actual_position = pd.target_position
 
         if (self.state is cia402.Cia402State.OPERATION_ENABLED
@@ -229,6 +246,12 @@ class _SimDrive:
                 and (cw & (1 << 4))):
             self.actual_position = self._home_offset
 
+        # Reported following error ~ commanded per-cycle step (velocity), cut by
+        # speed feedforward. actual_position already tracks target exactly (ideal
+        # servo), so this lag is a DIAGNOSTIC only — it never moves the axis or
+        # affects settling (moved == 0 at rest -> FE == 0).
+        pd.following_error = int(round(
+            _SIM_FE_LAG_COUNTS * (1.0 - self.speed_ff_frac) * moved))
         pd.statusword = self._statusword()
         pd.actual_position = self.actual_position
         self._prev_cw = cw
@@ -276,6 +299,7 @@ class SimulatedEtherCatMaster(EtherCatMaster):
         # In-memory SDO dictionary per drive so Apply/Refresh round-trip in sim
         # exactly as they would over the real mailbox (write then read back).
         self._sdo: List[dict] = [dict() for _ in range(num_drives)]
+        self._fe_peak: List[int] = [0] * num_drives
         self._open = False
 
     @property
@@ -297,17 +321,33 @@ class SimulatedEtherCatMaster(EtherCatMaster):
     def exchange(self) -> None:
         if not self._open:
             raise RuntimeError("master is not open")
-        for pd, sim in zip(self._drives, self._sim):
+        for d, (pd, sim) in enumerate(zip(self._drives, self._sim)):
+            sim.speed_ff_frac = self._speed_ff_frac(d)
             sim.step(pd)
 
+    def _speed_ff_frac(self, drive: int) -> float:
+        """Speed-FF cancellation fraction from the drive's SDOs: source
+        0x2001:20 (1 = internal reference, active) and gain 0x2001:21 in 0.1 %
+        (1000 = 100 %). Lets the assistant show following error fall as FF rises."""
+        sdo = self._sdo[drive]
+        if int(sdo.get((0x2001, 20), 0)) != 1:
+            return 0.0
+        return max(0.0, min(1.0, int(sdo.get((0x2001, 21), 0)) / 1000.0))
+
     def run_csp(self, targets: CspTargets) -> None:
+        self._fe_peak = [0] * len(self._drives)
         for row in targets:
             for d, val in enumerate(row):
                 if d < len(self._drives):
                     self._drives[d].target_position = int(val)
             self.exchange()
+            for d, pd in enumerate(self._drives):
+                self._fe_peak[d] = max(self._fe_peak[d], abs(pd.following_error))
             if self._faulted():
                 raise MasterError("drive faulted during CSP stream")
+
+    def csp_fe_peak(self) -> List[int]:
+        return list(self._fe_peak)
 
     # --- SDO (in-memory, mirrors the real per-drive mailbox) --------------- #
     def sdo_write(self, index: int, sub: int, value: int, size: int = 4,

@@ -23,7 +23,9 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
+    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -41,12 +43,13 @@ from PySide6.QtWidgets import (
 
 from ..app.cycle_manager import PickSequence, demo_pick_and_place_targets
 from ..app.robot_test_controller import RobotTestController
-from ..ethercat import cia402
+from ..ethercat import cia402, tuning
 from ..ethercat.ethercat_driver import EtherCatRobotDriver
 from ..ethercat.igh_master import IgHMaster
 from ..ethercat.master import MasterError, SimulatedEtherCatMaster
 from ..ethercat.parameters import PARAMETERS, ParameterStore
 from ..robot.driver import HomingConfig, RobotDriverError
+from ..robot.inertia import InertiaInputs, estimate_load_inertia
 from . import theme
 
 _SW_BITS = [  # (label, statusword mask)
@@ -185,6 +188,229 @@ class _DemoWorker(QThread):
             self.done.emit(f"FAIL:{exc}")
 
 
+class _CharacterizeWorker(QThread):
+    """Runs an out-and-back characterize move off the GUI thread and reports the
+    peak following error per drive (counts)."""
+
+    done = Signal(object, str)   # (peaks list | None, error message "")
+
+    def __init__(self, driver, dx: float, dy: float, speed: float, parent=None) -> None:
+        super().__init__(parent)
+        self._driver = driver
+        self._dx, self._dy, self._speed = dx, dy, speed
+
+    def run(self) -> None:  # pragma: no cover - GUI/hardware thread
+        try:
+            peaks = self._driver.characterize(self._dx, self._dy, self._speed)
+            self.done.emit(peaks, "")
+        except Exception as exc:  # noqa: BLE001
+            self.done.emit(None, str(exc))
+
+
+class TuningDialog(QDialog):
+    """Measurement-driven servo tuning helper.
+
+    Three safe steps: (1) CAD-estimate the load inertia ratio (C00.06) from the
+    arm geometry — never the drive's native inertia auto-tune, which free-spins
+    one axis and would fight the closed 5-bar linkage; (2) enable speed
+    feedforward (the fix for velocity-proportional following error / Er.47); and
+    (3) grade a validated out-and-back move by its peak following error, so you
+    raise FF/stiffness and watch the number fall instead of guess-and-trip."""
+
+    def __init__(self, tab: "EtherCatTab", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent or tab)
+        self.tab = tab
+        self._last_c0006: Optional[int] = None
+        self._worker: Optional[_CharacterizeWorker] = None
+        self.setWindowTitle("Servo tuning assistant")
+        self.setMinimumWidth(560)
+        root = QVBoxLayout(self)
+        intro = QLabel(
+            "Estimate inertia → enable speed feedforward → run a characterize "
+            "move and read the peak following error. The native inertia "
+            "auto-tune is NOT used (unsafe on the coupled 5-bar).")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        root.addWidget(intro)
+        root.addWidget(self._build_inertia())
+        root.addWidget(self._build_ff())
+        root.addWidget(self._build_characterize())
+        self.msg = QLabel("")
+        self.msg.setWordWrap(True)
+        self.msg.setStyleSheet(f"color:{theme.TEXT_DIM};")
+        root.addWidget(self.msg)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(close)
+        root.addLayout(row)
+
+    def _status(self, text: str) -> None:
+        self.msg.setText(text)
+
+    # --- inertia (CAD estimate) --------------------------------------------- #
+    def _build_inertia(self) -> QGroupBox:
+        box = QGroupBox("1 · Load inertia (CAD estimate → C00.06)")
+        f = QFormLayout(box)
+        self.w_spin = QDoubleSpinBox(); self.w_spin.setRange(1, 200)
+        self.w_spin.setValue(InertiaInputs.arm_width_mm); self.w_spin.setSuffix(" mm")
+        self.dens_spin = QDoubleSpinBox(); self.dens_spin.setRange(100, 20000)
+        self.dens_spin.setValue(InertiaInputs.arm_density_kg_m3); self.dens_spin.setSuffix(" kg/m³")
+        self.pay_spin = QDoubleSpinBox(); self.pay_spin.setRange(0, 5000)
+        self.pay_spin.setValue(InertiaInputs.payload_g); self.pay_spin.setSuffix(" g")
+        self.rotor_spin = QDoubleSpinBox(); self.rotor_spin.setRange(0.1, 100)
+        self.rotor_spin.setDecimals(2); self.rotor_spin.setValue(
+            InertiaInputs.rotor_inertia_kgm2 * 1e4); self.rotor_spin.setSuffix(" ×1e-4 kg·m²")
+        self.rotor_spin.setToolTip("Motor rotor inertia Jm from the A6M80-750 "
+                                   "datasheet — the ratio is only as good as this.")
+        f.addRow("Arm width", self.w_spin)
+        f.addRow("Arm density", self.dens_spin)
+        f.addRow("Payload at TCP", self.pay_spin)
+        f.addRow("Rotor inertia", self.rotor_spin)
+        self.inertia_lbl = QLabel("— press Estimate —")
+        self.inertia_lbl.setWordWrap(True)
+        f.addRow(self.inertia_lbl)
+        row = QHBoxLayout()
+        est_btn = QPushButton("Estimate")
+        est_btn.clicked.connect(self._on_estimate)
+        self.use_inertia_btn = QPushButton("Use → C00.06")
+        self.use_inertia_btn.setEnabled(False)
+        self.use_inertia_btn.clicked.connect(self._on_use_inertia)
+        row.addWidget(est_btn); row.addWidget(self.use_inertia_btn); row.addStretch(1)
+        f.addRow(row)
+        return box
+
+    def _on_estimate(self) -> None:
+        cfg = self.tab.controller.kin.config
+        inp = InertiaInputs(
+            l1_mm=cfg.l1_mm, l2_mm=cfg.l2_mm, reduction=cfg.belt_reduction,
+            arm_width_mm=self.w_spin.value(), arm_density_kg_m3=self.dens_spin.value(),
+            payload_g=self.pay_spin.value(),
+            rotor_inertia_kgm2=self.rotor_spin.value() * 1e-4)
+        est = estimate_load_inertia(inp)
+        self._last_c0006 = est.c0006
+        self.inertia_lbl.setText(
+            f"arms {est.m1_kg*1000:.0f}/{est.m2_kg*1000:.0f} g · J reflected "
+            f"{est.j_reflected_kgm2*1e4:.2f}e-4 kg·m² · ratio {est.ratio_pct:.0f}% "
+            f"→ suggest C00.06 = {est.c0006}  (estimate — verify by characterizing)")
+        self.use_inertia_btn.setEnabled(True)
+
+    def _on_use_inertia(self) -> None:
+        if self._last_c0006 is None:
+            return
+        try:
+            self.tab.store.set_custom_value("load_inertia_ratio", int(self._last_c0006))
+        except KeyError:
+            self.tab.store.add_custom("load_inertia_ratio", "0x2000:07",
+                                      int(self._last_c0006), "int16",
+                                      "Load inertia ratio (%, CAD estimate)")
+        self.tab._refresh_custom_table()
+        self._status(f"C00.06 set to {self._last_c0006}% — press 'Apply now' or the "
+                     "Parameters tab's Apply to write it to the drives.")
+
+    # --- speed feedforward -------------------------------------------------- #
+    def _build_ff(self) -> QGroupBox:
+        box = QGroupBox("2 · Speed feedforward (the Er.47 / 0x8611 fix)")
+        f = QFormLayout(box)
+        self.ff_spin = QSpinBox(); self.ff_spin.setRange(0, 200)
+        self.ff_spin.setValue(50); self.ff_spin.setSuffix(" %")
+        self.ff_spin.setToolTip("Speed FF gain. 50 % is a safe start; climb toward "
+                                "100 % watching for overshoot. Sets C01.13=1, C01.14.")
+        f.addRow("Speed FF gain", self.ff_spin)
+        row = QHBoxLayout()
+        ff_btn = QPushButton("Enable speed FF")
+        ff_btn.clicked.connect(self._on_enable_ff)
+        apply_btn = QPushButton("Apply now + save")
+        apply_btn.clicked.connect(self._apply_now)
+        row.addWidget(ff_btn); row.addWidget(apply_btn); row.addStretch(1)
+        f.addRow(row)
+        return box
+
+    def _on_enable_ff(self) -> None:
+        pct = self.ff_spin.value()
+        self.tab.store.set_custom_value("speed_ff_source", 1)
+        self.tab.store.set_custom_value("speed_ff_gain", int(pct * 10))
+        # Force-write: source's seeded default is already 1, so a plain edit
+        # wouldn't be dirty and apply would skip it -> FF never reaches the drive.
+        self.tab.store.touch("speed_ff_source")
+        self.tab.store.touch("speed_ff_gain")
+        self.tab._refresh_custom_table()
+        self._status(f"Speed FF armed at {pct}% (source = internal ref) — applying…")
+        self._apply_now()
+
+    def _apply_now(self) -> None:
+        drv = self.tab._ec_driver()
+        if drv is None:
+            self.tab.store.save()
+            self._status("Saved to config. Connect the drives to write it live.")
+            return
+        try:
+            self.tab.store.apply(drv)
+            self.tab.store.save()
+        except Exception as exc:  # noqa: BLE001
+            self._status(f"Apply failed: {exc}")
+            return
+        self.tab._refresh_custom_table()
+        self._status("Applied to drives and saved.")
+
+    # --- characterize ------------------------------------------------------- #
+    def _build_characterize(self) -> QGroupBox:
+        box = QGroupBox("3 · Characterize (peak following error)")
+        f = QFormLayout(box)
+        self.char_speed = QDoubleSpinBox(); self.char_speed.setRange(10, 5000)
+        self.char_speed.setValue(500); self.char_speed.setSuffix(" mm/s")
+        self.char_dx = QDoubleSpinBox(); self.char_dx.setRange(-200, 200)
+        self.char_dx.setValue(0); self.char_dx.setSuffix(" mm")
+        self.char_dy = QDoubleSpinBox(); self.char_dy.setRange(-200, 200)
+        self.char_dy.setValue(60); self.char_dy.setSuffix(" mm")
+        f.addRow("Speed", self.char_speed)
+        f.addRow("Move dX", self.char_dx)
+        f.addRow("Move dY", self.char_dy)
+        self.result_lbl = QLabel("— run a move —")
+        self.result_lbl.setWordWrap(True)
+        f.addRow(self.result_lbl)
+        self.run_btn = QPushButton("Run characterize (out-and-back)")
+        self.run_btn.clicked.connect(self._on_run)
+        f.addRow(self.run_btn)
+        return box
+
+    def _on_run(self) -> None:
+        drv = self.tab._ec_driver()
+        if drv is None or not drv.is_enabled or not drv.is_referenced:
+            self._status("Enable + reference the drives first "
+                         "(Connect → Enable → Set Home).")
+            return
+        if self._worker is not None and self._worker.isRunning():
+            return
+        dx, dy = self.char_dx.value(), self.char_dy.value()
+        speed = self.char_speed.value()
+        self.tab._set_motion_enabled(False)
+        self.run_btn.setEnabled(False)
+        self._status(f"Running characterize at {speed:.0f} mm/s…")
+        self._worker = _CharacterizeWorker(drv, dx, dy, speed)
+        self._worker.done.connect(self._on_characterized)
+        self._worker.start()
+
+    def _on_characterized(self, peaks, err: str) -> None:
+        self.tab._set_motion_enabled(True)
+        self.run_btn.setEnabled(True)
+        if err or peaks is None:
+            self._status(f"Characterize failed: {err}")
+            return
+        ppd = self.tab.controller.kin.config.pulses_per_degree
+        win = int(self.tab.store.get("following_error_window"))
+        peak = max(peaks) if peaks else 0
+        deg = tuning.fe_degrees(peak, ppd)
+        pct = tuning.fe_margin_pct(peak, win)
+        pct_txt = "—" if pct == float("inf") else f"{pct:.0f}%"
+        per = " / ".join(str(p) for p in peaks)
+        self.result_lbl.setText(
+            f"peak FE {peak} cts ({deg:.2f}°) — {pct_txt} of the {win}-ct fault "
+            f"window → {tuning.grade(peak, win)}   [per drive {per}]")
+        self._status("Raise Speed FF / stiffness and re-run to watch the peak drop.")
+
+
 class EtherCatTab(QWidget):
     connectionChanged = Signal()
 
@@ -270,8 +496,15 @@ class EtherCatTab(QWidget):
             "climbs under load is cable/connector/EMI (a bad link kicks a drive "
             "out of OP - the silent no-fault disable).")
         self.crc_btn.clicked.connect(self._on_zero_crc)
+        self.tune_btn = QPushButton("Tuning…")
+        self.tune_btn.setToolTip(
+            "Servo tuning assistant: CAD-estimate the load inertia, enable speed "
+            "feedforward, and grade a move by its peak following error (the "
+            "Er.47 / 0x8611 fix). Does NOT run the drive's unsafe native inertia "
+            "auto-tune on the coupled 5-bar.")
+        self.tune_btn.clicked.connect(self._on_open_tuning)
         for b in (self.connect_btn, self.sim_btn, self.disconnect_btn,
-                  self.reset_btn, self.crc_btn):
+                  self.reset_btn, self.crc_btn, self.tune_btn):
             row.addWidget(b)
         row.addStretch(1)
         self.conn_label = QLabel("DISCONNECTED")
@@ -792,6 +1025,9 @@ class EtherCatTab(QWidget):
         reset()
         self._status("Link/CRC counters zeroed - run a trial and watch the "
                      "'Link errors (CRC)' row.", theme.TEXT)
+
+    def _on_open_tuning(self) -> None:
+        TuningDialog(self, self).exec()
 
     def _stop_jog(self) -> None:
         if self._jog_worker is not None:

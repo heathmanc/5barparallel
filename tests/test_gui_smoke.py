@@ -1010,3 +1010,70 @@ def test_drives_tab_zero_crc_needs_real_master(qapp, tmp_path):
     assert "real (IgH) master" in tab.status_label.text()
     tab._on_disconnect()
     tab._stop_poller()
+
+
+def test_tuning_dialog_inertia_estimate_and_ff_arm(qapp, tmp_path):
+    """The tuning assistant estimates C00.06 from geometry (never the unsafe
+    native inertia tune) and arms speed feedforward as an edited, force-written
+    object (source's seeded default is already 1, so it must be touched)."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab, TuningDialog
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab._on_connect_sim()
+    dlg = TuningDialog(tab)
+    dlg._on_estimate()
+    assert dlg._last_c0006 and dlg._last_c0006 > 0
+    assert "C00.06" in dlg.inertia_lbl.text()
+    dlg._on_use_inertia()
+    inertia = next(c for c in tab.store.custom_parameters()
+                   if c.name == "load_inertia_ratio")
+    assert inertia.value == dlg._last_c0006
+
+    dlg.ff_spin.setValue(60)
+    dlg._on_enable_ff()                        # arms + applies to the sim drive
+    src = next(c for c in tab.store.custom_parameters() if c.name == "speed_ff_source")
+    gain = next(c for c in tab.store.custom_parameters() if c.name == "speed_ff_gain")
+    assert src.value == 1 and gain.value == 600
+    # force-written to the drive even though source already defaulted to 1
+    assert tab._master().sdo_read(0x2001, 20, drive=0) == 1
+    assert tab._master().sdo_read(0x2001, 21, drive=0) == 600
+    tab._on_disconnect()
+    tab._stop_poller()
+
+
+def test_tuning_dialog_characterize_and_ff_cuts_following_error(qapp, tmp_path):
+    """End-to-end: a characterize move reports a peak following error, and
+    enabling speed FF measurably cuts it (the whole point of the tool)."""
+    import re
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab, TuningDialog
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab._on_connect_sim()
+    tab._on_enable()
+    tab._on_set_home()
+    dlg = TuningDialog(tab)
+    dlg.char_dx.setValue(0.0)
+    dlg.char_dy.setValue(60.0)
+    dlg.char_speed.setValue(1500)
+
+    def _peak():
+        return int(re.search(r"peak FE (\d+)", dlg.result_lbl.text()).group(1))
+
+    dlg._on_run()                              # FF not applied to the sim yet
+    assert _wait_until(qapp, lambda: dlg._worker is not None
+                       and not dlg._worker.isRunning())
+    qapp.processEvents()
+    assert "peak FE" in dlg.result_lbl.text()
+    off = _peak()
+    assert off > 0
+
+    dlg.ff_spin.setValue(100)
+    dlg._on_enable_ff()                        # writes FF to the sim drives
+    dlg._on_run()
+    assert _wait_until(qapp, lambda: not dlg._worker.isRunning())
+    qapp.processEvents()
+    assert _peak() < off                       # feedforward cut the peak lag
+    tab._on_disconnect()
+    tab._stop_poller()

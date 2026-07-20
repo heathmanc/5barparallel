@@ -227,10 +227,37 @@ just supplies fixed targets instead of camera detections.
 **Speed.** The demo travels at the **jog speed** set in the jog box (a gentle
 default), *not* the full `speed_mm_s` motion limit — a big point-to-point move at
 the tuned maximum can outrun an under-tuned servo and trip the drive's
-**excessive-position-deviation** alarm (StepperOnline A6 **Er.47**, the ESI's
-"Excessive position deviation threshold"). If you still see Er.47, lower the jog
-speed further, drop `accel_mm_s2`, or raise the drive's deviation threshold /
-retune the loop gains — the arm is being commanded faster than it can follow.
+**excessive-position-deviation** alarm (StepperOnline A6 **Er.47** / CiA 402
+error `0x8611`, the ESI's "Excessive position deviation threshold"). If you still
+see Er.47, lower the jog speed further, drop `accel_mm_s2`, or raise the drive's
+deviation threshold / retune the loop gains — the arm is being commanded faster
+than it can follow.
+
+### Tuning assistant (Drives tab → "Tuning…")
+
+The **root cause** of speed-proportional Er.47 is that we stream **position
+only** (CSP) and, out of the box, the A6's **speed feedforward is off**
+(`C01.13 Speed feedforward selection = 0`, ESI object `0x2001:20`). Without it a
+position loop lags in direct proportion to velocity, so following error climbs
+with speed until it trips. The assistant fixes and measures this without the
+guesswork:
+
+1. **Load inertia (C00.06)** — estimated from the arm *geometry* (`robot/inertia.py`),
+   **not** the drive's native inertia auto-tune (`F30.10`). That routine free-spins
+   one axis several turns; on the assembled 5-bar the shoulders are coupled through
+   the linkage, so it would fight the mechanism and exceed the joint window. Enter
+   your motor's rotor inertia (Jm) for a trustworthy ratio.
+2. **Speed feedforward** — sets `C01.13 = 1` (internal reference: FF derived from
+   the position-command slope) and `C01.14` to the chosen gain (`0x2001:21`,
+   0.1 % units; start 50 %, climb toward 100 %). Written to both drives and saved.
+3. **Characterize** — runs a *validated* out-and-back TCP move (never a free
+   spin) and reports the **peak following error** in counts, degrees, and as a
+   percentage of the `0x6065` fault window. Raise FF/stiffness and re-run to watch
+   the peak fall; only growth past the window trips Er.47.
+
+Peak following error is captured inside the CSP streaming loop (read-only on the
+real master, exact in the simulator), so the number reflects the whole move, not
+a slow GUI sample.
 
 ## 5. Safety (hardware, not software)
 

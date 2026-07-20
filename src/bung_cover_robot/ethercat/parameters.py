@@ -158,10 +158,17 @@ DEFAULT_TUNING: List[Tuple[str, str, float, str, str]] = [
     ("speed_loop_gain",    "0x2001:02", 250,   "int16", "1st speed loop gain (0.1 Hz, 1-20000) — raise this before position gain"),
     ("speed_integ_time",   "0x2001:03", 3184,  "int16", "1st speed loop integral time (0.01 ms, 1-51200) — lower kills steady-state error"),
     ("torque_filter",      "0x2001:04", 200,   "int16", "1st torque ref filter time constant (Hz, 5-16000) — LOWER to damp high-freq buzz (more delay)"),
+    # FF objects live in 0x2001 at DECIMAL subindices 20/21/23/24 (ESI DT2001);
+    # the friendly Cxx.NN form maps there correctly (C01.13 -> 0x2001:20), unlike
+    # a bare "0x2001:20" which the address parser would read as hex sub 0x20.
+    ("speed_ff_source",    "C01.13",    1,     "int16", "Speed feedforward SELECT: 0=off, 1=internal ref, 2=model, 5=comms. 1 derives FF from the position-command slope — the CSP fix for velocity-proportional following error (Er.47/0x8611). Set with the drive stopped"),
+    ("speed_ff_gain",      "C01.14",    500,   "int16", "Speed feedforward gain (0.1%, 0-2000) — 500 = 50%. Cancels following error at speed; climb toward 1000 (100%) watching for overshoot at move ends"),
+    ("torque_ff_source",   "C01.16",    0,     "int16", "Torque feedforward SELECT: 0=off, 1=internal ref, 2=model. Enable (1) only if the ACCEL ramp still lags after speed FF"),
+    ("torque_ff_gain",     "C01.17",    0,     "int16", "Torque feedforward gain (0.1%, 0-2000) — raise with care, too high overshoots"),
 ]
 
 # Bump when DEFAULT_TUNING addresses/values change so a saved config re-seeds.
-TUNING_SEED_VERSION = 4
+TUNING_SEED_VERSION = 5
 # Names used by earlier (wrong-address) seed sets, dropped on migration.
 _LEGACY_TUNING_NAMES = {"inertia_ratio", "machine_stiffness", "realtime_autotune",
                         "pos_loop_gain", "vel_loop_gain", "vel_integ_time", "torque_filter"}
@@ -216,6 +223,12 @@ class ParameterStore:
 
     def dirty(self) -> List[str]:
         return sorted(self._dirty)
+
+    def touch(self, name: str) -> None:
+        """Force ``name`` to be treated as edited so the next ``apply`` writes it
+        even when its value already equals the seeded default — e.g. re-asserting
+        speed feedforward source = 1, whose default is already 1."""
+        self._dirty.add(name)
 
     @classmethod
     def load(cls, path: str | Path) -> "ParameterStore":

@@ -103,6 +103,7 @@ class IgHMaster(EtherCatMaster):
         self.cycle_dt_s = cycle_dt_s
         self._num = num_drives
         self._drives = [DriveProcessData() for _ in range(num_drives)]
+        self._fe_peak: List[int] = [0] * num_drives
         self.auto_launch = auto_launch
         self.daemon_path = Path(daemon_path)
         self._proc: subprocess.Popen | None = None
@@ -218,10 +219,19 @@ class IgHMaster(EtherCatMaster):
                 struct.pack_into("<i", mm, off, int(row[d]))
         self._u32_set(_H_CSP_LEN, n)
         self._u32_set(_H_CSP_START, 1)               # daemon latches + streams
+        self._fe_peak = [0] * self._num              # peak |FE| this stream
         deadline = time.perf_counter() + n * self.cycle_dt_s + 1.0
         # wait until the daemon finishes playing the buffer (csp_running -> 0)
         fault_hits = 0
         while self._u32(_H_CSP_RUN) == 1 or self._u32(_H_CSP_START) == 1:
+            # Sample the drives' following error read-only (the daemon refreshes
+            # the input image every RT cycle) so the tuning assistant can grade
+            # the move. Read-only: never writes the output image mid-stream.
+            for d in range(self._num):
+                self._read_inputs(d, self._drives[d])
+                fe = abs(self._drives[d].following_error)
+                if fe > self._fe_peak[d]:
+                    self._fe_peak[d] = fe
             # A real fault LATCHES — require it on two consecutive samples so a
             # single torn/transient statusword read can't abort a good stream.
             if self._faulted():
@@ -243,6 +253,9 @@ class IgHMaster(EtherCatMaster):
         for d in range(self._num):
             self._drives[d].target_position = int(last[d])
         self.exchange()
+
+    def csp_fe_peak(self) -> List[int]:
+        return list(self._fe_peak)
 
     def _sdo_request(self, op: int, index: int, sub: int, drive: int,
                      value: int, size: int, timeout_s: float) -> int:
