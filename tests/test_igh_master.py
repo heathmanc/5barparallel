@@ -9,6 +9,7 @@ from bung_cover_robot.ethercat.igh_master import (
     _CSP_BASE,
     _CSP_MAX,
     _CSP_VEL_BASE,
+    _H_CYCLE_DT,
     _DRIVE_BASE,
     _DRIVE_SZ,
     _LINK_RAW,
@@ -118,3 +119,17 @@ def test_link_counters_and_reset_through_fake_shm():
     # reset raises the flag the daemon consumes
     m.reset_link_counters()
     assert struct.unpack_from("<I", m._mm, _LINK_RESET)[0] == 1
+
+
+def test_open_guards_cycle_time_mismatch():
+    """A daemon running at a different SYNC0 cycle than the trajectory plans for
+    scales every speed (an Er.87.1 risk) and must be rejected."""
+    m = IgHMaster(num_drives=2, auto_launch=False, cycle_dt_s=0.002)
+    m._mm = bytearray(_SHM_SIZE)
+    struct.pack_into("<I", m._mm, _H_CYCLE_DT, 1_000_000)   # daemon at 1 ms, we want 2 ms
+    with pytest.raises(MasterError):
+        m._check_cycle_match()
+    struct.pack_into("<I", m._mm, _H_CYCLE_DT, 2_000_000)   # matched -> no raise
+    m._check_cycle_match()
+    struct.pack_into("<I", m._mm, _H_CYCLE_DT, 0)           # uninitialised -> tolerated
+    m._check_cycle_match()

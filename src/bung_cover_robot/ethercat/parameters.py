@@ -54,8 +54,13 @@ PARAMETERS: List[DriveParameter] = [
                    "little move time."),
     DriveParameter("cycle_dt_s", "motion", "float", 0.002, "s",
                    "EtherCAT DC cycle time; must match the master."),
-    DriveParameter("max_joint_step_deg", "motion", "float", 0.0, "deg",
-                   "Per-cycle shoulder step cap (0 = off) - singularity guard."),
+    DriveParameter("max_joint_step_deg", "motion", "float", 8.0, "deg",
+                   "Per-cycle shoulder step cap (0 = off). A plan whose per-cycle "
+                   "joint step exceeds this is REJECTED before streaming - a "
+                   "singularity/Jacobian-spike guard that also stops a too-fast "
+                   "step from tripping the drive's excessive-increment alarm "
+                   "(Er.87.1). 8 deg/cycle at 2 ms is ~6x a normal fast move; raise "
+                   "it only for genuinely faster trials."),
     DriveParameter("position_tol_counts", "motion", "int", 500, "counts",
                    "End-of-move tolerance. 500 counts ~ 0.46 deg at the joint "
                    "(17-bit encoder, 3:1) - a realistic servo settling window; "

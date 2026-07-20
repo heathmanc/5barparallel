@@ -266,3 +266,11 @@ def test_old_yaml_without_settle_timeout_gets_default(tmp_path):
     assert store.get("position_tol_counts") == 500
     assert store.get("settle_timeout_s") == 2.0
     assert store.get("speed_mm_s") == 120.0
+
+
+def test_joint_step_guard_enabled_by_default():
+    # The plan-time joint-step guard ships ON (rejects a >cap per-cycle step
+    # before it can trip the drive's Er.87.1 excessive-increment alarm).
+    from bung_cover_robot.ethercat.parameters import ParameterStore
+    lim = ParameterStore().trajectory_limits()
+    assert lim.max_joint_step_deg == 8.0
