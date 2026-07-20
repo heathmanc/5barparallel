@@ -974,6 +974,7 @@ class EtherCatTab(QWidget):
             limits=self.store.trajectory_limits(),
             position_tol_counts=int(self.store.get("position_tol_counts")),
             settle_timeout_s=float(self.store.get("settle_timeout_s")),
+            velocity_ff_scale=float(self.store.get("velocity_ff_scale")),
         ).connect()
         self.controller.set_driver(driver)
         self._start_poller()

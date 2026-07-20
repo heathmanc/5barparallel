@@ -29,7 +29,7 @@ from .master import CspTargets, DriveProcessData, EtherCatMaster, MasterError
 
 _SHM_PATH = "/dev/shm/bcr_ethercat"
 _SHM_MAGIC = 0x42435231
-_SHM_ABI = 4
+_SHM_ABI = 5
 _MAX_DRIVES = 2
 _CSP_MAX = 65536
 
@@ -51,7 +51,9 @@ _LINK_RESET = _SDO_BASE + 36
 _LINK_SEQ = _SDO_BASE + 40                  # u32 per drive
 _LINK_RAW = _SDO_BASE + 40 + 4 * _MAX_DRIVES
 _LINK_RAW_SZ = 20
-_SHM_SIZE = _LINK_RAW + _MAX_DRIVES * _LINK_RAW_SZ
+# ABI 5: per-cycle velocity-offset (0x60B1) FF stream, parallel to csp[].
+_CSP_VEL_BASE = _LINK_RAW + _MAX_DRIVES * _LINK_RAW_SZ
+_SHM_SIZE = _CSP_VEL_BASE + _MAX_DRIVES * _CSP_MAX * 4
 
 # drive_shm_t sub-offsets
 _O_CTRL, _O_MODE, _O_TARGET, _O_DOUT = 0, 2, 4, 8
@@ -203,7 +205,7 @@ class IgHMaster(EtherCatMaster):
         for d, pd in enumerate(self._drives):
             self._read_inputs(d, pd)
 
-    def run_csp(self, targets: CspTargets) -> None:
+    def run_csp(self, targets: CspTargets, velocities=None) -> None:
         if not self._open:
             raise MasterError("master is not open")
         targets = list(targets)
@@ -212,11 +214,15 @@ class IgHMaster(EtherCatMaster):
             return
         if n > _CSP_MAX:
             raise MasterError(f"CSP stream too long ({n} > {_CSP_MAX})")
+        vels = list(velocities) if velocities is not None else None
         mm = self._mm
         for i, row in enumerate(targets):
             for d in range(self._num):
                 off = _CSP_BASE + (d * _CSP_MAX + i) * 4
                 struct.pack_into("<i", mm, off, int(row[d]))
+                voff = _CSP_VEL_BASE + (d * _CSP_MAX + i) * 4
+                v = int(vels[i][d]) if vels is not None else 0
+                struct.pack_into("<i", mm, voff, v)
         self._u32_set(_H_CSP_LEN, n)
         self._u32_set(_H_CSP_START, 1)               # daemon latches + streams
         self._fe_peak = [0] * self._num              # peak |FE| this stream

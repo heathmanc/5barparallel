@@ -174,10 +174,13 @@ class EtherCatMaster(ABC):
         for the low-rate CiA 402 state-machine steps (enable/home/reset)."""
 
     @abstractmethod
-    def run_csp(self, targets: CspTargets) -> None:
+    def run_csp(self, targets: CspTargets, velocities=None) -> None:
         """Stream per-cycle (left_counts, right_counts) CSP targets, one per PDO
         cycle, returning when the last has been applied. Raises MasterError if a
-        drive faults mid-stream."""
+        drive faults mid-stream. ``velocities`` (optional) is a matching list of
+        per-cycle (left, right) velocity offsets in counts/s, streamed as 0x60B1
+        so the drive can feedforward our trajectory velocity (speed-FF source=5)
+        instead of differentiating the position steps."""
 
     @property
     def num_drives(self) -> int:
@@ -218,7 +221,8 @@ class _SimDrive:
         self._home_offset = 0
         self._faulted = False
         self._prev_cw = 0
-        self.speed_ff_frac = 0.0        # 0..1, set by the master from the FF SDOs
+        self.speed_ff_frac = 0.0        # 0..1 (source 1), set by the master from the FF SDOs
+        self.ff_counts = None           # source 5: per-cycle counts cancelled by streamed 0x60B1 FF
 
     def inject_fault(self) -> None:
         self._faulted = True
@@ -247,11 +251,16 @@ class _SimDrive:
             self.actual_position = self._home_offset
 
         # Reported following error ~ commanded per-cycle step (velocity), cut by
-        # speed feedforward. actual_position already tracks target exactly (ideal
+        # feedforward. actual_position already tracks target exactly (ideal
         # servo), so this lag is a DIAGNOSTIC only — it never moves the axis or
-        # affects settling (moved == 0 at rest -> FE == 0).
-        pd.following_error = int(round(
-            _SIM_FE_LAG_COUNTS * (1.0 - self.speed_ff_frac) * moved))
+        # affects settling (moved == 0 at rest -> FE == 0). Streamed velocity FF
+        # (source 5, ff_counts set) cancels the step directly; internal FF
+        # (source 1) cancels a fraction.
+        if self.ff_counts is not None:
+            resid = moved - self.ff_counts
+        else:
+            resid = moved * (1.0 - self.speed_ff_frac)
+        pd.following_error = int(round(_SIM_FE_LAG_COUNTS * resid))
         pd.statusword = self._statusword()
         pd.actual_position = self.actual_position
         self._prev_cw = cw
@@ -325,26 +334,36 @@ class SimulatedEtherCatMaster(EtherCatMaster):
             sim.speed_ff_frac = self._speed_ff_frac(d)
             sim.step(pd)
 
-    def _speed_ff_frac(self, drive: int) -> float:
-        """Speed-FF cancellation fraction from the drive's SDOs: source
-        0x2001:20 (1 = internal reference, active) and gain 0x2001:21 in 0.1 %
-        (1000 = 100 %). Lets the assistant show following error fall as FF rises."""
-        sdo = self._sdo[drive]
-        if int(sdo.get((0x2001, 20), 0)) != 1:
-            return 0.0
-        return max(0.0, min(1.0, int(sdo.get((0x2001, 21), 0)) / 1000.0))
+    def _speed_ff_source(self, drive: int) -> int:
+        """Speed-FF source select (0x2001:20): 0 off, 1 internal ref, 5 comms."""
+        return int(self._sdo[drive].get((0x2001, 20), 0))
 
-    def run_csp(self, targets: CspTargets) -> None:
+    def _speed_ff_frac(self, drive: int) -> float:
+        """Internal-reference (source 1) FF cancellation fraction from the gain
+        0x2001:21 in 0.1 % (1000 = 100 %). Zero unless source == 1."""
+        if self._speed_ff_source(drive) != 1:
+            return 0.0
+        return max(0.0, min(1.0, int(self._sdo[drive].get((0x2001, 21), 0)) / 1000.0))
+
+    def run_csp(self, targets: CspTargets, velocities=None) -> None:
         self._fe_peak = [0] * len(self._drives)
-        for row in targets:
+        vels = list(velocities) if velocities is not None else None
+        for i, row in enumerate(targets):
             for d, val in enumerate(row):
                 if d < len(self._drives):
                     self._drives[d].target_position = int(val)
+                    # source 5 = drive feedforwards our streamed velocity (0x60B1)
+                    if vels is not None and self._speed_ff_source(d) == 5:
+                        self._sim[d].ff_counts = int(vels[i][d]) * self.cycle_dt_s
+                    else:
+                        self._sim[d].ff_counts = None
             self.exchange()
             for d, pd in enumerate(self._drives):
                 self._fe_peak[d] = max(self._fe_peak[d], abs(pd.following_error))
             if self._faulted():
                 raise MasterError("drive faulted during CSP stream")
+        for s in self._sim:
+            s.ff_counts = None
 
     def csp_fe_peak(self) -> List[int]:
         return list(self._fe_peak)
@@ -684,7 +703,9 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                 raise MasterError("RT thread stalled (no PDO cycle)")
             time.sleep(self.cycle_dt_s / 2)
 
-    def run_csp(self, targets: CspTargets) -> None:
+    def run_csp(self, targets: CspTargets, velocities=None) -> None:
+        # pysoem bench scaffolding: velocity-offset FF (0x60B1) isn't wired into
+        # this backend's PDO packing; accepted for interface parity, ignored.
         if not self._open:
             raise MasterError("master is not open")
         self._fault = False

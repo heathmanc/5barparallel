@@ -33,7 +33,7 @@
 #define CSP_MAX      65536
 #define SHM_NAME     "/bcr_ethercat"
 #define SHM_MAGIC    0x42435231u   /* 'BCR1' */
-#define SHM_ABI      4u            /* bumped: ESC link/CRC error counters added */
+#define SHM_ABI      5u            /* bumped: 0x60B1 velocity-offset FF stream */
 #define LINK_RAW_SZ  20            /* ESC regs 0x0300..0x0313 in one read */
 #define LINK_REG_ADDR 0x0300
 
@@ -85,16 +85,24 @@ typedef struct {
     uint32_t link_reset;
     uint32_t link_seq[MAX_DRIVES];
     uint8_t  link_raw[MAX_DRIVES][LINK_RAW_SZ];
+    /* Velocity-offset feedforward stream (ABI 5): parallel to csp[], the
+     * per-cycle 0x60B1 velocity offset (counts/s) the RT loop writes while
+     * streaming. Lets the drive feedforward OUR trajectory velocity (set the
+     * drive's speed-FF source = Communication / C01.13=5) instead of
+     * differentiating the position steps into a chirp. Zero when not streaming. */
+    int32_t  csp_vel[MAX_DRIVES][CSP_MAX];
 } shm_layout_t;
 #pragma pack(pop)
 
-/* RxPDO 0x1701 / TxPDO 0x1B01 (from ec_inspect.py) */
+/* RxPDO: the FLEXIBLE 0x1600 (ESI Fixed="0") so we can map 0x60B1 velocity
+ * offset — 0x1701 is Fixed="1" and can't carry it. We drop the unused touch-
+ * probe function (0x60B8) and add velocity offset. TxPDO 0x1B01 is unchanged. */
 static ec_pdo_entry_info_t rx_entries[] = {
-    {0x6040,0,16},{0x607A,0,32},{0x60B8,0,16},{0x60FE,1,32}};
+    {0x6040,0,16},{0x607A,0,32},{0x60FE,1,32},{0x60B1,0,32}};
 static ec_pdo_entry_info_t tx_entries[] = {
     {0x603F,0,16},{0x6041,0,16},{0x6064,0,32},{0x6077,0,16},{0x60F4,0,32},
     {0x60B9,0,16},{0x60BA,0,32},{0x60BC,0,32},{0x60FD,0,32}};
-static ec_pdo_info_t rx_pdos[] = {{0x1701, 4, rx_entries}};
+static ec_pdo_info_t rx_pdos[] = {{0x1600, 4, rx_entries}};
 static ec_pdo_info_t tx_pdos[] = {{0x1B01, 9, tx_entries}};
 static ec_sync_info_t syncs[] = {
     {0, EC_DIR_OUTPUT, 0, NULL, EC_WD_DISABLE},
@@ -104,7 +112,7 @@ static ec_sync_info_t syncs[] = {
     {0xff}};
 
 struct off {                       /* per-drive process-image byte offsets */
-    unsigned ctrl, target, tp, dout;
+    unsigned ctrl, target, veloff, dout;
     unsigned err, status, pos, torq, ferr, tps, tp1, tp2, din;
 };
 
@@ -202,7 +210,7 @@ int main(int argc, char **argv)
         ec_pdo_entry_reg_t e[] = {
             {0,d,VENDOR,PRODUCT,0x6040,0,&off[d].ctrl},
             {0,d,VENDOR,PRODUCT,0x607A,0,&off[d].target},
-            {0,d,VENDOR,PRODUCT,0x60B8,0,&off[d].tp},
+            {0,d,VENDOR,PRODUCT,0x60B1,0,&off[d].veloff},
             {0,d,VENDOR,PRODUCT,0x60FE,1,&off[d].dout},
             {0,d,VENDOR,PRODUCT,0x603F,0,&off[d].err},
             {0,d,VENDOR,PRODUCT,0x6041,0,&off[d].status},
@@ -268,7 +276,9 @@ int main(int argc, char **argv)
             v->target_position = target;              /* reflect what was applied */
             EC_WRITE_U16(pd + off[d].ctrl,  v->controlword);
             EC_WRITE_S32(pd + off[d].target, target);
-            EC_WRITE_U16(pd + off[d].tp,    0);
+            /* velocity feedforward: our trajectory's per-cycle velocity while
+             * streaming, 0 otherwise (drive uses it only if speed-FF source=5) */
+            EC_WRITE_S32(pd + off[d].veloff, streaming ? shm->csp_vel[d][shm->csp_index] : 0);
             EC_WRITE_U32(pd + off[d].dout,  v->digital_outputs);
         }
         if (streaming) { shm->csp_index++; if (shm->csp_index >= shm->csp_len) shm->csp_running = 0; }

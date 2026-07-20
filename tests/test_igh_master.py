@@ -8,6 +8,7 @@ from bung_cover_robot.ethercat import cia402
 from bung_cover_robot.ethercat.igh_master import (
     _CSP_BASE,
     _CSP_MAX,
+    _CSP_VEL_BASE,
     _DRIVE_BASE,
     _DRIVE_SZ,
     _LINK_RAW,
@@ -27,8 +28,9 @@ from bung_cover_robot.ethercat.master import EtherCatMaster, MasterError
 def test_shm_layout_matches_c_struct():
     # Mirror of shm_layout_t in igh/ec_master_daemon.c: 52-byte header, 2x32-byte
     # drive blocks, MAX_DRIVES x CSP_MAX int32 setpoints, a 36-byte SDO channel,
-    # then (ABI 4) the ESC link/CRC error-counter block: u32 reset flag,
-    # u32 seq per drive, 20 raw register bytes per drive.
+    # then (ABI 4) the ESC link/CRC error-counter block (u32 reset flag, u32 seq
+    # per drive, 20 raw register bytes per drive), then (ABI 5) the velocity-
+    # offset FF stream: MAX_DRIVES x CSP_MAX int32.
     assert _DRIVE_BASE == 52
     assert _DRIVE_SZ == 32
     assert _CSP_BASE == _DRIVE_BASE + _MAX_DRIVES * _DRIVE_SZ == 116
@@ -36,7 +38,8 @@ def test_shm_layout_matches_c_struct():
     assert _LINK_RESET == _SDO_BASE + 36 == 524440
     assert _LINK_SEQ == _SDO_BASE + 40
     assert _LINK_RAW == _SDO_BASE + 48
-    assert _SHM_SIZE == _LINK_RAW + _MAX_DRIVES * _LINK_RAW_SZ == 524492
+    assert _CSP_VEL_BASE == _LINK_RAW + _MAX_DRIVES * _LINK_RAW_SZ == 524492
+    assert _SHM_SIZE == _CSP_VEL_BASE + _MAX_DRIVES * _CSP_MAX * 4 == 1048780
 
 
 def test_is_a_master_with_requested_drives():

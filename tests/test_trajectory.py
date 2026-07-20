@@ -176,3 +176,21 @@ def test_scurve_no_longer_than_reasonable_and_off_matches_trapezoid(kv):
 def test_negative_jerk_rejected():
     with pytest.raises(ValueError):
         TrajectoryLimits(jerk_mm_s3=-1.0)
+
+
+def test_setpoint_velocities_is_count_derivative(kv):
+    from bung_cover_robot.ethercat.trajectory import setpoint_velocities
+    kin, val = kv
+    lim = TrajectoryLimits(speed_mm_s=500.0, accel_mm_s2=2000.0, cycle_dt_s=0.002)
+    traj = plan_linear_move(kin, val, (0.0, 250.0), (60.0, 250.0), lim)
+    sp = traj.setpoints
+    vel = setpoint_velocities(sp, 0.002)
+    assert len(vel) == len(sp)
+    i = len(sp) // 2                                   # interior: central diff
+    assert vel[i][0] == round((sp[i + 1].left_counts - sp[i - 1].left_counts) / (2 * 0.002))
+    assert max(abs(v[0]) for v in vel) > 0             # a real move has velocity
+    # scale trims proportionally; empty / bad-dt guards
+    v2 = setpoint_velocities(sp, 0.002, scale=2.0)
+    assert abs(v2[i][0] - 2 * vel[i][0]) <= 1
+    assert setpoint_velocities([], 0.002) == []
+    assert setpoint_velocities(sp, 0.0) == []
