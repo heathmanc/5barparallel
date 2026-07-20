@@ -259,6 +259,15 @@ Peak following error is captured inside the CSP streaming loop (read-only on the
 real master, exact in the simulator), so the number reflects the whole move, not
 a slow GUI sample.
 
+**Start-of-move chirp / accel-phase spike.** A hard trapezoidal profile steps
+acceleration on instantly (infinite jerk), which impulsively excites a mechanical
+resonance — an audible chirp plus a following-error spike at the *start* of a
+move. The planner is **jerk-limited (S-curve)**: `jerk_mm_s3` (motion parameter,
+default 80000 mm/s³) eases acceleration in over ~`accel/jerk` seconds, removing
+the impulse with almost no loss of cruise speed. Set it to 0 for the old hard
+trapezoid; lower it for a gentler/quieter start at the cost of a little move
+time. Torque feedforward (`C01.16`/`C01.17`) complements it for the accel phase.
+
 ## 5. Safety (hardware, not software)
 
 - **E-stop → hardwired torque removal, independent of the PC.** Two cases:
