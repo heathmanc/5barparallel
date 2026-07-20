@@ -966,8 +966,10 @@ def test_drives_tab_disconnect_disables_and_stops_master(qapp, tmp_path):
 
 def test_drives_tab_link_error_row(qapp, tmp_path):
     """The status table carries the live link/CRC error row: '—' without the
-    feature, '0 (clean)' on a clean link, red total+breakdown when the cable
-    is producing errors."""
+    feature, '0 (clean)' on a clean link, and a red rx/inv/lost breakdown only
+    when real CRC errors (rx-error / invalid-frame) are present. PU/PDI/forwarded
+    must NOT drive the verdict - on real drives they read 0xFF (unimplemented),
+    and folding them in made a healthy link show a bogus 512 total."""
     from bung_cover_robot.gui.ethercat_tab import EtherCatTab, _STATUS_ROWS
 
     assert any(kind == "link" for _lbl, kind in _STATUS_ROWS)
@@ -977,12 +979,25 @@ def test_drives_tab_link_error_row(qapp, tmp_path):
                         "lost_link": 1},
                        {"rx_error": 0, "invalid_frame": 0, "forwarded": 0,
                         "lost_link": 0}], "pu_error": 0, "pdi_error": 0}
+    # The reading the user actually hit: rx0 inv0 lost2, with PU/PDI pegged at
+    # 0xFF (unimplemented). Old code showed a red "512"; it must read clean-ish
+    # (no CRC errors -> not danger), never blaming the cable.
+    unimpl = {"ports": [{"rx_error": 0, "invalid_frame": 0, "forwarded": 255,
+                         "lost_link": 2},
+                        {"rx_error": 0, "invalid_frame": 0, "forwarded": 0,
+                         "lost_link": 0}], "pu_error": 255, "pdi_error": 0}
     text, danger = EtherCatTab._status_value("link", {"link": None}, 0.0, False)
     assert text == "—" and not danger
     text, danger = EtherCatTab._status_value("link", {"link": clean}, 0.0, False)
     assert text == "0 (clean)" and not danger
     text, danger = EtherCatTab._status_value("link", {"link": dirty}, 0.0, False)
-    assert danger and text.startswith("75") and "rx37" in text and "lost1" in text
+    assert danger and "rx37" in text and "inv37" in text and "lost1" in text
+    assert "512" not in text and "74" not in text     # no misleading total
+    text, danger = EtherCatTab._status_value("link", {"link": unimpl}, 0.0, False)
+    assert not danger and text == "rx0 inv0 lost2"     # cable NOT convicted
+    # the demoted counters are still visible on hover, just not in the verdict
+    tip = EtherCatTab._link_tooltip(unimpl)
+    assert "forwarded" in tip and "PDI" in tip and "255" in tip
 
 
 def test_drives_tab_zero_crc_needs_real_master(qapp, tmp_path):

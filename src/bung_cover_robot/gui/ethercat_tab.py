@@ -312,12 +312,29 @@ class EtherCatTab(QWidget):
         v.addWidget(t)
         return box
 
-    def _set_status_cell(self, row: int, col: int, text: str, danger: bool) -> None:
+    def _set_status_cell(self, row: int, col: int, text: str, danger: bool,
+                         tip: str = "") -> None:
         item = self.status_table.item(row, col)
         if item is None:
             return
         item.setText(text)
         item.setForeground(QColor(theme.DANGER) if danger else QColor(theme.TEXT))
+        item.setToolTip(tip)
+
+    @staticmethod
+    def _link_tooltip(lc) -> str:
+        """Non-verdict detail for the link/CRC cell. Forwarded RX errors point
+        at an UPSTREAM segment (an error another slave already flagged); PU/PDI
+        aren't cable-CRC at all and read 0xFF (unimplemented) on some ESCs -
+        which is why none of them count toward the headline verdict."""
+        if not lc:
+            return ""
+        fwd = ", ".join(f"p{i}={p['forwarded']}" for i, p in enumerate(lc["ports"]))
+        return ("forwarded RX (upstream): " + fwd
+                + f"\nprocessing-unit err: {lc['pu_error']}"
+                + f"\nPDI err: {lc['pdi_error']}"
+                + "\n(forwarded points upstream; PU/PDI aren't cable-CRC and"
+                  " read 0xFF = unimplemented on some drives)")
 
     def _build_jog(self) -> QGroupBox:
         """Cartesian TCP jog: X/Y +/- pad, increment in mm, speed in mm/s. Moves
@@ -882,12 +899,17 @@ class EtherCatTab(QWidget):
             rx = sum(p["rx_error"] for p in lc["ports"])
             inv = sum(p["invalid_frame"] for p in lc["ports"])
             lost = sum(p["lost_link"] for p in lc["ports"])
-            total = (rx + inv + lost
-                     + sum(p["forwarded"] for p in lc["ports"])
-                     + lc["pu_error"] + lc["pdi_error"])
-            if total == 0:
+            # rx-error + invalid-frame are THIS segment's CRC / physical-layer
+            # counters - the ones that climb with a bad cable, so they alone set
+            # the verdict. lost-link is shown for context (a couple at power-up /
+            # connect is normal, not a fault). forwarded / PU / PDI live in the
+            # cell tooltip: they point upstream or aren't cable-CRC at all, and
+            # read 0xFF (unimplemented) on some drives - counting them made a
+            # clean link show a bogus 510+ total and never reach "0 (clean)".
+            crc = rx + inv
+            if crc == 0 and lost == 0:
                 return "0 (clean)", False
-            return f"{total}  rx{rx} inv{inv} lost{lost}", True
+            return f"rx{rx} inv{inv} lost{lost}", crc > 0
         src, mask = kind
         on = bool((d["sw"] if src == "sw" else d["di"]) & mask)
         return ("ON" if on else "OFF"), False
@@ -912,7 +934,8 @@ class EtherCatTab(QWidget):
             faulted = cia402.is_fault(d["sw"])
             for r, (_label, kind) in enumerate(_STATUS_ROWS):
                 text, danger = self._status_value(kind, d, deg, faulted)
-                self._set_status_cell(r, col, text, danger)
+                tip = self._link_tooltip(d.get("link")) if kind == "link" else ""
+                self._set_status_cell(r, col, text, danger, tip)
 
     def refresh(self) -> None:
         connected = self._master() is not None
