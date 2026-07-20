@@ -34,7 +34,7 @@ _MAX_DRIVES = 2
 _CSP_MAX = 65536
 
 # header field offsets (see shm_layout_t)
-_H_MAGIC, _H_ABI, _H_NUM, _H_CYCLE = 0, 4, 8, 16
+_H_MAGIC, _H_ABI, _H_NUM, _H_CYCLE_DT, _H_CYCLE = 0, 4, 8, 12, 16
 _H_OP, _H_STOP = 28, 32
 _H_CSP_START, _H_CSP_RUN, _H_CSP_LEN = 36, 40, 44
 _DRIVE_BASE, _DRIVE_SZ = 52, 32
@@ -136,6 +136,11 @@ class IgHMaster(EtherCatMaster):
             raise MasterError(
                 f"a daemon is already running with {running_n} drive(s), not "
                 f"{self._num}. Stop it first: sudo pkill ec_master_daemon")
+        try:
+            self._check_cycle_match()
+        except MasterError:
+            self.close()
+            raise
         # wait for the daemon to reach OP (INIT->PREOP->SAFEOP->OP + DC settle)
         deadline = time.perf_counter() + self.op_timeout_s
         while self._u32(_H_OP) != 1:
@@ -361,6 +366,23 @@ class IgHMaster(EtherCatMaster):
         if not txt:
             return ""
         return "\n--- daemon log ---\n" + "\n".join(txt[-lines:])
+
+    def _check_cycle_match(self) -> None:
+        """Guard against mapping a daemon whose SYNC0 cycle differs from what the
+        trajectory plans for. The trajectory computes per-cycle position steps for
+        ``cycle_dt_s``; the drive applies them at the daemon's SYNC0 period. If
+        those disagree (e.g. a stale 1 ms daemon left running while you set 2 ms),
+        every commanded speed is scaled by the ratio — which can tip a move past
+        the drive's 5x-max-speed 'excessive position increment' trip (Er.87.1)."""
+        running_ns = self._u32(_H_CYCLE_DT)
+        want_ns = int(round(self.cycle_dt_s * 1e9))
+        if running_ns and running_ns != want_ns:
+            raise MasterError(
+                f"the running daemon is at {running_ns / 1e6:.3f} ms cycle, not the "
+                f"{want_ns / 1e6:.3f} ms the trajectory plans for — a cycle-time "
+                f"mismatch scales every commanded speed (an Er.87.1 risk). Stop it "
+                f"and reconnect so it relaunches at the right rate: "
+                f"sudo pkill ec_master_daemon")
 
     def _map_shm(self) -> None:
         try:
