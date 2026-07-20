@@ -459,7 +459,13 @@ def run_demo_cycle(
         if on_step is not None:
             on_step(step)
         if not res.ok:
-            result.reason = f"job failed: {res.reason}"
+            # A Stop aborts the in-flight move, so the job comes back failed —
+            # classify it as an operator stop (not a fault) when a stop is
+            # pending, so the run reports cleanly instead of "job failed".
+            if should_stop is not None and should_stop():
+                result.reason = "stopped by operator"
+            else:
+                result.reason = f"job failed: {res.reason}"
             return result
     placed = len(result.placed)
     if not result.reason:
@@ -615,6 +621,12 @@ class CycleManager:
                 on_step(step)
             if job_res.ok:
                 used.append(cover)
+            elif should_stop is not None and should_stop():
+                # Stop aborts the in-flight move -> failed job; report it as an
+                # operator stop, not a fault.
+                result.reason = "stopped by operator"
+                result.ok = False
+                return result
             else:
                 result.reason = f"job failed: {job_res.reason}"
                 result.ok = False
