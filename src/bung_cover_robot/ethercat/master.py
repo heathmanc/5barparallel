@@ -139,6 +139,10 @@ class DriveProcessData:
     # limit, bit2 = home switch. Live in the AS715N TxPDO, so the Drives page
     # shows real switch states.
     digital_inputs: int = 0
+    # ESC link/CRC error counters (parsed dict from igh_master.parse_link_raw),
+    # published by the IgH daemon ~1 Hz. None on masters without the feature
+    # (simulator/pysoem) — the Drives page then shows "—".
+    link_errors: Optional[dict] = None
 
 
 class EtherCatMaster(ABC):

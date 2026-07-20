@@ -66,7 +66,8 @@ _DI_BITS = [("Neg limit", 1 << 0), ("Pos limit", 1 << 1), ("Home switch", 1 << 2
 # ("state"/"counts"/"angle"/"err"/"fe") or ("sw"|"di", mask) for an on/off bit.
 _STATUS_ROWS = (
     [("State", "state"), ("Encoder (counts)", "counts"), ("Angle (deg)", "angle"),
-     ("Error code", "err"), ("Following error", "fe")]
+     ("Error code", "err"), ("Following error", "fe"),
+     ("Link errors (CRC)", "link")]
     + [(lbl, ("sw", mask)) for lbl, mask in _SW_BITS]
     + [(lbl, ("di", mask)) for lbl, mask in _DI_BITS]
 )
@@ -96,7 +97,9 @@ class _StatusPoller(QThread):
                     snap = [dict(sw=d.statusword, mode=d.mode_display,
                                  act=d.actual_position, tgt=d.target_position,
                                  di=d.digital_inputs, err=d.error_code,
-                                 fe=d.following_error) for d in master.drives]
+                                 fe=d.following_error,
+                                 link=getattr(d, "link_errors", None))
+                            for d in master.drives]
                 except Exception:  # noqa: BLE001 - display poller must not die
                     snap = None
             if self._stop:
@@ -260,7 +263,15 @@ class EtherCatTab(QWidget):
         self.disconnect_btn.clicked.connect(self._on_disconnect)
         self.reset_btn = QPushButton("Reset fault")
         self.reset_btn.clicked.connect(self._on_reset_fault)
-        for b in (self.connect_btn, self.sim_btn, self.disconnect_btn, self.reset_btn):
+        self.crc_btn = QPushButton("Zero CRC ctrs")
+        self.crc_btn.setToolTip(
+            "Zero every slave's EtherCAT link/CRC error counters. Zero them, run "
+            "a speed trial, and watch the 'Link errors (CRC)' row: anything that "
+            "climbs under load is cable/connector/EMI (a bad link kicks a drive "
+            "out of OP - the silent no-fault disable).")
+        self.crc_btn.clicked.connect(self._on_zero_crc)
+        for b in (self.connect_btn, self.sim_btn, self.disconnect_btn,
+                  self.reset_btn, self.crc_btn):
             row.addWidget(b)
         row.addStretch(1)
         self.conn_label = QLabel("DISCONNECTED")
@@ -282,7 +293,7 @@ class EtherCatTab(QWidget):
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         t.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        row_h = 20
+        row_h = 19        # 18 rows (incl. the link/CRC row) in the old footprint
         t.verticalHeader().setDefaultSectionSize(row_h)
         # Show every row at once — no internal scroll.
         t.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -755,6 +766,16 @@ class EtherCatTab(QWidget):
         except Exception as exc:  # noqa: BLE001
             self._status(f"Reset failed: {exc}", theme.DANGER)
 
+    def _on_zero_crc(self) -> None:
+        master = self._master()
+        reset = getattr(master, "reset_link_counters", None)
+        if not callable(reset):
+            self._status("Link counters need the real (IgH) master.", theme.WARN)
+            return
+        reset()
+        self._status("Link/CRC counters zeroed - run a trial and watch the "
+                     "'Link errors (CRC)' row.", theme.TEXT)
+
     def _stop_jog(self) -> None:
         if self._jog_worker is not None:
             self._jog_worker.wait(3000)
@@ -854,6 +875,19 @@ class EtherCatTab(QWidget):
             return f"0x{d.get('err', 0):04X}", False
         if kind == "fe":
             return f"{d.get('fe', 0):+d}", False
+        if kind == "link":
+            lc = d.get("link")
+            if not lc:
+                return "\u2014", False
+            rx = sum(p["rx_error"] for p in lc["ports"])
+            inv = sum(p["invalid_frame"] for p in lc["ports"])
+            lost = sum(p["lost_link"] for p in lc["ports"])
+            total = (rx + inv + lost
+                     + sum(p["forwarded"] for p in lc["ports"])
+                     + lc["pu_error"] + lc["pdi_error"])
+            if total == 0:
+                return "0 (clean)", False
+            return f"{total}  rx{rx} inv{inv} lost{lost}", True
         src, mask = kind
         on = bool((d["sw"] if src == "sw" else d["di"]) & mask)
         return ("ON" if on else "OFF"), False

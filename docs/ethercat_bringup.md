@@ -162,10 +162,15 @@ re-enables ONCE per job after an unexpected disable (never after a fault) and
 tags the run result with how many times it had to — repeated auto re-enables
 mean fix the chain, not the software.
 
-**Prove or rule out the cable/EMI (the #1 cause).** Run
-`python scripts/ec_crc.py --reset --watch 1` (needs the IgH `ethercat` CLI +
-the daemon running), then do a speed trial: it reads each slave's ESC
-error counters live. RX-error / invalid-frame climbing on a port = the cable
+**Prove or rule out the cable/EMI (the #1 cause) — built into the Drives
+tab.** The status table's **"Link errors (CRC)"** row shows each drive's ESC
+error counters live (the daemon reads registers 0x0300..0x0313 ~1 Hz and
+publishes them over shared memory — no CLI, no sudo, no second process).
+Press **Zero CRC ctrs**, run a speed trial, and watch the row: it stays
+"0 (clean)" on a good link and goes red with a breakdown (`75  rx37 inv37
+lost1`) on a bad one. Requires daemon ABI 4 — after pulling, rebuild once:
+`make -C igh ETHERLAB=/opt/etherlab` (the app refuses an old daemon with a
+clear message). `scripts/ec_crc.py` remains as a standalone fallback. RX-error / invalid-frame climbing on a port = the cable
 segment feeding that port; lost-link = an intermittent connector; forwarded
 errors = the fault is upstream (nearer the PC). A real drive fault never moves
 these — anything that climbs under load is physical-layer, so fix the cabling
