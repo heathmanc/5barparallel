@@ -144,6 +144,31 @@ but it is not used on this machine.)
   recognises that whole-turn signature and says to clear the datum rather
   than (wrongly) blaming servo tuning.
 
+  **Use LINEAR mode, not rotary.** A multi-turn absolute encoder reports
+  position one of two ways, and the choice is decisive here:
+  - *Rotary / rollover* — the reported position (`0x6064`) **wraps within one
+    revolution**. Fine for an endlessly-spinning axis (turntable/spindle),
+    but wrong for this arm: the shoulder's work area is **−20°…200° = 220° =
+    1.83 motor revs** (3:1 belt), so a normal move *crosses* the single-turn
+    boundary. When it does, the reported position snaps by exactly ∓131072
+    while the drive itself does **not** fault (its internal loop uses the full
+    multi-turn value) — so a move ends 131072 counts short with no alarm.
+    Clearing the datum does not help; the wrap is structural. Because the
+    work area legitimately spans more than one rev, software *cannot* safely
+    fold this out (two real poses can sit exactly one rev apart), so it must
+    be fixed at the drive.
+  - *Linear (bounded)* — the position accumulates **continuously across
+    single-turn boundaries** over the whole multi-turn range (±32767 revs).
+    This is the correct choice: the shoulder oscillates inside a ~1.83-rev
+    arc and accumulates zero net revolutions, so it never approaches the
+    range ends. Pick plain **linear**, *not* "linear infinite" (that mode is
+    for an axis that rotates one direction without end and buys a finite arm
+    nothing). After switching, clear the multi-turn data once more (so the
+    continuous count starts centered), power-cycle, and Set Home.
+  - *Confirm it took:* jog one shoulder across the work area and watch the
+    drive's raw actual counts climb smoothly **past 131072 into the low
+    hundred-thousands with no snap back toward 0**.
+
 Either way the software requires a home on each program launch (`is_referenced`
 starts `False`), so start-up is safe; the difference is only whether a routine
 power cycle forces an operator re-home. If C00.07 is left on **incremental**, the

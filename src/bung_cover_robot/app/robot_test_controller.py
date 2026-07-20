@@ -197,9 +197,19 @@ class RobotTestController:
         return MoveResult(True, "ok", self._state)
 
     def set_home(self) -> Point:
-        """Teach: capture the current pose as the software home reference."""
+        """Teach: capture the current pose as the software home reference.
+
+        Two steps, both required on an absolute-encoder servo: record the home
+        *angles* (the kinematic datum), then latch the *live encoder counts* at
+        this pose (``driver.set_home()``) so the commanded-position frame lines
+        up with feedback. Skipping the second step assumes the encoder reads 0
+        at home — true only for an incremental power-up; an absolute encoder
+        reports its real position there, which would offset every move by that
+        reading (e.g. one whole rev, 131072 counts, on an axis sitting a turn
+        into its multi-turn range)."""
         self._home_xy = self._state.tcp
         self.driver.set_home_angles((self._state.left_deg, self._state.right_deg))
+        self.driver.set_home()
         return self._home_xy
 
     def set_home_xy(self, x: float, y: float) -> MoveResult:
