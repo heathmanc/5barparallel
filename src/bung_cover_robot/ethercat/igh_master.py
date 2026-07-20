@@ -241,7 +241,7 @@ class IgHMaster(EtherCatMaster):
         try:
             while self._u32(_H_CSP_RUN) == 1 or self._u32(_H_CSP_START) == 1:
                 if self._csp_aborted:                # stop() from another thread
-                    break
+                    raise MasterError("CSP stream aborted (stop requested)")
                 # Sample the drives' following error read-only (the daemon refreshes
                 # the input image every RT cycle) so the tuning assistant can grade
                 # the move. Read-only: never writes the output image mid-stream.
@@ -266,35 +266,37 @@ class IgHMaster(EtherCatMaster):
                     raise MasterError("CSP stream did not complete in time")
                 time.sleep(self.cycle_dt_s)
         except BaseException:
-            # A fault, a timeout, or an interrupt must STOP the daemon stream —
+            # A fault, timeout, abort, or interrupt must STOP the daemon stream —
             # otherwise it keeps playing the rest of the buffer, overriding the
             # output image, and the arm drives on to the planned endpoint.
+            # abort_csp() also freezes the hold target at the current pose.
             self.abort_csp()
             raise
-        # Hold: on an external abort, hold at the CURRENT pose (never drive on to
-        # the planned endpoint); on normal completion, hold at the FINAL streamed
-        # target (else the closing exchange() would write the stale pre-move
-        # target and the drive would drive back).
-        if self._csp_aborted:
-            for d in range(self._num):
-                self._read_inputs(d, self._drives[d])
-                self._drives[d].target_position = self._drives[d].actual_position
-        else:
-            last = targets[-1]
-            for d in range(self._num):
-                self._drives[d].target_position = int(last[d])
+        # Normal completion: hold at the FINAL streamed target (else the closing
+        # exchange() would write the stale pre-move target and the drive would
+        # drive back).
+        last = targets[-1]
+        for d in range(self._num):
+            self._drives[d].target_position = int(last[d])
         self.exchange()
 
     def abort_csp(self) -> None:
-        """Stop an in-flight CSP stream and hold. Clears the daemon's stream
-        length/start flags so ``streaming = csp_running && csp_index < csp_len``
-        goes false next RT cycle and the daemon reverts to holding the shm
-        target. Sets ``_csp_aborted`` so a run_csp blocked in another thread
-        breaks and holds at the current pose. Idempotent / safe with no stream
-        running."""
+        """Stop an in-flight CSP stream and hold at the CURRENT pose.
+
+        When the daemon stops streaming it reverts to the shm drive target — so
+        FIRST freeze that target at the live actual (kept fresh by the reader
+        thread), THEN clear csp_len/csp_start. Doing it in that order means the
+        very cycle the daemon leaves the buffer it holds here, not at the stale
+        pre-move target (which would jerk the arm back toward the start).
+        ``_csp_aborted`` makes a run_csp blocked in another thread bail. Safe to
+        call with no stream running (it just commands a hold-in-place)."""
         self._csp_aborted = True
         if self._mm is None:
             return
+        for d in range(self._num):
+            pd = self._drives[d]
+            pd.target_position = pd.actual_position
+            self._write_outputs(d, pd)          # freeze the hold target in shm
         self._u32_set(_H_CSP_LEN, 0)
         self._u32_set(_H_CSP_START, 0)
 

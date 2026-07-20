@@ -438,3 +438,26 @@ def test_cycle_rate_tracker_uses_trailing_window():
     # at t=4 the window is [1,2,3,4] (t=0 is older than 3 s): 4 cycles / 3 s
     assert tr.total == 5
     assert tr.per_minute(4.0) == pytest.approx(80.0)
+
+
+def test_run_demo_cycle_classifies_aborted_move_as_stopped():
+    """A hard Stop aborts the in-flight move, so the job returns failed. When a
+    stop is pending, the run must report 'stopped by operator', not 'job
+    failed' (which the GUI would surface as a demo FAILURE)."""
+    ctrl = _ready_controller()
+    nest, drops = demo_pick_and_place_targets(
+        ctrl.validator, ctrl.home_xy, rng=random.Random(0))
+    calls = {"n": 0}
+
+    def should_stop():
+        calls["n"] += 1
+        return calls["n"] > 1        # False at the loop-top gate, True after the job
+
+    class _AbortRunner:
+        def run(self, job):
+            return JobResult(False, "move aborted: CSP stream aborted (stop requested)")
+
+    res = run_demo_cycle(ctrl, nest, drops, runner=_AbortRunner(),
+                         should_stop=should_stop, reenable_delay_s=0.0)
+    assert "stopped by operator" in res.reason
+    assert "job failed" not in res.reason

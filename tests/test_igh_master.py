@@ -150,3 +150,19 @@ def test_abort_csp_clears_daemon_stream_flags():
     assert struct.unpack_from("<I", m._mm, _H_CSP_LEN)[0] == 0
     assert struct.unpack_from("<I", m._mm, _H_CSP_START)[0] == 0
     assert m._csp_aborted is True
+
+
+def test_abort_csp_freezes_hold_target_at_actual():
+    """abort_csp() must write the live actual into the shm drive target BEFORE
+    clearing the stream flags, so the cycle the daemon leaves the buffer it
+    holds at the current pose instead of the stale pre-move target (a reverse
+    jerk)."""
+    m = IgHMaster(num_drives=2, auto_launch=False)
+    m._mm = bytearray(_SHM_SIZE)
+    m._num = 2
+    m._drives[0].actual_position = 4321
+    m._drives[1].actual_position = -99
+    m.abort_csp()
+    assert struct.unpack_from("<i", m._mm, _DRIVE_BASE + 4)[0] == 4321
+    assert struct.unpack_from("<i", m._mm, _DRIVE_BASE + _DRIVE_SZ + 4)[0] == -99
+    assert m._csp_aborted is True

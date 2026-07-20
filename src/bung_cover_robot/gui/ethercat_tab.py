@@ -708,9 +708,17 @@ class EtherCatTab(QWidget):
 
     # --- demo (sample pick & place) -----------------------------------------
     def _on_simulate(self) -> None:
-        # Second press = stop a running demo.
+        # Second press = stop a running demo. Set the cooperative flag AND abort
+        # the in-flight move now: the worker is blocked inside run_csp, so only a
+        # call from THIS (GUI) thread can halt the current move — driver.stop()
+        # aborts the CSP stream and holds at the current pose. Without it the
+        # move runs to its planned endpoint before the loop sees the flag.
         if self._demo_worker is not None and self._demo_worker.isRunning():
             self._demo_worker.stop()
+            try:
+                self.controller.driver.stop()
+            except Exception:  # noqa: BLE001 - best effort; the flag still stops it
+                pass
             self.sim_demo_btn.setText("Stopping…")
             self.sim_demo_btn.setEnabled(False)
             return
@@ -762,6 +770,10 @@ class EtherCatTab(QWidget):
     def _stop_demo(self) -> None:
         if self._demo_worker is not None:
             self._demo_worker.stop()
+            try:
+                self.controller.driver.stop()      # abort any in-flight move now
+            except Exception:  # noqa: BLE001 - best effort
+                pass
             self._demo_worker.wait(5000)
             self._demo_worker = None
             # Restore the controls in case we stopped mid-run (e.g. disconnect).
