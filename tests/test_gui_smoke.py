@@ -1116,3 +1116,37 @@ def test_calibration_teach_without_a_point_warns(qapp, tmp_path):
                          RecipeStore(path=tmp_path / "recipes.yaml"), controller=ctrl)
     tab._on_teach()                              # no rows clicked yet
     assert "click the fiducial" in tab.status_label.text().lower()
+
+
+def test_operator_banner_state_progression(qapp):
+    """The run banner shows the dominant machine state the operator needs."""
+    win = MainWindow()
+    vt = win.vision_tab
+    assert vt._machine_state()[0] == "DRY-RUN"          # no drives connected
+    win.ethercat_tab._on_connect_sim()                  # shared controller -> sim drive
+    vt.refresh()
+    assert vt._machine_state()[0] == "DISABLED"
+    win.controller.enable()                             # controller-level enable
+    vt.refresh()
+    assert vt._machine_state()[0] == "NOT REFERENCED"
+    win.controller.home_reference()                    # controller-level reference
+    vt.refresh()
+    assert vt._machine_state()[0] == "READY"
+    win.ethercat_tab._on_disconnect()
+    win.ethercat_tab._stop_poller()
+
+
+def test_operator_banner_counts_placements(qapp):
+    win = MainWindow()
+    vt = win.vision_tab
+    win.controller.enable()
+    win.controller.home_reference()
+    vt.bypass_chk.setChecked(True)          # scripted targets actually place covers
+    vt._on_start()
+    assert _wait_until(qapp, lambda: not vt._running)
+    assert vt._placed_total >= 1
+    assert "placed" in vt.run_banner.stats_label.text()
+    # RUNNING outranks other states while a cycle is in flight
+    vt._running = True
+    assert vt._machine_state()[0] == "RUNNING"
+    vt._running = False

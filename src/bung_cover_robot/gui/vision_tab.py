@@ -7,6 +7,7 @@ vision/detect_* and app/cycle_manager are built.
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from typing import Optional
 
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
 from ..app.cycle_manager import (
     CycleConfig,
     CycleManager,
+    CycleRateTracker,
     ScriptedTargetSource,
     default_scripted_targets,
 )
@@ -79,6 +81,49 @@ class _PositionPoller(QThread):
             self.msleep(self._interval_ms)
 
 
+class RunBanner(QFrame):
+    """Across-the-room machine-state banner for the operator run screen: a bold
+    state word + an actionable detail line, color-coded by severity, with a
+    right-aligned throughput readout. The one thing the operator reads at a
+    glance — is it running, ready, or stopped, and why."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("runbanner")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(16, 10, 16, 10)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        self.state_label = QLabel("—")
+        self.detail_label = QLabel("")
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setStyleSheet(f"color:{theme.TEXT_DIM}; font-size:13px;")
+        col.addWidget(self.state_label)
+        col.addWidget(self.detail_label)
+        h.addLayout(col, 1)
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet("font-family:monospace; font-size:15px;")
+        self.stats_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        h.addWidget(self.stats_label)
+        self._apply(theme.TEXT_DIM)
+
+    def _apply(self, color: str) -> None:
+        self.setStyleSheet(
+            f"#runbanner {{ background:{theme.PANEL}; border:1px solid {color};"
+            f" border-left:6px solid {color}; border-radius:8px; }}")
+        self.state_label.setStyleSheet(
+            f"font-size:22px; font-weight:800; color:{color};")
+
+    def set_state(self, state: str, detail: str, color: str) -> None:
+        self.state_label.setText(state)
+        self.detail_label.setText(detail)
+        self._apply(color)
+
+    def set_stats(self, text: str) -> None:
+        self.stats_label.setText(text)
+
+
 class VisionTab(QWidget):
     # emitted when the operator changes the active recipe (changeover)
     recipeChanged = Signal(str)
@@ -115,8 +160,13 @@ class VisionTab(QWidget):
         self._thread: Optional[QThread] = None
         self._worker: Optional[CycleWorker] = None
         self._pos_poller: Optional[_PositionPoller] = None
+        # Operator throughput: rolling cycles/min + covers placed this session.
+        self._rate = CycleRateTracker()
+        self._placed_total = 0
 
         root = QVBoxLayout(self)
+        self.run_banner = RunBanner()
+        root.addWidget(self.run_banner)
         top = QHBoxLayout()
         top.addLayout(self._build_view(), 1)
         top.addWidget(self._build_sidebar())
@@ -741,6 +791,7 @@ class VisionTab(QWidget):
         if self.single_step_chk.isChecked():
             mode += ", single step"
         self._set_status(f"Running {mode} cycle…", theme.INFO)
+        self._update_banner()
 
         self._thread = QThread(self)
         self._worker = CycleWorker(manager)
@@ -754,9 +805,12 @@ class VisionTab(QWidget):
     def _on_cycle_step(self, step) -> None:
         where = f"hole {step.hole_index}"
         if step.ok:
+            self._placed_total += 1
+            self._rate.record(time.perf_counter())
             self._set_status(f"Placed cover in {where}…", theme.INFO)
         else:
             self._set_status(f"{where}: {step.reason}", theme.WARN)
+        self._update_banner()
 
     def _on_cycle_finished(self, result) -> None:
         self._teardown_thread()
@@ -823,6 +877,46 @@ class VisionTab(QWidget):
         )
         self._update_roi_buttons()
         self._sync_run_buttons()
+        self._update_banner()
+
+    # --- operator run banner ------------------------------------------------
+    def _machine_state(self):
+        """Dominant machine state as (state_word, actionable_detail, color) —
+        most severe first, so the operator sees the one thing that matters."""
+        ctrl = self.controller
+        drv = ctrl.driver
+        fault = None
+        confirmed = getattr(drv, "_confirmed_fault", None)
+        if callable(confirmed):
+            try:
+                fault = confirmed()
+            except Exception:  # noqa: BLE001 - never let status derivation raise
+                fault = None
+        if fault:
+            return ("FAULT", f"Drive fault: {fault}. Clear it (Reset), then re-home "
+                    "before running.", theme.DANGER)
+        if self._running:
+            return ("RUNNING", "Automatic cycle in progress — Cycle Stop halts after "
+                    "the current pick.", theme.INFO)
+        if isinstance(drv, DryRunRobotDriver):
+            return ("DRY-RUN", "No drives connected — simulation only. Connect drives "
+                    "for live motion.", theme.TEXT_DIM)
+        if not ctrl.is_enabled:
+            return ("DISABLED", "Drives are disabled (torque off) — enable them to run.",
+                    theme.WARN)
+        if not ctrl.is_referenced:
+            return ("NOT REFERENCED", "Home the robot before running.", theme.WARN)
+        if not self.camera.is_open:
+            return ("CAMERA OFFLINE", "The camera is unavailable — check its "
+                    "connection.", theme.DANGER)
+        return ("READY", "Ready — press Cycle Start.", theme.SUCCESS)
+
+    def _update_banner(self) -> None:
+        state, detail, color = self._machine_state()
+        self.run_banner.set_state(state, detail, color)
+        rate = self._rate.per_minute(time.perf_counter()) if self._placed_total else 0.0
+        self.run_banner.set_stats(
+            f"{self._placed_total} placed\n{rate:.1f} cyc/min")
 
     def _set_status(self, text: str, color: str) -> None:
         self.status_label.setText(text)
