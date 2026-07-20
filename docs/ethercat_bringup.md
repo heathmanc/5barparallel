@@ -136,6 +136,13 @@ but it is not used on this machine.)
   cycle**.
 - **Multi-turn absolute** (battery-backed): the revolution count survives
   power-off too, so the datum is truly persistent — home once, ever.
+  **One-time step:** after setting C00.07=4 and fitting the encoder battery,
+  *clear the drive's multi-turn data* (absolute-encoder reset), power-cycle,
+  then Set Home. Skipping this leaves the multi-turn counter one (or more)
+  revolutions off, so a move ends an exact multiple of **131072 counts**
+  (one encoder rev) short and never settles. The move's failure message now
+  recognises that whole-turn signature and says to clear the datum rather
+  than (wrongly) blaming servo tuning.
 
 Either way the software requires a home on each program launch (`is_referenced`
 starts `False`), so start-up is safe; the difference is only whether a routine

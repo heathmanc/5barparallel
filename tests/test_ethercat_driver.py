@@ -115,6 +115,25 @@ def test_settle_times_out_if_never_reached():
     assert drv._settle((1000, 1000), timeout_s=0.05) is None
 
 
+def test_whole_turn_hint_names_a_multiturn_datum_offset():
+    """A shortfall that is an exact multiple of one encoder rev is a stale
+    multi-turn datum (C00.07 switched to absolute without clearing it), not a
+    tuning problem — the message must say so and name the drive + turn count."""
+    drv, _, kin = _driver()
+    rev = kin.config.pulses_per_rev                     # 131072
+    # exactly one turn short on drive 1 -> flagged, singular "turn"
+    hint = drv._whole_turn_hint({1: rev})
+    assert "encoder revolutions" in hint and "multi-turn" in hint
+    assert "drive 1 (1 turn)" in hint and "C00.07=4" in hint
+    # two turns (within tolerance) -> plural
+    assert "drive 0 (2 turns)" in drv._whole_turn_hint({0: -2 * rev + 100})
+    # a fractional-turn miss is a real settle failure -> no multiturn hint
+    assert drv._whole_turn_hint({1: 40000}) == ""
+    # mixed: only the whole-turn axis is called out
+    mixed = drv._whole_turn_hint({0: 40000, 1: rev})
+    assert "drive 1" in mixed and "drive 0" not in mixed
+
+
 def test_jog_counts_multi_moves_both_axes_together():
     # Two-drive bench: coordinated joint move ramps both axes to their targets
     # off one synchronized profile (opposite signs to prove independent direction).

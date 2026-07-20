@@ -411,16 +411,40 @@ class EtherCatRobotDriver(RobotDriver):
         got = self._settle(want)
         if got is None:
             final = tuple(d.actual_position for d in self.master.drives)
+            errs = {i: want[i] - final[i]
+                    for i in range(min(len(want), len(final)))
+                    if abs(want[i] - final[i]) > self.position_tol_counts}
             short = ", ".join(
-                f"drive {i}: {abs(want[i] - final[i])} counts "
-                f"({abs(want[i] - final[i]) / self._ppd:.3f} deg) short"
-                for i in range(min(len(want), len(final)))
-                if abs(want[i] - final[i]) > self.position_tol_counts)
+                f"drive {i}: {abs(e)} counts ({abs(e) / self._ppd:.3f} deg) short"
+                for i, e in errs.items())
+            turn_hint = self._whole_turn_hint(errs)
             raise RobotDriverError(
                 f"move did not settle within {self.settle_timeout_s:g}s "
-                f"(tol {self.position_tol_counts} counts): {short}. Raise "
-                f"settle_timeout_s / position_tol_counts in Parameters, or "
+                f"(tol {self.position_tol_counts} counts): {short}.{turn_hint} "
+                f"Raise settle_timeout_s / position_tol_counts in Parameters, or "
                 f"tune the drives (stiffness / position loop gain).")
+
+    def _whole_turn_hint(self, errs) -> str:
+        """If a shortfall is (within tolerance) an exact multiple of one encoder
+        revolution, the feedback datum is offset by whole turns — the classic
+        symptom of switching C00.07 to multi-turn absolute without clearing the
+        drive's multi-turn data. The 5-bar shoulders sweep a bounded arc and
+        never spin whole revs, so a whole-turn miss is never real motion; it is
+        a stale absolute datum. Name it, because 'tune the drives' is wrong here."""
+        rev = self.kin.config.pulses_per_rev
+        tol = self.position_tol_counts
+        offenders = {i: e for i, e in errs.items()
+                     if abs(abs(e) % rev) <= tol or abs(abs(e) % rev - rev) <= tol}
+        if not offenders:
+            return ""
+        who = ", ".join(f"drive {i} ({round(abs(e) / rev)} turn"
+                        f"{'s' if round(abs(e) / rev) != 1 else ''})"
+                        for i, e in offenders.items())
+        return (f" This shortfall is a whole number of encoder revolutions "
+                f"({who}, {rev} counts/rev): the multi-turn absolute datum is "
+                f"offset, not a servo-tuning issue. Clear the drive's multi-turn "
+                f"encoder data (needed once after setting C00.07=4 + fitting the "
+                f"battery), power-cycle the drive, then Set Home again.")
 
     def _settle(self, want, timeout_s: Optional[float] = None):
         """Wait for the servos to catch up to the final CSP target after the
