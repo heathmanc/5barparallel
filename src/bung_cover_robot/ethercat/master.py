@@ -182,6 +182,12 @@ class EtherCatMaster(ABC):
         so the drive can feedforward our trajectory velocity (speed-FF source=5)
         instead of differentiating the position steps."""
 
+    def abort_csp(self) -> None:
+        """Stop an in-flight CSP stream and hold at the current pose. No-op
+        where ``run_csp`` is synchronous (the simulator can't be aborted from
+        another thread mid-stream); overridden by the streaming backends
+        (IgH/pysoem) so a Stop/E-stop can halt a move on real hardware."""
+
     @property
     def num_drives(self) -> int:
         return len(self.drives)
@@ -348,22 +354,27 @@ class SimulatedEtherCatMaster(EtherCatMaster):
     def run_csp(self, targets: CspTargets, velocities=None) -> None:
         self._fe_peak = [0] * len(self._drives)
         vels = list(velocities) if velocities is not None else None
-        for i, row in enumerate(targets):
-            for d, val in enumerate(row):
-                if d < len(self._drives):
-                    self._drives[d].target_position = int(val)
-                    # source 5 = drive feedforwards our streamed velocity (0x60B1)
-                    if vels is not None and self._speed_ff_source(d) == 5:
-                        self._sim[d].ff_counts = int(vels[i][d]) * self.cycle_dt_s
-                    else:
-                        self._sim[d].ff_counts = None
-            self.exchange()
-            for d, pd in enumerate(self._drives):
-                self._fe_peak[d] = max(self._fe_peak[d], abs(pd.following_error))
-            if self._faulted():
-                raise MasterError("drive faulted during CSP stream")
-        for s in self._sim:
-            s.ff_counts = None
+        try:
+            for i, row in enumerate(targets):
+                for d, val in enumerate(row):
+                    if d < len(self._drives):
+                        self._drives[d].target_position = int(val)
+                        # source 5 = drive feedforwards our streamed velocity (0x60B1)
+                        if vels is not None and self._speed_ff_source(d) == 5:
+                            self._sim[d].ff_counts = int(vels[i][d]) * self.cycle_dt_s
+                        else:
+                            self._sim[d].ff_counts = None
+                self.exchange()
+                for d, pd in enumerate(self._drives):
+                    self._fe_peak[d] = max(self._fe_peak[d], abs(pd.following_error))
+                if self._faulted():
+                    raise MasterError("drive faulted during CSP stream")
+        finally:
+            # Always clear the streamed FF, even on a mid-stream fault — a stale
+            # ff_counts makes the drive report a phantom following error at rest
+            # (resid = 0 - ff_counts != 0), violating "FE == 0 at rest".
+            for s in self._sim:
+                s.ff_counts = None
 
     def csp_fe_peak(self) -> List[int]:
         return list(self._fe_peak)
@@ -720,6 +731,12 @@ class PysoemMaster(EtherCatMaster):  # pragma: no cover - needs real drives + RT
                 self._csp_running = False
                 raise MasterError("CSP stream did not complete in time")
             time.sleep(self.cycle_dt_s)
+
+    def abort_csp(self) -> None:
+        """Stop the RT loop advancing the CSP buffer so a move halts and holds
+        the last actual (the RT loop keeps the current target once streaming
+        stops). Lets a Stop/E-stop abort an in-flight move."""
+        self._csp_running = False
 
     def fault_code(self) -> int:
         return self._wkc_bad

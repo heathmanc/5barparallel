@@ -151,3 +151,29 @@ def test_ramp_counts_multi_zero_move():
     from bung_cover_robot.ethercat.trajectory import ramp_counts_multi
 
     assert ramp_counts_multi([10, 20], [0, 0], 1000, 1000, 0.002) == [(10, 20)]
+
+
+# --- abort_csp + FF cleanup ---------------------------------------------------
+def test_pysoem_abort_csp_stops_the_rt_stream():
+    m = PysoemMaster(num_drives=2)          # not opened; just exercise the flag
+    m._csp_running = True
+    m.abort_csp()
+    assert m._csp_running is False
+
+
+def test_sim_abort_csp_is_a_safe_noop():
+    m = SimulatedEtherCatMaster(num_drives=2).open()
+    m.abort_csp()                           # synchronous run_csp -> nothing to abort
+    assert m.is_open
+
+
+def test_sim_run_csp_clears_ff_on_fault_no_phantom_following_error():
+    """A mid-stream fault must not leave a streamed velocity-FF set: a stale
+    ff_counts makes the drive report a phantom following error at rest
+    (resid = 0 - ff_counts). Regression for the skipped-cleanup path."""
+    m = SimulatedEtherCatMaster(num_drives=2).open()
+    m.sdo_write(0x2001, 20, 5, drive=0)     # speed-FF source = communication
+    m.inject_fault(0)                       # faults on the first exchange
+    with pytest.raises(MasterError):
+        m.run_csp([(0, 0), (10, 10)], velocities=[(1000, 1000), (1000, 1000)])
+    assert all(sim.ff_counts is None for sim in m._sim)

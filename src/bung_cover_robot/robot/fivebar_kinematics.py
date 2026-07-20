@@ -169,6 +169,13 @@ class FiveBarKinematics:
         Picks the +Y (reaching-side) circle-circle intersection, which is the
         correct assembly for this robot's work zone. For round-trip checks and
         diagnostics.
+
+        DOMAIN: this is the true inverse of ``inverse()`` only for poses whose
+        TCP is the upper (+Y) distal intersection — i.e. the actual +Y work
+        zone. For angles that place the TCP below the shoulder line it returns
+        the mirrored (upper) point, not the physical TCP. WorkspaceValidator
+        uses exactly this to reject wrong-assembly targets, so don't "fix" it to
+        return the lower point without updating that guard.
         """
         cfg = self.config
         left_elbow = self._elbow_from_angle(cfg.left_base, left_deg)

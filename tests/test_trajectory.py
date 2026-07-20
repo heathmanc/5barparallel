@@ -194,3 +194,18 @@ def test_setpoint_velocities_is_count_derivative(kv):
     assert abs(v2[i][0] - 2 * vel[i][0]) <= 1
     assert setpoint_velocities([], 0.002) == []
     assert setpoint_velocities(sp, 0.0) == []
+
+
+# --- jerk-limit cap uses ceil, so realized jerk never exceeds commanded ------ #
+def test_scurve_realized_jerk_stays_under_commanded_cap():
+    """The box-filter window is Tj = a/jerk rounded UP: a shorter window would
+    realize a jerk ABOVE the commanded limit. Regression for round()->ceil()."""
+    from bung_cover_robot.ethercat.trajectory import _scurve_distances
+
+    a, jerk, dt = 2000.0, 80000.0, 0.002        # Tj/dt = 12.5 (the round boundary)
+    d = _scurve_distances(120.0, 200.0, a, jerk, dt)
+    vel = [(d[i + 1] - d[i]) / dt for i in range(len(d) - 1)]
+    acc = [(vel[i + 1] - vel[i]) / dt for i in range(len(vel) - 1)]
+    jrk = [abs((acc[i + 1] - acc[i]) / dt) for i in range(len(acc) - 1)]
+    # round() would give k=12 -> realized 83333 > 80000; ceil() gives k=13 -> 76923.
+    assert max(jrk) <= jerk * 1.001

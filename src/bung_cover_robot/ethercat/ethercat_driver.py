@@ -62,7 +62,13 @@ class EtherCatRobotDriver(RobotDriver):
         self.kin = kinematics or FiveBarKinematics()
         self.validator = validator or WorkspaceValidator(self.kin)
         self._home_angles: Angles = (float(home_angles[0]), float(home_angles[1]))
-        self.limits = limits or TrajectoryLimits(cycle_dt_s=master.cycle_dt_s)
+        # The planning cadence MUST equal the streaming cadence: the trajectory
+        # is sampled at limits.cycle_dt_s but played one setpoint per master DC
+        # cycle, so a mismatch scales every commanded speed/accel (and the
+        # velocity FF) by their ratio — the >5x per-cycle increment that trips
+        # Er.87.1. Force the master's cycle onto whatever limits we were given.
+        base = limits or TrajectoryLimits()
+        self.limits = dataclasses.replace(base, cycle_dt_s=master.cycle_dt_s)
         self.max_transition_cycles = max_transition_cycles
         # End-of-move window: 500 counts ~ 0.46 deg at the joint (17-bit
         # encoder x 3:1). A real servo needs a real tolerance AND time for its
@@ -282,6 +288,14 @@ class EtherCatRobotDriver(RobotDriver):
             d.mode_of_operation = cia402.MODE_HOMING
             d.controlword = cia402.CW_HOMING_START     # enable operation + start homing
         homed = False
+        # TODO(homing): completion is detected on the mode_display ECHO of
+        # MODE_HOMING, which the drive asserts within a cycle or two of the mode
+        # switch — NOT when the homing move actually attains the datum. Before
+        # this machine uses CiA-402 homing (it currently homes to hard stops via
+        # set_home), switch to the statusword homing-attained bit and fault on
+        # the homing-error bit: homed = all(d.statusword & SW_HOMING_ATTAINED);
+        # abort if any(d.statusword & SW_HOMING_ERROR). Both are defined in
+        # cia402 but unused. As-is this would declare success mid-travel.
         for _ in range(self.max_transition_cycles):
             self.master.exchange()
             if all(d.mode_display == cia402.MODE_HOMING for d in self.master.drives):
@@ -395,6 +409,13 @@ class EtherCatRobotDriver(RobotDriver):
         the real master's SCHED_FIFO thread plays one per DC cycle. We converted
         the whole plan to drive counts up front, so the real-time loop does zero
         kinematics and zero allocation."""
+        # Guard the cadence match the constructor enforces: sampling the plan at
+        # one dt but streaming it at another silently rescales speed/accel.
+        if abs(traj.cycle_dt_s - self.master.cycle_dt_s) > 1e-12:
+            raise RobotDriverError(
+                f"trajectory cycle {traj.cycle_dt_s * 1e3:.3f} ms != master cycle "
+                f"{self.master.cycle_dt_s * 1e3:.3f} ms — every commanded speed "
+                "would be rescaled by their ratio")
         h0, h1 = self._home_counts
         targets = [(sp.left_counts - h0, sp.right_counts - h1) for sp in traj.setpoints]
         # Velocity feedforward from the (smooth) trajectory velocity, streamed as
@@ -472,7 +493,15 @@ class EtherCatRobotDriver(RobotDriver):
         return (self._angle_from_actual(0), self._angle_from_actual(1))
 
     def stop(self) -> None:
-        # Hold position: command the current actual as the target.
+        # Halt any in-flight CSP stream FIRST — on the IgH/pysoem backends the
+        # daemon/RT loop plays a latched buffer and overrides the output image,
+        # so just writing a hold target here would be ignored until the stream
+        # finished. abort_csp() stops the stream; then command the current
+        # actual as the hold target. (No-op abort on the synchronous simulator.)
+        try:
+            self.master.abort_csp()
+        except Exception:  # pragma: no cover - best effort
+            pass
         for d in self.master.drives:
             d.target_position = d.actual_position
         try:

@@ -133,3 +133,20 @@ def test_open_guards_cycle_time_mismatch():
     m._check_cycle_match()
     struct.pack_into("<I", m._mm, _H_CYCLE_DT, 0)           # uninitialised -> tolerated
     m._check_cycle_match()
+
+
+def test_abort_csp_clears_daemon_stream_flags():
+    """abort_csp() must clear the daemon's stream length/start so
+    streaming = csp_running && csp_index < csp_len goes false next RT cycle and
+    the daemon reverts to holding the shm target (a fault/timeout/Stop otherwise
+    keeps the arm driving to the planned endpoint)."""
+    from bung_cover_robot.ethercat.igh_master import _H_CSP_LEN, _H_CSP_START
+
+    m = IgHMaster(num_drives=2, auto_launch=False)
+    m._mm = bytearray(_SHM_SIZE)
+    struct.pack_into("<I", m._mm, _H_CSP_LEN, 400)
+    struct.pack_into("<I", m._mm, _H_CSP_START, 1)
+    m.abort_csp()
+    assert struct.unpack_from("<I", m._mm, _H_CSP_LEN)[0] == 0
+    assert struct.unpack_from("<I", m._mm, _H_CSP_START)[0] == 0
+    assert m._csp_aborted is True
