@@ -363,6 +363,25 @@ class EtherCatRobotDriver(RobotDriver):
             raise RobotDriverError(f"cartesian jog rejected: {exc}") from exc
         self._stream(traj)
 
+    def characterize(self, dx_mm: float, dy_mm: float,
+                     speed_mm_s: float) -> List[int]:
+        """Run a validated out-and-back TCP move and return the peak |following
+        error| per drive (counts) seen during it — the tuning assistant's grade
+        of how well the servo tracks at ``speed_mm_s``. Ends back at the start
+        pose. Motion — needs enable + reference (jog_cartesian enforces both)."""
+        peaks = [0] * len(self.master.drives)
+
+        def _leg(ddx: float, ddy: float) -> None:
+            self.jog_cartesian(ddx, ddy, speed_mm_s=speed_mm_s)
+            got = getattr(self.master, "csp_fe_peak", lambda: [])()
+            for i, v in enumerate(got):
+                if i < len(peaks):
+                    peaks[i] = max(peaks[i], abs(int(v)))
+
+        _leg(dx_mm, dy_mm)
+        _leg(-dx_mm, -dy_mm)
+        return peaks
+
     def _stream(self, traj) -> None:
         """Hand the precomputed per-cycle CSP setpoints to the master to stream.
 
