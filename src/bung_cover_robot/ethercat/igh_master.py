@@ -29,7 +29,7 @@ from .master import CspTargets, DriveProcessData, EtherCatMaster, MasterError
 
 _SHM_PATH = "/dev/shm/bcr_ethercat"
 _SHM_MAGIC = 0x42435231
-_SHM_ABI = 3
+_SHM_ABI = 4
 _MAX_DRIVES = 2
 _CSP_MAX = 65536
 
@@ -45,13 +45,42 @@ _SDO_REQ, _SDO_DONE, _SDO_RESULT = _SDO_BASE, _SDO_BASE + 4, _SDO_BASE + 8
 _SDO_INDEX, _SDO_SUB, _SDO_SIZE, _SDO_VALUE = (
     _SDO_BASE + 12, _SDO_BASE + 16, _SDO_BASE + 20, _SDO_BASE + 24)
 _SDO_DRIVE, _SDO_OP = _SDO_BASE + 28, _SDO_BASE + 32
-_SHM_SIZE = _SDO_BASE + 36
+# ESC link/CRC error counters (ABI 4): raw register block 0x0300..0x0313 per
+# drive, published ~1 Hz by the daemon; link_reset=1 asks it to zero them.
+_LINK_RESET = _SDO_BASE + 36
+_LINK_SEQ = _SDO_BASE + 40                  # u32 per drive
+_LINK_RAW = _SDO_BASE + 40 + 4 * _MAX_DRIVES
+_LINK_RAW_SZ = 20
+_SHM_SIZE = _LINK_RAW + _MAX_DRIVES * _LINK_RAW_SZ
 
 # drive_shm_t sub-offsets
 _O_CTRL, _O_MODE, _O_TARGET, _O_DOUT = 0, 2, 4, 8
 _I_STATUS, _I_MODED, _I_ACTUAL, _I_FERR, _I_ERR, _I_TORQ, _I_DIN = 12, 14, 16, 20, 24, 26, 28
 
 _DEFAULT_DAEMON = Path(__file__).resolve().parents[3] / "igh" / "ec_master_daemon"
+
+
+def parse_link_raw(raw: bytes) -> dict:
+    """Decode the ESC error-counter register block (0x0300..0x0313, 20 bytes)
+    into named counters. Byte map per the ET1100 register set:
+    [0]=invalid frame p0, [1]=RX error p0, [2]/[3]=port 1, [8]/[9]=forwarded
+    p0/p1, [12]=processing-unit err, [13]=PDI err, [16]/[17]=lost link p0/p1."""
+    b = bytes(raw) + b"\x00" * _LINK_RAW_SZ            # tolerate short input
+    ports = [
+        {"invalid_frame": b[0], "rx_error": b[1], "forwarded": b[8],
+         "lost_link": b[16]},
+        {"invalid_frame": b[2], "rx_error": b[3], "forwarded": b[9],
+         "lost_link": b[17]},
+    ]
+    return {"ports": ports, "pu_error": b[12], "pdi_error": b[13]}
+
+
+def link_error_total(counters: dict) -> int:
+    """Sum of every physical-layer error counter (0 == clean link)."""
+    t = counters.get("pu_error", 0) + counters.get("pdi_error", 0)
+    for p in counters.get("ports", []):
+        t += p["rx_error"] + p["invalid_frame"] + p["forwarded"] + p["lost_link"]
+    return t
 
 
 class IgHMaster(EtherCatMaster):
@@ -258,6 +287,21 @@ class IgHMaster(EtherCatMaster):
         Drives-tab Refresh to show each drive's actual parameter values."""
         return self._sdo_request(1, index, sub, drive, 0, size, timeout_s)
 
+    # --- link/CRC error counters -------------------------------------------- #
+    def link_counters(self) -> List[dict]:
+        """Per-drive ESC error counters (parsed), fresh from shared memory."""
+        out = []
+        for d in range(self._num):
+            raw = self._mm[_LINK_RAW + d * _LINK_RAW_SZ:
+                           _LINK_RAW + (d + 1) * _LINK_RAW_SZ]
+            out.append(parse_link_raw(raw))
+        return out
+
+    def reset_link_counters(self) -> None:
+        """Ask the daemon to zero every slave's hardware error counters."""
+        if self._mm is not None:
+            self._u32_set(_LINK_RESET, 1)
+
     # --- shared memory helpers --------------------------------------------- #
     def _launch_daemon(self) -> None:
         if not self.daemon_path.exists():
@@ -267,7 +311,10 @@ class IgHMaster(EtherCatMaster):
         cmd = [str(self.daemon_path), "--drives", str(self._num),
                "--cycle-ns", str(int(round(self.cycle_dt_s * 1e9)))]
         if os.geteuid() != 0:
-            cmd = ["sudo"] + cmd
+            # -n: NEVER prompt. From a GUI there is no TTY, so an expired sudo
+            # credential cache used to make the launch hang silently; now it
+            # fails fast with a clear message instead.
+            cmd = ["sudo", "-n"] + cmd
         try:
             self._logf = open(self.log_path, "w")
         except OSError:
@@ -276,11 +323,25 @@ class IgHMaster(EtherCatMaster):
         deadline = time.perf_counter() + 5.0
         while not os.path.exists(_SHM_PATH):
             if self._proc.poll() is not None:
-                raise MasterError("IgH daemon exited immediately "
-                                  "(is the IgH master running? `ethercat master`)")
+                raise MasterError(
+                    "IgH daemon exited immediately. If the log says 'sudo: a "
+                    "password is required', run `sudo -v` in a terminal and "
+                    "launch the app from it (or start the daemon yourself: "
+                    "sudo igh/ec_master_daemon --drives N)."
+                    + self._log_tail())
             if time.perf_counter() > deadline:
-                raise MasterError("IgH daemon did not create shared memory")
+                raise MasterError("IgH daemon did not create shared memory"
+                                  + self._log_tail())
             time.sleep(0.05)
+
+    def _log_tail(self, lines: int = 6) -> str:
+        try:
+            txt = Path(self.log_path).read_text().strip().splitlines()
+        except OSError:
+            return ""
+        if not txt:
+            return ""
+        return "\n--- daemon log ---\n" + "\n".join(txt[-lines:])
 
     def _map_shm(self) -> None:
         try:
@@ -330,6 +391,9 @@ class IgHMaster(EtherCatMaster):
         pd.torque_actual = struct.unpack_from("<h", self._mm, base + _I_TORQ)[0]
         pd.digital_inputs = struct.unpack_from("<I", self._mm, base + _I_DIN)[0]
         pd.mode_display = pd.mode_of_operation
+        raw = self._mm[_LINK_RAW + d * _LINK_RAW_SZ:
+                       _LINK_RAW + (d + 1) * _LINK_RAW_SZ]
+        pd.link_errors = parse_link_raw(raw)
 
     def _faulted(self) -> bool:
         for d, pd in enumerate(self._drives):

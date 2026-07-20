@@ -962,3 +962,36 @@ def test_drives_tab_disconnect_disables_and_stops_master(qapp, tmp_path):
     assert isinstance(ctrl.driver, DryRunRobotDriver)
     # shutdown() is safe to call again (idempotent, not connected)
     tab.shutdown()
+
+
+def test_drives_tab_link_error_row(qapp, tmp_path):
+    """The status table carries the live link/CRC error row: '—' without the
+    feature, '0 (clean)' on a clean link, red total+breakdown when the cable
+    is producing errors."""
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab, _STATUS_ROWS
+
+    assert any(kind == "link" for _lbl, kind in _STATUS_ROWS)
+    clean = {"ports": [{"rx_error": 0, "invalid_frame": 0, "forwarded": 0,
+                        "lost_link": 0}] * 2, "pu_error": 0, "pdi_error": 0}
+    dirty = {"ports": [{"rx_error": 37, "invalid_frame": 37, "forwarded": 0,
+                        "lost_link": 1},
+                       {"rx_error": 0, "invalid_frame": 0, "forwarded": 0,
+                        "lost_link": 0}], "pu_error": 0, "pdi_error": 0}
+    text, danger = EtherCatTab._status_value("link", {"link": None}, 0.0, False)
+    assert text == "—" and not danger
+    text, danger = EtherCatTab._status_value("link", {"link": clean}, 0.0, False)
+    assert text == "0 (clean)" and not danger
+    text, danger = EtherCatTab._status_value("link", {"link": dirty}, 0.0, False)
+    assert danger and text.startswith("75") and "rx37" in text and "lost1" in text
+
+
+def test_drives_tab_zero_crc_needs_real_master(qapp, tmp_path):
+    from bung_cover_robot.gui.ethercat_tab import EtherCatTab
+
+    ctrl = build_dry_run_controller()
+    tab = EtherCatTab(ctrl, settings=None, config_dir=tmp_path)
+    tab._on_connect_sim()                      # sim master has no link counters
+    tab._on_zero_crc()
+    assert "real (IgH) master" in tab.status_label.text()
+    tab._on_disconnect()
+    tab._stop_poller()

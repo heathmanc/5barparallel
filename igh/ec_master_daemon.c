@@ -33,7 +33,9 @@
 #define CSP_MAX      65536
 #define SHM_NAME     "/bcr_ethercat"
 #define SHM_MAGIC    0x42435231u   /* 'BCR1' */
-#define SHM_ABI      3u            /* bumped: SDO channel gained per-drive + read */
+#define SHM_ABI      4u            /* bumped: ESC link/CRC error counters added */
+#define LINK_RAW_SZ  20            /* ESC regs 0x0300..0x0313 in one read */
+#define LINK_REG_ADDR 0x0300
 
 #define NSEC_PER_SEC 1000000000L
 #define TS2NS(T) ((uint64_t)(T).tv_sec * NSEC_PER_SEC + (T).tv_nsec)
@@ -73,6 +75,16 @@ typedef struct {
     uint32_t sdo_index, sdo_sub, sdo_size;
     int32_t  sdo_value;                  /* write: value in; read: value out */
     uint32_t sdo_drive, sdo_op;
+    /* ESC link/CRC error counters (appended, ABI 4): the RT loop reads each
+     * slave's registers 0x0300..0x0313 (~1 Hz) via an ecrt reg request and
+     * publishes the raw 20 bytes; link_seq[d] increments per fresh snapshot.
+     * Python sets link_reset=1 to zero the hardware counters (daemon writes
+     * zeros over the register block and clears the flag when done). Raw byte
+     * map: [0]=inv frame p0, [1]=rx err p0, [2]/[3]=p1, [8]/[9]=forwarded
+     * p0/p1, [12]=PU err, [13]=PDI err, [16]/[17]=lost link p0/p1. */
+    uint32_t link_reset;
+    uint32_t link_seq[MAX_DRIVES];
+    uint8_t  link_raw[MAX_DRIVES][LINK_RAW_SZ];
 } shm_layout_t;
 #pragma pack(pop)
 
@@ -175,6 +187,9 @@ int main(int argc, char **argv)
 
     struct off off[MAX_DRIVES];
     static ec_pdo_entry_reg_t regs[MAX_DRIVES*13 + 1];
+    ec_reg_request_t *lreg[MAX_DRIVES] = {0};   /* ESC error-counter readers */
+    int lreg_op[MAX_DRIVES] = {0};              /* 0 idle, 1 read, 2 write */
+    uint32_t lreset_pending = 0;
     int r = 0;
     for (int d = 0; d < num_drives; d++) {
         ec_slave_config_t *sc = ecrt_master_slave_config(master, 0, d, VENDOR, PRODUCT);
@@ -182,6 +197,8 @@ int main(int argc, char **argv)
         if (ecrt_slave_config_pdos(sc, EC_END, syncs)) { fprintf(stderr, "pdos[%d]\n", d); return 1; }
         ecrt_slave_config_sdo8(sc, 0x6060, 0, 8);                  /* CSP */
         ecrt_slave_config_dc(sc, ASSIGN_ACT, cycle_ns, SYNC0_SHIFT, 0, 0);
+        lreg[d] = ecrt_slave_config_create_reg_request(sc, LINK_RAW_SZ);
+        if (!lreg[d]) fprintf(stderr, "reg_request[%d] failed (no CRC counters)\n", d);
         ec_pdo_entry_reg_t e[] = {
             {0,d,VENDOR,PRODUCT,0x6040,0,&off[d].ctrl},
             {0,d,VENDOR,PRODUCT,0x607A,0,&off[d].target},
@@ -262,6 +279,39 @@ int main(int argc, char **argv)
         ecrt_master_sync_slave_clocks(master);
         ecrt_domain_queue(domain);
         ecrt_master_send(master);
+
+        /* ESC link/CRC error counters: low-rate, non-blocking reg requests.
+         * The master services them alongside the cyclic datagrams; we only
+         * kick a read ~1/s per drive (staggered) and harvest completions. */
+        {
+            uint64_t hz = (uint64_t)(NSEC_PER_SEC / cycle_ns);
+            if (hz < 1) hz = 1;
+            if (shm->link_reset == 1) {              /* Python asked for a zero */
+                lreset_pending = (1u << num_drives) - 1u;
+                shm->link_reset = 2;                 /* 2 = reset in progress */
+            }
+            for (int d = 0; d < num_drives; d++) {
+                if (!lreg[d]) continue;
+                ec_request_state_t st = ecrt_reg_request_state(lreg[d]);
+                if (st == EC_REQUEST_BUSY) continue;
+                if (lreg_op[d] == 1 && st == EC_REQUEST_SUCCESS) {
+                    memcpy(shm->link_raw[d], ecrt_reg_request_data(lreg[d]),
+                           LINK_RAW_SZ);
+                    shm->link_seq[d]++;
+                }
+                lreg_op[d] = 0;
+                if (lreset_pending & (1u << d)) {    /* write zeros = clear */
+                    memset(ecrt_reg_request_data(lreg[d]), 0, LINK_RAW_SZ);
+                    ecrt_reg_request_write(lreg[d], LINK_REG_ADDR, LINK_RAW_SZ);
+                    lreg_op[d] = 2;
+                    lreset_pending &= ~(1u << d);
+                    if (!lreset_pending) shm->link_reset = 0;
+                } else if ((shm->cycle_count + (uint64_t)d * (hz / 2)) % hz == 0) {
+                    ecrt_reg_request_read(lreg[d], LINK_REG_ADDR, LINK_RAW_SZ);
+                    lreg_op[d] = 1;
+                }
+            }
+        }
 
         ec_master_state_t ms; ecrt_master_state(master, &ms);
         shm->op = (ms.al_states & 0x08) ? 1 : 0;
