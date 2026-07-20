@@ -1150,3 +1150,28 @@ def test_operator_banner_counts_placements(qapp):
     vt._running = True
     assert vt._machine_state()[0] == "RUNNING"
     vt._running = False
+
+
+def test_vision_cycle_stop_is_graceful_not_hard_abort(qapp):
+    """The main-screen Cycle Stop must be cooperative: set the worker's stop
+    flag (run_cycle finishes the in-flight pick, then halts) and NOT call
+    controller.stop(), which now hard-aborts the move (abort_csp) — that is the
+    bench demo's behavior, not the production cycle's."""
+    win = MainWindow()
+    vt = win.vision_tab
+
+    stopped = {"flag": False}
+
+    class _WorkerStub:
+        def request_stop(self):
+            stopped["flag"] = True
+
+    calls = []
+    win.controller.stop = lambda *a, **k: calls.append("hard-abort")  # spy
+
+    vt._running = True
+    vt._worker = _WorkerStub()
+    vt._on_stop()
+
+    assert stopped["flag"] is True          # cooperative flag set
+    assert calls == []                      # NO hard abort of the in-flight move
