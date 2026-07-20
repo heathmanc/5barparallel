@@ -167,12 +167,19 @@ int main(int argc, char **argv)
 {
     int num_drives = 1;
     long cycle_ns = 2000000L;
+    long max_step = 0;                 /* per-cycle target-increment clamp (counts) */
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--drives") && i+1 < argc) num_drives = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--cycle-ns") && i+1 < argc) cycle_ns = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--max-step") && i+1 < argc) max_step = atol(argv[++i]);
     }
     if (num_drives < 1) num_drives = 1;
     if (num_drives > MAX_DRIVES) num_drives = MAX_DRIVES;
+    /* Clamp any single-cycle target jump so an RT-jitter glitch can't present the
+     * drive a step implying > 5x max speed (Er.87.1). Default ~6e6 counts/s of
+     * command velocity, scaled to the cycle — far above any real move, so it only
+     * ever bites a glitch. Tune with --max-step. */
+    if (max_step <= 0) max_step = 6000L * cycle_ns / 1000000L;
 
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
@@ -238,13 +245,24 @@ int main(int argc, char **argv)
     pthread_create(&sdot, NULL, sdo_thread, NULL);
 
     struct timespec wk; clock_gettime(CLOCK_MONOTONIC, &wk);
-    fprintf(stderr, "ec_master_daemon: %d drive(s), %ld ns cycle, running\n",
-            num_drives, cycle_ns);
+    fprintf(stderr, "ec_master_daemon: %d drive(s), %ld ns cycle, max_step %ld, running\n",
+            num_drives, cycle_ns, max_step);
+
+    /* Increment-clamp + RT-jitter diagnostics, reset each 1 Hz heartbeat. */
+    int32_t last_tgt[MAX_DRIVES] = {0};
+    uint32_t overrun_win = 0, clamp_win = 0;
+    long max_late_win = 0;
+    int32_t max_delta_win[MAX_DRIVES] = {0};
 
     while (running && !shm->stop) {
         wk.tv_nsec += cycle_ns;
         while (wk.tv_nsec >= NSEC_PER_SEC) { wk.tv_nsec -= NSEC_PER_SEC; wk.tv_sec++; }
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wk, NULL);
+        /* how late did we actually wake vs the scheduled tick? = RT jitter */
+        struct timespec woke; clock_gettime(CLOCK_MONOTONIC, &woke);
+        long late = (long)(TS2NS(woke) - TS2NS(wk));
+        if (late > max_late_win) max_late_win = late;
+        if (late > cycle_ns / 2) overrun_win++;
 
         ecrt_master_receive(master);
         ecrt_domain_process(domain);
@@ -273,6 +291,18 @@ int main(int argc, char **argv)
             if (streaming)          target = shm->csp[d][shm->csp_index];
             else if (!op_enabled)   target = v->actual_position;  /* track -> no enable jump */
             else                    target = v->target_position;  /* hold at commanded */
+            if (!op_enabled) {
+                last_tgt[d] = target;         /* track so enable/stream starts aligned */
+            } else {
+                int32_t delta = target - last_tgt[d];
+                int32_t ad = delta < 0 ? -delta : delta;
+                if (ad > max_delta_win[d]) max_delta_win[d] = ad;
+                if (ad > (int32_t)max_step) {  /* glitch: clamp before it faults (Er.87.1) */
+                    target = last_tgt[d] + (delta > 0 ? (int32_t)max_step : -(int32_t)max_step);
+                    clamp_win++;
+                }
+                last_tgt[d] = target;
+            }
             v->target_position = target;              /* reflect what was applied */
             EC_WRITE_U16(pd + off[d].ctrl,  v->controlword);
             EC_WRITE_S32(pd + off[d].target, target);
@@ -327,11 +357,20 @@ int main(int argc, char **argv)
         shm->op = (ms.al_states & 0x08) ? 1 : 0;
         shm->cycle_count++;
 
-        /* ~1 Hz heartbeat so the daemon can be verified standalone */
-        if (shm->cycle_count % (uint64_t)(NSEC_PER_SEC / cycle_ns) == 0)
-            fprintf(stderr, "  op=%u  d0 status=0x%04X err=0x%04X pos=%d  wkc_bad=%u\n",
+        /* ~1 Hz heartbeat so the daemon can be verified standalone. Includes the
+         * RT-jitter picture (overruns/max-late), the largest per-cycle target step
+         * seen, and how many steps had to be clamped — the data that convicts a
+         * jitter-driven Er.87.1. Window counters reset each print. */
+        if (shm->cycle_count % (uint64_t)(NSEC_PER_SEC / cycle_ns) == 0) {
+            fprintf(stderr, "  op=%u  d0 status=0x%04X err=0x%04X pos=%d  wkc_bad=%u"
+                    "  | overrun=%u max_late=%ldus clamp=%u max_step[0]=%d[1]=%d\n",
                     shm->op, shm->drive[0].statusword, shm->drive[0].error_code,
-                    shm->drive[0].actual_position, shm->wkc_bad);
+                    shm->drive[0].actual_position, shm->wkc_bad,
+                    overrun_win, max_late_win / 1000L, clamp_win,
+                    max_delta_win[0], num_drives > 1 ? max_delta_win[1] : 0);
+            overrun_win = 0; clamp_win = 0; max_late_win = 0;
+            for (int d = 0; d < num_drives; d++) max_delta_win[d] = 0;
+        }
     }
 
     running = 0;                     /* stop the SDO worker */
