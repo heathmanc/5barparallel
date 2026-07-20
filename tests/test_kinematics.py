@@ -190,3 +190,19 @@ def test_scan_returns_grid():
 
 def _dist(p, q):
     return math.hypot(p[0] - q[0], p[1] - q[1])
+
+
+def test_validate_rejects_wrong_assembly_mirror_target():
+    """inverse() returns valid-looking angles for a sub-shoulder-line target,
+    but the mechanism assembles at the +Y mirror ~350 mm away. validate() must
+    reject it via the forward-consistency guard (it is documented as the sole
+    go/no-go before motion)."""
+    from bung_cover_robot.robot.workspace import WorkspaceValidator
+    from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
+
+    val = WorkspaceValidator(FiveBarKinematics())
+    res = val.validate(0.0, -240.0)
+    assert not res.ok and "wrong-assembly" in res.reason
+    # a genuine +Y work-zone target still passes (guard doesn't over-reject)
+    assert val.validate(0.0, 250.0).ok
+    assert val.validate(60.0, 205.0).ok

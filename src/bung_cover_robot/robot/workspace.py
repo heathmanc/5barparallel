@@ -35,6 +35,12 @@ except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 
+# Max |forward(inverse(target)) - target| for a target to count as realizable
+# at the intended assembly. A valid pose round-trips to ~1e-13 mm; the mirror
+# pose is hundreds of mm off, so anything but a hair means wrong-assembly.
+_ASSEMBLY_TOL_MM = 1e-3
+
+
 @dataclass(frozen=True)
 class SingularityLimits:
     """Guard thresholds (Claude.md §3.6, §9). Defaults are the verified values."""
@@ -228,6 +234,23 @@ class WorkspaceValidator:
             "serial_margin_deg": serial,
             "reach_fraction": reach,
         }
+
+        # Wrong-assembly / mirror guard. inverse() solves each arm independently
+        # with fixed up/down branches; those branches only realize the intended
+        # +Y assembly in the reaching half-plane. For a target the mechanism
+        # cannot actually assemble at (e.g. below the shoulder line), inverse()
+        # still returns valid-looking angles, but driving them lands the TCP at
+        # the mirror pose — hundreds of mm away. Reject anything whose forward
+        # solution doesn't return to the requested point. (Round-trips to ~1e-13
+        # for a realizable pose, so the tolerance is generous.)
+        fx, fy = self.kin.forward(jt.left_deg, jt.right_deg)
+        if math.hypot(fx - x, fy - y) > _ASSEMBLY_TOL_MM:
+            return ValidationResult(
+                False,
+                f"wrong-assembly / mirror pose: angles realize ({fx:.1f}, {fy:.1f}), "
+                f"not ({x:.1f}, {y:.1f}) — target not reachable in the +Y work zone",
+                metrics,
+            )
 
         if not self.kin.within_joint_limits(jt.left_deg):
             return ValidationResult(

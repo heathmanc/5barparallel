@@ -505,3 +505,49 @@ def test_demo_does_not_reenable_a_faulted_drive():
     res = run_demo_cycle(ctrl, nest, drops, pick_sequence=PickSequence(0, 0, 0))
     assert not res.ok
     assert "re-enabled" not in res.reason          # faults are never auto-cleared
+
+
+# --- cycle-cadence reconcile + in-flight abort -------------------------------
+def test_driver_forces_master_cycle_onto_passed_limits():
+    """Planning cadence must equal streaming cadence; a passed limits object
+    with a different cycle_dt_s would silently rescale every speed. Regression:
+    the constructor now overwrites limits.cycle_dt_s with the master's."""
+    from bung_cover_robot.ethercat.trajectory import TrajectoryLimits
+
+    master = SimulatedEtherCatMaster(num_drives=2, cycle_dt_s=0.001).open()
+    drv = EtherCatRobotDriver(master, limits=TrajectoryLimits(cycle_dt_s=0.002))
+    assert drv.limits.cycle_dt_s == 0.001
+
+
+def test_stream_rejects_a_cadence_mismatched_trajectory():
+    import dataclasses
+    from bung_cover_robot.robot.fivebar_kinematics import FiveBarKinematics
+    from bung_cover_robot.ethercat.trajectory import plan_linear_move, TrajectoryLimits
+
+    drv, master, kin = _driver()
+    drv.enable(); drv.set_home()
+    traj = plan_linear_move(kin, drv.validator, (0, 250), (40, 250),
+                            TrajectoryLimits(cycle_dt_s=master.cycle_dt_s))
+    bogus = dataclasses.replace(traj, cycle_dt_s=master.cycle_dt_s * 2)
+    with pytest.raises(RobotDriverError, match="cycle"):
+        drv._stream(bogus)
+
+
+def test_stop_aborts_an_in_flight_stream_then_holds():
+    """stop() must halt the CSP stream (on IgH/pysoem the daemon overrides the
+    output image while streaming) before writing the hold target."""
+    calls = []
+
+    class _SpyMaster(SimulatedEtherCatMaster):
+        def abort_csp(self):
+            calls.append("abort")
+
+    master = _SpyMaster(num_drives=2).open()
+    drv = EtherCatRobotDriver(master).connect()
+    drv.enable()
+    master.drives[0].actual_position = 1234
+    master.drives[1].actual_position = -55
+    drv.stop()
+    assert calls == ["abort"]                       # stream halted first
+    assert master.drives[0].target_position == 1234  # then held at actual
+    assert master.drives[1].target_position == -55

@@ -116,6 +116,9 @@ class IgHMaster(EtherCatMaster):
         # owns the RT loop, so nothing else refreshes the Python-side images).
         self._reader: threading.Thread | None = None
         self._reader_stop = threading.Event()
+        # Set by abort_csp() (another thread) to break an in-flight run_csp and
+        # hold at the current pose instead of driving on to the planned endpoint.
+        self._csp_aborted = False
 
     # --- EtherCatMaster interface ------------------------------------------ #
     @property
@@ -228,42 +231,72 @@ class IgHMaster(EtherCatMaster):
                 voff = _CSP_VEL_BASE + (d * _CSP_MAX + i) * 4
                 v = int(vels[i][d]) if vels is not None else 0
                 struct.pack_into("<i", mm, voff, v)
+        self._csp_aborted = False
         self._u32_set(_H_CSP_LEN, n)
         self._u32_set(_H_CSP_START, 1)               # daemon latches + streams
         self._fe_peak = [0] * self._num              # peak |FE| this stream
         deadline = time.perf_counter() + n * self.cycle_dt_s + 1.0
         # wait until the daemon finishes playing the buffer (csp_running -> 0)
         fault_hits = 0
-        while self._u32(_H_CSP_RUN) == 1 or self._u32(_H_CSP_START) == 1:
-            # Sample the drives' following error read-only (the daemon refreshes
-            # the input image every RT cycle) so the tuning assistant can grade
-            # the move. Read-only: never writes the output image mid-stream.
+        try:
+            while self._u32(_H_CSP_RUN) == 1 or self._u32(_H_CSP_START) == 1:
+                if self._csp_aborted:                # stop() from another thread
+                    break
+                # Sample the drives' following error read-only (the daemon refreshes
+                # the input image every RT cycle) so the tuning assistant can grade
+                # the move. Read-only: never writes the output image mid-stream.
+                for d in range(self._num):
+                    self._read_inputs(d, self._drives[d])
+                    fe = abs(self._drives[d].following_error)
+                    if fe > self._fe_peak[d]:
+                        self._fe_peak[d] = fe
+                # A real fault LATCHES — require it on two consecutive samples so a
+                # single torn/transient statusword read can't abort a good stream.
+                if self._faulted():
+                    fault_hits += 1
+                    if fault_hits >= 2:
+                        self.exchange()
+                        detail = ", ".join(
+                            f"drive {i}: sw=0x{pd.statusword:04X} err=0x{pd.error_code:04X}"
+                            for i, pd in enumerate(self._drives))
+                        raise MasterError(f"drive faulted during CSP stream ({detail})")
+                else:
+                    fault_hits = 0
+                if time.perf_counter() > deadline:
+                    raise MasterError("CSP stream did not complete in time")
+                time.sleep(self.cycle_dt_s)
+        except BaseException:
+            # A fault, a timeout, or an interrupt must STOP the daemon stream —
+            # otherwise it keeps playing the rest of the buffer, overriding the
+            # output image, and the arm drives on to the planned endpoint.
+            self.abort_csp()
+            raise
+        # Hold: on an external abort, hold at the CURRENT pose (never drive on to
+        # the planned endpoint); on normal completion, hold at the FINAL streamed
+        # target (else the closing exchange() would write the stale pre-move
+        # target and the drive would drive back).
+        if self._csp_aborted:
             for d in range(self._num):
                 self._read_inputs(d, self._drives[d])
-                fe = abs(self._drives[d].following_error)
-                if fe > self._fe_peak[d]:
-                    self._fe_peak[d] = fe
-            # A real fault LATCHES — require it on two consecutive samples so a
-            # single torn/transient statusword read can't abort a good stream.
-            if self._faulted():
-                fault_hits += 1
-                if fault_hits >= 2:
-                    self.exchange()
-                    detail = ", ".join(
-                        f"drive {i}: sw=0x{pd.statusword:04X} err=0x{pd.error_code:04X}"
-                        for i, pd in enumerate(self._drives))
-                    raise MasterError(f"drive faulted during CSP stream ({detail})")
-            else:
-                fault_hits = 0
-            if time.perf_counter() > deadline:
-                raise MasterError("CSP stream did not complete in time")
-            time.sleep(self.cycle_dt_s)
-        # Hold at the FINAL streamed position: otherwise the closing exchange()
-        # would write the stale pre-move target and the drive would drive back.
-        last = targets[-1]
-        for d in range(self._num):
-            self._drives[d].target_position = int(last[d])
+                self._drives[d].target_position = self._drives[d].actual_position
+        else:
+            last = targets[-1]
+            for d in range(self._num):
+                self._drives[d].target_position = int(last[d])
         self.exchange()
+
+    def abort_csp(self) -> None:
+        """Stop an in-flight CSP stream and hold. Clears the daemon's stream
+        length/start flags so ``streaming = csp_running && csp_index < csp_len``
+        goes false next RT cycle and the daemon reverts to holding the shm
+        target. Sets ``_csp_aborted`` so a run_csp blocked in another thread
+        breaks and holds at the current pose. Idempotent / safe with no stream
+        running."""
+        self._csp_aborted = True
+        if self._mm is None:
+            return
+        self._u32_set(_H_CSP_LEN, 0)
+        self._u32_set(_H_CSP_START, 0)
 
     def csp_fe_peak(self) -> List[int]:
         return list(self._fe_peak)

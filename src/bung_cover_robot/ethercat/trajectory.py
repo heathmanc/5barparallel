@@ -265,7 +265,10 @@ def _scurve_distances(length: float, v: float, a: float, jerk: float,
     the last sample lands exactly on ``length``. Returns ``[0.0, ..., length]``.
     """
     total_t, t_acc, t_cruise, v_peak = _trapezoid(length, v, a)
-    k = max(1, int(round((a / jerk) / dt))) if jerk and jerk > 0 else 1
+    # Filter window >= Tj = a/jerk. Round UP: a shorter window realizes a jerk
+    # ABOVE the commanded limit (round(12.5)->12 gives a/(12*dt) > jerk), so ceil
+    # keeps the realized jerk at or under the cap.
+    k = max(1, int(math.ceil((a / jerk) / dt))) if jerk and jerk > 0 else 1
     n = max(1, int(math.ceil(total_t / dt)))
     # trapezoidal velocity samples + (k-1) zero-flush so the trailing average
     # eases back to rest (and total area — distance — is preserved).
