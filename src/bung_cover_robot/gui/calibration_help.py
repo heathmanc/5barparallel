@@ -20,8 +20,9 @@ fixture height changes.</p>
       lift.</li>
   <li><b>Capture a frame.</b> Confirm the whole work area and every reference point
       is sharp and well lit &mdash; no glare, no shadow, no motion blur.</li>
-  <li><b>Click a known point</b> in the image (zoom in first for precision), then
-      <b>type that point's robot X and Y in millimetres</b> in the table.</li>
+  <li><b>Click a fiducial</b> in the image (zoom in first for precision), then
+      <b>hand-move the TCP onto that same fiducial and press Teach</b> to capture
+      its robot X/Y from the encoders (or type it in manually).</li>
   <li>Repeat for <b>at least 4 points</b> &mdash; 6 to 9 is better &mdash; spread
       across the field of view.</li>
   <li><b>Fit the homography.</b> Read the <b>RMS residual</b> it reports.</li>
@@ -32,15 +33,16 @@ fixture height changes.</p>
 <h3>How to get robot XY for each point</h3>
 <p>Two reliable methods:</p>
 <ul>
-  <li><b>Jog the robot to the point (best).</b> Move the TCP / a fine pointer down
-      onto a mark you can also see in the image, read the controller's reported X/Y,
-      and type it in. This calibrates against the robot's <i>own</i> reported
-      coordinates, which is exactly what you want &mdash; it folds any small robot
-      offset into the map.</li>
+  <li><b>Teach with the robot (best).</b> Disable the drives so you can hand-move
+      the arm (the absolute encoders still read position), bring the TCP / a fine
+      pointer down onto a fiducial you can also see in the image, and press
+      <b>Teach</b> &mdash; it fills that row's robot X/Y from the robot's own
+      forward-kinematics position. This calibrates against the robot's <i>own</i>
+      coordinates, folding any small robot offset into the map, with no typing.</li>
   <li><b>Known fixture geometry.</b> Use a machined plate or printed grid whose
       feature positions in robot coordinates are known (from a datum corner and
-      measured spacing). Faster, but only as accurate as your knowledge of where the
-      plate sits in the robot frame.</li>
+      measured spacing), and type them in. Faster, but only as accurate as your
+      knowledge of where the plate sits in the robot frame.</li>
 </ul>
 
 <h3>Best targets and tools</h3>

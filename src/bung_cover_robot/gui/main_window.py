@@ -83,7 +83,8 @@ class MainWindow(QMainWindow):
         self.camera_tab = CameraTab(self.camera, settings=self.app_settings,
                                     config_dir=cfg_dir)
         self.calibration_tab = CalibrationTab(
-            self.camera, self.calibration_manager, self.recipes
+            self.camera, self.calibration_manager, self.recipes,
+            controller=self.controller,
         )
         self.ethercat_tab = EtherCatTab(self.controller, settings=self.app_settings,
                                         config_dir=cfg_dir)

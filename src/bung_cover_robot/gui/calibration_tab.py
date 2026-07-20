@@ -138,12 +138,17 @@ class CalibrationTab(QWidget):
         camera: Camera,
         manager: Optional[CalibrationManager] = None,
         recipes: Optional[RecipeStore] = None,
+        controller=None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.camera = camera
         self.manager = manager or CalibrationManager()
         self.recipes = recipes or RecipeStore()
+        # For Teach: the robot's live forward-kinematics TCP position (absolute
+        # encoders read even with the drives disabled, so the operator can
+        # hand-move the TCP onto a plate fiducial and capture its robot XY).
+        self.controller = controller
         self._frame = None
         self._base_pix = None            # base QPixmap, built once per capture
         self._points: List[Tuple[float, float]] = []
@@ -301,6 +306,16 @@ class CalibrationTab(QWidget):
         )
         self.table.itemChanged.connect(self._on_item_changed)
         pv.addWidget(self.table)
+        # Teach: hand-move the TCP onto the fiducial you clicked, then capture its
+        # robot XY straight from the encoders — no typing, no known target math.
+        self.teach_btn = QPushButton("Teach robot XY (from encoders)")
+        self.teach_btn.setProperty("accent", "primary")
+        self.teach_btn.setToolTip(
+            "Fills the selected row's Robot X/Y from the robot's current TCP "
+            "position. Disable the drives (Drives tab) so you can hand-move the "
+            "TCP onto the fiducial — the absolute encoders still read position.")
+        self.teach_btn.clicked.connect(self._on_teach)
+        pv.addWidget(self.teach_btn)
         brow = QHBoxLayout()
         remove_btn = QPushButton("Remove selected")
         remove_btn.clicked.connect(self._on_remove)
@@ -388,6 +403,47 @@ class CalibrationTab(QWidget):
 
     def _on_item_changed(self, _item) -> None:
         self._invalidate_fit()
+
+    # --- teach (robot-referenced capture) ----------------------------------- #
+    def _tcp_xy(self) -> Optional[Tuple[float, float]]:
+        """Live forward-kinematics TCP (x, y) mm, or None if unavailable
+        (no robot, or not referenced)."""
+        ctrl = self.controller
+        if ctrl is None:
+            return None
+        try:
+            angles = ctrl.driver.read_angles()
+            if angles is None:
+                return None
+            x, y = ctrl.kin.forward(float(angles[0]), float(angles[1]))
+            return (float(x), float(y))
+        except Exception:  # noqa: BLE001 - no robot / bad angles -> treat as unavailable
+            return None
+
+    def _on_teach(self) -> None:
+        xy = self._tcp_xy()
+        if xy is None:
+            self._set_status(
+                "No robot position — connect and reference the robot (Drives tab), "
+                "then hand-move the TCP onto the fiducial.", theme.WARN)
+            return
+        row = self.table.currentRow()
+        if row < 0:
+            row = self.table.rowCount() - 1
+        if row < 0:
+            self._set_status("Click the fiducial in the image first, then Teach.",
+                             theme.WARN)
+            return
+        x, y = xy
+        self.table.blockSignals(True)
+        self.table.setItem(row, 2, QTableWidgetItem(f"{x:.2f}"))
+        self.table.setItem(row, 3, QTableWidgetItem(f"{y:.2f}"))
+        self.table.blockSignals(False)
+        self._invalidate_fit()
+        self._set_status(
+            f"Taught robot XY ({x:.1f}, {y:.1f}) mm into row {row + 1}. "
+            f"Click the next fiducial, hand-move, Teach again.", theme.SUCCESS)
+        self._update_buttons()
 
     def _on_remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
@@ -624,13 +680,14 @@ class CalibrationTab(QWidget):
                 and not (self._row_has_robot_xy(clicked - 1))
             )
             if trailing_blank:
-                main = (f"Now type that point's real robot X and Y (mm) in the "
-                        f"highlighted row, then press Enter.  Points: {complete}/4.")
+                main = (f"Now capture that point's robot X/Y: hand-move the TCP onto "
+                        f"the fiducial and press Teach (or type it), then Enter.  "
+                        f"Points: {complete}/4.")
             else:
-                main = (f"Click a known point on the target in the image — zoom in "
+                main = (f"Click a fiducial on the plate in the image — zoom in "
                         f"first for accuracy.  Points: {complete}/4.")
-            tip = ("Best points: sharp, high-contrast marks spread to the corners and "
-                   "centre of the work area — not clustered.")
+            tip = ("Disable the drives so you can hand-move the TCP (absolute encoders "
+                   "still read); pick marks spread to the corners + centre, not clustered.")
             color = theme.WARN if complete < 4 else theme.INFO
         elif step == 4:
             main = (f"Press Fit homography to solve the pixel→robot map from your "

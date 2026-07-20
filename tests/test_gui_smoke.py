@@ -1077,3 +1077,42 @@ def test_tuning_dialog_characterize_and_ff_cuts_following_error(qapp, tmp_path):
     assert _peak() < off                       # feedforward cut the peak lag
     tab._on_disconnect()
     tab._stop_poller()
+
+
+def test_calibration_teach_fills_robot_xy_from_encoders(qapp, tmp_path):
+    """Robot-referenced capture: with the robot referenced, Teach fills the
+    active row's Robot X/Y from the live forward-kinematics TCP — no typing."""
+    from bung_cover_robot.app.recipes import RecipeStore
+    from bung_cover_robot.gui.calibration_tab import CalibrationTab
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    ctrl = build_dry_run_controller()
+    tab = CalibrationTab(_cal_camera(), CalibrationManager(tmp_path),
+                         RecipeStore(path=tmp_path / "recipes.yaml"), controller=ctrl)
+
+    tab._on_pixel_clicked(120.0, 130.0)          # a pixel row, robot XY still blank
+    tab._on_teach()                              # not referenced yet -> warns, no fill
+    assert "reference" in tab.status_label.text().lower()
+    assert tab.table.item(0, 2).text() == ""
+
+    ctrl.enable()
+    ctrl.home_reference()
+    x, y = ctrl.kin.forward(*ctrl.driver.read_angles())
+    tab.table.setCurrentCell(0, 2)
+    tab._on_teach()
+    assert float(tab.table.item(0, 2).text()) == pytest.approx(x, abs=1e-2)
+    assert float(tab.table.item(0, 3).text()) == pytest.approx(y, abs=1e-2)
+
+
+def test_calibration_teach_without_a_point_warns(qapp, tmp_path):
+    from bung_cover_robot.app.recipes import RecipeStore
+    from bung_cover_robot.gui.calibration_tab import CalibrationTab
+    from bung_cover_robot.vision.calibration import CalibrationManager
+
+    ctrl = build_dry_run_controller()
+    ctrl.enable()
+    ctrl.home_reference()
+    tab = CalibrationTab(_cal_camera(), CalibrationManager(tmp_path),
+                         RecipeStore(path=tmp_path / "recipes.yaml"), controller=ctrl)
+    tab._on_teach()                              # no rows clicked yet
+    assert "click the fiducial" in tab.status_label.text().lower()
