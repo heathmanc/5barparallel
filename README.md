@@ -127,16 +127,21 @@ gated by `WorkspaceValidator` before it reaches the driver.
 
 ```bash
 pip install -e .[gui]
-bung-cover-robot                         # dry-run: sim driver + demo scene
-bung-cover-robot --sim-plc               # PLC driver + simulated PLC (real handshake)
-bung-cover-robot --plc 192.168.1.10/0    # PLC driver + real CompactLogix
+bung-cover-robot                         # dry-run: in-process sim driver + demo scene
+bung-cover-robot --sim-ec                # EtherCAT driver vs a simulated A6 network
+bung-cover-robot --ethercat              # real A6 servo drives (IgH EtherCAT master)
 bung-cover-robot --camera basler         # real Basler (else the mock demo scene)
 bung-cover-robot --config /path/to/config  # config dir (robot/camera/recipes yaml)
 ```
 
-`--dry-run` / `--sim-plc` / `--plc` select the motion backend and `--camera
-{auto,mock,basler}` the camera, independently; `auto` picks a Basler with a real
-PLC, else the mock scene. Also runs as `python -m bung_cover_robot`.
+`--dry-run` / `--sim-ec` / `--ethercat` select the motion backend and `--camera
+{auto,mock,basler}` the camera, independently. Also runs as `python -m
+bung_cover_robot`.
+
+**Deploying to a real control PC** (IgH EtherCAT master + servos): run
+`scripts/install.sh` and follow **[`docs/deploy.md`](docs/deploy.md)** — venv +
+app install, rebuilding the RT daemon on the target, passwordless-sudo for the
+daemon, and migrating your `config/` (calibration, home, recipes).
 
 **Vision tab** (main screen) — capture, **Detect** (holes + covers with live
 reachability), and **Start / Stop** the automatic pick-place cycle. Each pick
